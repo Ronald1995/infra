@@ -1,0 +1,14 @@
+vllm-ascend/mlapo.md
+  h_db090f75962742 1-433
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "2ddcc1f93cac3b3cb4abe293a29b1e00c4b0725f",
+  "prompts": {},
+  "humans": {
+    "h_db090f75962742": {
+      "author": "Ronald1995 <ronaldautomobile@163.com>"
+    }
+  }
+}

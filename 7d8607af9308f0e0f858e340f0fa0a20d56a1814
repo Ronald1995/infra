@@ -1,0 +1,14 @@
+vllm-ascend/refresh.md
+  h_db090f75962742 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "7d8607af9308f0e0f858e340f0fa0a20d56a1814",
+  "prompts": {},
+  "humans": {
+    "h_db090f75962742": {
+      "author": "Ronald1995 <ronaldautomobile@163.com>"
+    }
+  }
+}
