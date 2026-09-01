@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1440" viewBox="0 0 2000 1440" role="img" aria-labelledby="title desc">
+  <title id="title">DeepSeek-V4-Flash-Vision-Exp architecture</title>
+  <desc id="desc">Architecture diagram showing the new vision encoder, aligner, multimodal token layout, unchanged DeepSeek V4 language backbone, and operators added by the vLLM vision support patch.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#eef2ff"/></linearGradient>
+    <linearGradient id="visionGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ecfdf5"/><stop offset="1" stop-color="#d1fae5"/></linearGradient>
+    <linearGradient id="lmGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eff6ff"/><stop offset="1" stop-color="#e0e7ff"/></linearGradient>
+    <linearGradient id="routeGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff7ed"/><stop offset="1" stop-color="#ffedd5"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#0f172a" flood-opacity="0.13"/></filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#475569"/></marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#059669"/></marker>
+    <marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#ea580c"/></marker>
+    <style>
+      text{font-family:"Segoe UI","Microsoft YaHei",Arial,sans-serif;fill:#172033}
+      .title{font-size:38px;font-weight:800;letter-spacing:.2px}.subtitle{font-size:17px;fill:#526078}
+      .section{font-size:24px;font-weight:800}.h{font-size:18px;font-weight:750}.b{font-size:15px}.s{font-size:13px;fill:#526078}.xs{font-size:12px;fill:#64748b}
+      .box{rx:14;ry:14;stroke-width:1.7}.new{fill:url(#visionGrad);stroke:#10b981}.base{fill:url(#lmGrad);stroke:#6366f1}.route{fill:url(#routeGrad);stroke:#f97316}.neutral{fill:#fff;stroke:#cbd5e1}.gap{fill:#fff1f2;stroke:#f43f5e;stroke-dasharray:8 6}.group{fill:#fff;fill-opacity:.66;stroke-width:2;stroke-dasharray:10 7;rx:20;ry:20}
+      .pill{rx:9;ry:9;stroke-width:1.4}.arrow{fill:none;stroke:#475569;stroke-width:2.1;marker-end:url(#arrow)}.arrow-new{fill:none;stroke:#059669;stroke-width:2.2;marker-end:url(#arrowGreen)}.arrow-route{fill:none;stroke:#ea580c;stroke-width:2.1;marker-end:url(#arrowOrange)}
+      .dash{fill:none;stroke:#94a3b8;stroke-width:1.7;stroke-dasharray:6 6}.chip{font-size:12px;font-weight:700;fill:#fff}.count{font-size:14px;font-weight:800}
+    </style>
+  </defs>
+
+  <rect width="2000" height="1440" fill="url(#bg)"/>
+  <text id="diagram-title" x="70" y="67" class="title">DeepSeek-V4-Flash-Vision-Exp 模型结构</text>
+  <text x="72" y="98" class="subtitle">DeepSeek-V4-Flash 语言骨干 + 新增视觉塔 / 对齐器 / 多模态路由 · 配置：43 LM layers，3 next-token predictors，1M context</text>
+  <rect x="1665" y="43" width="248" height="46" rx="23" fill="#0f172a"/><text x="1789" y="72" text-anchor="middle" class="chip">Vision-Exp · FP4 experts / FP8 LM</text>
+
+  <!-- Vision path -->
+  <rect x="55" y="135" width="680" height="1215" class="group" stroke="#10b981"/>
+  <text x="82" y="175" class="section" fill="#047857">① 新增视觉路径</text>
+  <text x="82" y="201" class="s">BF16 tower；每张图独立编码；无 CLS token / learned position embedding / window attention</text>
+
+  <rect x="90" y="230" width="270" height="98" class="box neutral" filter="url(#shadow)"/>
+  <text x="225" y="263" text-anchor="middle" class="h">输入图像</text><text x="225" y="288" text-anchor="middle" class="b">RGB · 任意宽高</text><text x="225" y="310" text-anchor="middle" class="s">min pixels 147,456 · max W/H 8</text>
+  <path d="M360 279 H420" class="arrow-new"/>
+  <rect x="420" y="230" width="270" height="98" class="box new" filter="url(#shadow)"/>
+  <text x="555" y="258" text-anchor="middle" class="h">Resize / Pad / Normalize</text><text x="555" y="283" text-anchor="middle" class="b">对齐 14×14 patch 网格</text><text x="555" y="307" text-anchor="middle" class="s">token budget ≤ 384</text>
+
+  <path d="M555 328 V372" class="arrow-new"/>
+  <rect x="90" y="372" width="600" height="445" class="box new" filter="url(#shadow)"/>
+  <text x="120" y="411" class="section" fill="#047857">Vision Transformer ×32</text>
+  <text x="660" y="409" text-anchor="end" class="count" fill="#047857">dim 1024 · 16 heads · head dim 64</text>
+  <rect x="122" y="440" width="536" height="55" class="pill neutral"/><text x="390" y="466" text-anchor="middle" class="h">Patchify + Linear</text><text x="390" y="486" text-anchor="middle" class="s">[N, 3, 14, 14] → flatten 588 → 1024</text>
+  <path d="M390 495 V525" class="arrow-new"/>
+  <rect x="122" y="525" width="536" height="230" rx="14" fill="#fff" stroke="#34d399" stroke-width="1.6" stroke-dasharray="6 5"/>
+  <text x="145" y="553" class="h">ViT Block ×32</text>
+  <rect x="150" y="575" width="170" height="42" class="pill neutral"/><text x="235" y="601" text-anchor="middle" class="b">RMSNorm ε=1e−6</text>
+  <path d="M320 596 H355" class="arrow-new"/>
+  <rect x="355" y="568" width="275" height="56" class="pill new"/><text x="492" y="592" text-anchor="middle" class="h">QKV Linear + 2D RoPE</text><text x="492" y="613" text-anchor="middle" class="s">row / column rotary positions</text>
+  <path d="M492 624 V650" class="arrow-new"/>
+  <rect x="355" y="650" width="275" height="44" class="pill new"/><text x="492" y="677" text-anchor="middle" class="b">Full bidirectional SDPA + O Linear</text>
+  <path d="M355 672 H320" class="arrow-new"/>
+  <rect x="150" y="650" width="170" height="44" class="pill neutral"/><text x="235" y="677" text-anchor="middle" class="b">Residual Add</text>
+  <path d="M235 694 V718 H355" class="arrow-new"/>
+  <rect x="355" y="706" width="275" height="36" class="pill new"/><text x="492" y="730" text-anchor="middle" class="b">RMSNorm → SwiGLU MLP → Add</text>
+  <path d="M390 755 V782" class="arrow-new"/>
+  <rect x="122" y="782" width="536" height="48" class="pill neutral"/><text x="390" y="812" text-anchor="middle" class="b">Final RMSNorm → [Npatch, 1024]</text>
+
+  <path d="M390 830 V865" class="arrow-new"/>
+  <rect x="90" y="865" width="600" height="205" class="box new" filter="url(#shadow)"/>
+  <text x="120" y="903" class="section" fill="#047857">Aligner / Connector</text>
+  <rect x="125" y="928" width="180" height="78" class="pill neutral"/><text x="215" y="953" text-anchor="middle" class="h">Pad + Unfold</text><text x="215" y="976" text-anchor="middle" class="s">3×3 space-to-depth</text><text x="215" y="995" text-anchor="middle" class="xs">1024×9 = 9216</text>
+  <path d="M305 967 H350" class="arrow-new"/>
+  <rect x="350" y="928" width="135" height="78" class="pill new"/><text x="417" y="958" text-anchor="middle" class="h">Linear</text><text x="417" y="983" text-anchor="middle" class="b">9216 → 4096</text>
+  <path d="M485 967 H525" class="arrow-new"/>
+  <rect x="525" y="928" width="130" height="78" class="pill new"/><text x="590" y="958" text-anchor="middle" class="h">GELU + Linear</text><text x="590" y="983" text-anchor="middle" class="b">4096 → 4096</text>
+  <text x="120" y="1044" class="s">空间分辨率下采样约 3×3；输出宽度与 LM hidden_size 完全对齐</text>
+
+  <path d="M390 1070 V1105" class="arrow-new"/>
+  <rect x="90" y="1105" width="600" height="205" class="box new" filter="url(#shadow)"/>
+  <text x="120" y="1142" class="section" fill="#047857">N-layout 图像 token block</text>
+  <text x="120" y="1168" class="s">位置相关 C4 对齐 pad：3 − start_pos mod 4；5 类 OOV sentinel = vocab_size + {0…4}</text>
+  <g transform="translate(123 1192)">
+    <rect width="70" height="38" rx="7" fill="#0f766e"/><text x="35" y="24" text-anchor="middle" class="chip">START</text>
+    <rect x="78" width="52" height="38" rx="7" fill="#6ee7b7"/><text x="104" y="24" text-anchor="middle" class="b">IMG</text>
+    <rect x="138" width="52" height="38" rx="7" fill="#6ee7b7"/><text x="164" y="24" text-anchor="middle" class="b">IMG</text>
+    <rect x="198" width="52" height="38" rx="7" fill="#fdba74"/><text x="224" y="24" text-anchor="middle" class="b">NL</text>
+    <rect x="258" width="52" height="38" rx="7" fill="#6ee7b7"/><text x="284" y="24" text-anchor="middle" class="b">IMG</text>
+    <rect x="318" width="52" height="38" rx="7" fill="#cbd5e1"/><text x="344" y="24" text-anchor="middle" class="b">PAD</text>
+    <text x="398" y="26" class="h">…</text>
+    <rect x="432" width="70" height="38" rx="7" fill="#0f766e"/><text x="467" y="24" text-anchor="middle" class="chip">END</text>
+  </g>
+  <text x="120" y="1260" class="s">IMG slots ← 对齐器特征（perm 重排）；START/PAD/NL/END ← 4 个 learned embedding</text>
+  <text x="120" y="1284" class="s">整块作为 multimodal embeddings 注入，但原始 sentinel IDs 继续传给语言模型用于路由</text>
+
+  <!-- Language backbone -->
+  <rect x="775" y="135" width="740" height="1215" class="group" stroke="#6366f1"/>
+  <text x="802" y="175" class="section" fill="#4338ca">② DeepSeek-V4 Flash 语言骨干</text>
+  <text x="802" y="201" class="s">蓝色为复用结构；橙色为 Vision-Exp 对语言侧行为的新增耦合</text>
+
+  <rect x="835" y="235" width="250" height="86" class="box base" filter="url(#shadow)"/>
+  <text x="960" y="268" text-anchor="middle" class="h">Text Tokenizer</text><text x="960" y="292" text-anchor="middle" class="b">vocab 129,280</text>
+  <path d="M960 321 V358" class="arrow"/>
+  <rect x="835" y="358" width="250" height="72" class="box base"/><text x="960" y="389" text-anchor="middle" class="h">Token Embedding</text><text x="960" y="413" text-anchor="middle" class="s">hidden 4096</text>
+  <path d="M690 1218 H755 V442 H1295 V406" class="arrow-new"/>
+  <rect x="1135" y="252" width="320" height="154" class="box route" filter="url(#shadow)"/>
+  <text x="1160" y="286" class="h" fill="#c2410c">Multimodal merge</text>
+  <text x="1160" y="313" class="b">• 文本位置：embedding table</text><text x="1160" y="339" class="b">• 图像位置：N-layout block embeddings</text><text x="1160" y="365" class="b">• raw sentinel IDs 保留给 MoE / Hash</text><text x="1160" y="389" class="s">hidden stream: [seq, 4096]</text>
+  <path d="M1085 394 H1135" class="arrow-route"/><path d="M1295 406 V459 H1125" class="arrow-route"/>
+
+  <rect x="815" y="459" width="650" height="648" class="box base" filter="url(#shadow)"/>
+  <text x="845" y="499" class="section" fill="#4338ca">Decoder stack ×43</text>
+  <text x="1435" y="498" text-anchor="end" class="count" fill="#4338ca">2 SWA · 21 C4A · 20 C128A</text>
+  <rect x="845" y="528" width="590" height="70" rx="12" fill="#fff" stroke="#818cf8"/>
+  <text x="870" y="557" class="h">mHC pre → RMSNorm → DFlash Attention → mHC post</text><text x="870" y="581" class="s">MQA: 64 Q heads / 1 KV head · head_dim 512 · q_lora 1024 · RoPE 64</text>
+
+  <rect x="845" y="620" width="180" height="104" class="pill neutral"/><text x="935" y="650" text-anchor="middle" class="h">Layers 0–1</text><text x="935" y="677" text-anchor="middle" class="b">SWA · ratio 0</text><text x="935" y="701" text-anchor="middle" class="s">window 128</text>
+  <rect x="1045" y="620" width="180" height="104" class="pill neutral"/><text x="1135" y="650" text-anchor="middle" class="h">21 layers</text><text x="1135" y="677" text-anchor="middle" class="b">C4A / CSA</text><text x="1135" y="701" text-anchor="middle" class="s">compress ratio 4</text>
+  <rect x="1245" y="620" width="180" height="104" class="pill neutral"/><text x="1335" y="650" text-anchor="middle" class="h">20 layers</text><text x="1335" y="677" text-anchor="middle" class="b">C128A / HCA</text><text x="1335" y="701" text-anchor="middle" class="s">compress ratio 128</text>
+
+  <path d="M1140 724 V754" class="arrow"/>
+  <rect x="845" y="754" width="590" height="89" rx="12" fill="#fff" stroke="#818cf8"/>
+  <text x="870" y="786" class="h">mHC → RMSNorm → FFN</text><text x="870" y="814" class="b">Layers 0–2: Hash-MoE · Layers 3–42: routed MoE (256 experts, top-6) + 1 shared expert</text>
+
+  <path d="M1140 843 V874" class="arrow-route"/>
+  <rect x="845" y="874" width="590" height="190" class="box route"/>
+  <text x="870" y="907" class="h" fill="#c2410c">Vision-Exp 官方语言侧路由逻辑（PR 仅完整落地 Hash guard）</text>
+  <rect x="875" y="931" width="244" height="94" class="pill neutral"/><text x="997" y="958" text-anchor="middle" class="h">Hash guard</text><text x="997" y="982" text-anchor="middle" class="s">image_mask = id ≥ vocab_size</text><text x="997" y="1004" text-anchor="middle" class="b">torch.where(id → 0)</text>
+  <rect x="1160" y="931" width="244" height="94" class="pill neutral"/><text x="1282" y="958" text-anchor="middle" class="h">Modality-forked Top-K</text><text x="1282" y="982" text-anchor="middle" class="s">text: bias · image: bias_vl</text><text x="1282" y="1004" text-anchor="middle" class="b">scores → sqrtsoftplus → top-6</text>
+  <text x="870" y="1048" class="xs">注：路由权重仍来自未加 bias 的 scores；bias / bias_vl 只改变 expert selection。</text>
+
+  <path d="M1140 1107 V1140" class="arrow"/>
+  <rect x="875" y="1140" width="530" height="74" class="box base"/><text x="1140" y="1171" text-anchor="middle" class="h">DSpark / next-token predictor ×3</text><text x="1140" y="1197" text-anchor="middle" class="s">target LM layers 40, 41, 42 · block size 5 · Markov rank 256</text>
+  <path d="M1140 1214 V1242" class="arrow"/>
+  <rect x="875" y="1242" width="250" height="64" class="box base"/><text x="1000" y="1280" text-anchor="middle" class="h">Final RMSNorm</text>
+  <path d="M1125 1274 H1170" class="arrow"/>
+  <rect x="1170" y="1242" width="235" height="64" class="box base"/><text x="1287" y="1280" text-anchor="middle" class="h">LM Head → logits</text>
+
+  <!-- Diff legend -->
+  <rect x="1555" y="135" width="390" height="1215" class="group" stroke="#f97316"/>
+  <text x="1582" y="175" class="section" fill="#c2410c">③ 相对 DeepSeek-V4 新增</text>
+  <text x="1582" y="201" class="s">按“模型数学结构”与“PR 实现”区分</text>
+
+  <rect x="1580" y="230" width="340" height="420" class="box new" filter="url(#shadow)"/>
+  <text x="1605" y="265" class="h" fill="#047857">新增计算模块 / 算子组合</text>
+  <text x="1605" y="300" class="b">1. 图像 resize / pad / normalize / patchify</text>
+  <text x="1605" y="332" class="b">2. Patch Linear (588 → 1024)</text>
+  <text x="1605" y="364" class="b">3. 2D RoPE（行列分轴）</text>
+  <text x="1605" y="396" class="b">4. 全双向 scaled-dot-product attention</text>
+  <text x="1605" y="428" class="b">5. ViT SwiGLU MLP ×32</text>
+  <text x="1605" y="460" class="b">6. Pad + Unfold 3×3 space-to-depth</text>
+  <text x="1605" y="492" class="b">7. GELU aligner MLP (9216→4096→4096)</text>
+  <text x="1605" y="524" class="b">8. N-layout permute / scatter + sentinel emb</text>
+  <text x="1605" y="556" class="b">9. image_mask + torch.where hash guard</text>
+  <text x="1605" y="588" class="b">10. bias / bias_vl 按模态选择 Top-K（官方）</text>
+  <text x="1605" y="625" class="s">以上均由现有 PyTorch primitive 组成</text>
+
+  <rect x="1580" y="682" width="340" height="205" class="box base"/>
+  <text x="1605" y="718" class="h" fill="#4338ca">保持不变 / 复用</text>
+  <text x="1605" y="754" class="b">• DFlash：SWA + C4A + C128A</text>
+  <text x="1605" y="786" class="b">• mHC、RMSNorm、YaRN / inverse RoPE</text>
+  <text x="1605" y="818" class="b">• Indexer、KV compressor、FP8 cache</text>
+  <text x="1605" y="850" class="b">• FP4 routed MoE + shared expert</text>
+
+  <rect x="1580" y="919" width="340" height="155" class="box neutral"/>
+  <text x="1605" y="955" class="h">PR 的 kernel 结论</text>
+  <text x="1605" y="990" class="b">没有新增 CUDA / Triton 自定义 kernel</text>
+  <text x="1605" y="1018" class="s">ViT 使用 F.scaled_dot_product_attention；</text>
+  <text x="1605" y="1041" class="s">Linear / RMSNorm / GELU / unfold 均为框架算子。</text>
+
+  <rect x="1580" y="1106" width="340" height="188" class="box gap"/>
+  <text x="1605" y="1142" class="h" fill="#be123c">参考实现已有，但该 PR 未实现</text>
+  <text x="1605" y="1178" class="b">1. LM 内图像 span 的双向可见性</text>
+  <text x="1605" y="1206" class="s">2. bias_vl 图像 Top-K wiring：PR 只注册参数，</text>
+  <text x="1605" y="1229" class="s">未将 image_mask / bias_vl 送入 top-k。</text>
+  <text x="1605" y="1261" class="s">已落地：sentinel → 0 的 Hash 查表保护。</text>
+
+  <g transform="translate(70 1384)">
+    <rect width="18" height="18" rx="4" fill="#d1fae5" stroke="#10b981"/><text x="28" y="14" class="s">Vision-Exp 新增</text>
+    <rect x="160" width="18" height="18" rx="4" fill="#e0e7ff" stroke="#6366f1"/><text x="188" y="14" class="s">DeepSeek-V4 复用</text>
+    <rect x="340" width="18" height="18" rx="4" fill="#ffedd5" stroke="#f97316"/><text x="368" y="14" class="s">新增跨模态耦合</text>
+    <rect x="535" width="18" height="18" rx="4" fill="#fff1f2" stroke="#f43f5e"/><text x="563" y="14" class="s">实现缺口</text>
+    <text x="1840" y="14" text-anchor="end" class="xs">Sources: HF config + reference inference + vLLM support commit 30e526f</text>
+  </g>
+</svg>
