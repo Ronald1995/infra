@@ -1,0 +1,4 @@
+interface:
+  display_name: "H20 Remote Testing"
+  short_description: "Run vLLM tests on the H20 Slurm cluster"
+  default_prompt: "使用远程H20验证这个改动：先跑共享的 pre-commit + DCO 检查（$HOME/vllm-shared/scripts/run-precommit.sh，必须退出码为 0），复用 $HOME/vllm-shared 的共享环境，再在 job 节点的容器里跑测试，最后把命令与结果 comment 到对应 PR。"
