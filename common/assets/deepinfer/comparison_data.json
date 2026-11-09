@@ -1,0 +1,63 @@
+{
+  "title": "DeepSeek-V4.1-Flash: vLLM vs DeepInfer",
+  "retrieved": "2026-11-09",
+  "blog": "https://vllm.ai/blog/2026-10-23-deepseek-v41-flash-pd-wide-ep",
+  "decode": {
+    "source": "https://vllm.ai/blog-assets/interactive_pages/dsv41-pd-decode-vs-deepinfer.html",
+    "batch": [
+      8,
+      16,
+      32,
+      64,
+      128,
+      256
+    ],
+    "vllm_per_user_tps": [
+      339.491,
+      321.374,
+      294.335,
+      236.386,
+      167.553,
+      106.487
+    ],
+    "deepinfer_per_user_tps": [
+      325,
+      314.3,
+      297,
+      245.9,
+      178.2,
+      102.8
+    ],
+    "context": "131K",
+    "draft_tokens": 3,
+    "accepted_tokens_per_step": 3.25,
+    "vllm": "GB200 DEP32, 384 + 32 experts, EPLB on",
+    "deepinfer": "EP64DP64, 384 + 64 experts; values digitized by vLLM from DeepSeek's published chart"
+  },
+  "prefill": {
+    "source": "https://vllm.ai/blog-assets/interactive_pages/dsv41-pd-prefill-vs-deepinfer.html",
+    "new_tokens": [
+      4096,
+      8192,
+      16384,
+      32768,
+      65536
+    ],
+    "vllm_ms": [
+      59.58,
+      95.97,
+      168.81,
+      321.11,
+      639.43
+    ],
+    "deepinfer_ms": [
+      61.5,
+      108,
+      193.9,
+      377.8,
+      755.6
+    ],
+    "vllm": "GB300 DEP2, no redundant experts, 128K cached prefix, 128-token replay",
+    "deepinfer": "EP4DP4, 32 redundant experts, 140-token replay; hardware not stated in the chart according to the vLLM blog; values digitized by vLLM"
+  }
+}
