@@ -94,13 +94,13 @@ flowchart LR
 
 单位：token/s/GPU，按官方图数据计算后取整。DeepInfer 数值由 vLLM 从 DeepSeek 原图读取，存在读图误差；两者并行规模和冗余专家数不同。[原始交互图][11]
 
-![vLLM 与 DeepInfer 解码对比](C:/Users/liurong/Desktop/PythonProject/infra/common/assets/deepinfer/decode_comparison.png)
+![vLLM 与 DeepInfer 解码对比](assets/deepinfer/decode_comparison.png)
 
 ### 5.2 Prefill 对比
 
 vLLM 使用 **GB300 DEP2、无冗余专家、128-token 回放**；DeepInfer 参考使用 **EP4DP4、32 个冗余专家、140-token 回放**。由于硬件和输入配置未统一，曲线用于参考，**不能把差距直接当作框架加速比**。[10][12]
 
-![vLLM 与 DeepInfer Prefill 对比](C:/Users/liurong/Desktop/PythonProject/infra/common/assets/deepinfer/prefill_comparison.png)
+![vLLM 与 DeepInfer Prefill 对比](assets/deepinfer/prefill_comparison.png)
 
 两图按 vLLM 官方交互图的内嵌数据重绘，未新增测试。横纵轴和计数方法保持一致：[解码原图][11]、[Prefill 原图][12]。vLLM 博客称 Prefill 参考原图未注明具体硬件；当前 DeepInfer README 则注明为 4 张 SM100。[1][10]
 
