@@ -1,0 +1,497 @@
+diff --git a/docs/source/developer_guide/worker_inheritance.md b/docs/source/developer_guide/worker_inheritance.md
+index 457829201..d51545ffa 100644
+--- a/docs/source/developer_guide/worker_inheritance.md
++++ b/docs/source/developer_guide/worker_inheritance.md
+@@ -2,39 +2,90 @@
+ 
+ RFC: <https://github.com/vllm-project/vllm-ascend/issues/18920>.
+ 
+-## Direct inheritance entry point
+-
+-The migration targets the verified vLLM main lane, based on `24420b7a` plus
+-<https://github.com/vllm-project/vllm/pull/65565>. The verification pin records
+-that exact companion commit so the parent contracts remain reproducible.
+-PR #20865 targets Ascend main directly. There is no prerequisite Ascend PR,
+-Phase 0.5 alignment step, or stacked successor migration in this change.
+-Phase 0 contract tooling remains separate work, not a prerequisite branch.
+-Merge the vLLM companion and update the pin to its merged commit before rollout.
+-The current v0.33.0 lane needs the same hooks to be qualified or backported.
+-Missing hooks fail before the parent constructor; there is no fallback that
+-bypasses the parent constructor.
+-
+-Keep the existing Ascend method overrides in this PR, including config updates,
+-reload, PP sends, decorators, loading and dummy batches. Their alignment or
+-removal is separate follow-up work that must be reviewed against main when it
+-is proposed. No future PR stack is a dependency of this inheritance change.
+-
+-## Parent-owned constructor state (phase 1a)
++## Consolidated inheritance entry point
++
++PR #20865 combines direct GPUWorker inheritance with the interface quarantine
++from #20866, which it supersedes. It targets main directly. Phase 0 tooling and
++later migrations remain independent work.
++
++NPUWorker derives from GPUWorker and calls the real parent constructor through
++`super().__init__()`. The 54 existing non-constructor NPUWorker methods at baseline
++`28065346d433f9d23157c77c2b5b79c959a61871` retain their bodies, signatures and
++decorators. Execution, config updates, reload, model loading, dummy batches,
++sleep/wake and shutdown remain local. The old Phase 0.5 alignment and Phase 1b
++shutdown migration are excluded. NPU device/HCCL setup and the current V2,
++encoder-only, 310P and Xlite runner construction paths are retained.
++
++The dependency is verified vLLM main `24420b7a` plus constructor hooks from
++<https://github.com/vllm-project/vllm/pull/65565>. The review pin is
++`e9f031bed0d150e2bef4b1eaa29aa50061e89203`. Missing hooks fail before parent
++construction. Merge the companion and update the pin to its merged commit
++before rollout. The matched v0.33.0 release needs the same hooks qualified or
++backported. There is no fallback that bypasses the parent constructor.
++
++## Parent construction
+ 
+ | State | Ascend contract |
+ | --- | --- |
+-| Shared config and ranks | Initialized by the real GPU Worker constructor |
+-| Float32 matmul precision | Adopt upstream `VLLM_FLOAT32_MATMUL_PRECISION` |
+-| Elastic EP executor | Explicit unsupported executor, no CUDA imports or thread pool |
++| Shared config and ranks | Initialized by the actual GPUWorker constructor |
++| Float32 matmul precision | Adopt upstream configuration |
++| Elastic EP executor | Resource-free unsupported executor; no CUDA elastic EP imports |
+ | Fault-tolerance sentinel | Reject enabled fault tolerance before parent construction |
+-| Sleep buffer, parameter and draft dictionaries | Created by parent; NPU sleep retains its own policy |
+-| Weight transfer engine and active/draft flags | Created by parent; transitions migrate in phase 3 |
+-| Profiler config and wrapper | Validate NPU torch profiler through a constructor hook; create lazily |
+-| PP send handles | Parent initializes the list; the existing Ascend send override is retained |
+-| Sleep backend cache | Created by parent; CaMem integration follows in phase 3 |
+-
+-Current main uses V2, encoder-only, 310P and Xlite construction paths; their NPU
+-device initialization is retained. Parent `init_device` is never called.
+-Runtime startup and serving qualification remain required before merging this
+-PR; portable contract tests are not a substitute for those checks.
++| Sleep buffer, parameter and draft dictionaries | Parent initializes state; existing NPU policy remains |
++| Weight transfer engine and active/draft flags | Parent initializes state; existing NPU update methods remain |
++| Profiler | NPU validation hook; wrapper remains lazily initialized |
++| PP send handles | Parent initializes state; existing NPU execution is retained |
++| Sleep backend cache | Parent initializes None; no GPU allocator is selected |
++
++Only `_make_elastic_ep_executor` and `_validate_profiler_config` are newly
++implemented hooks, because the parent constructor calls them. The executor
++rejects all work and permits repeated shutdown. The profiler hook accepts
++disabled profiling and the torch NPU profiler.
++
++Existing shutdown is retained: the unsupported executor allocates no thread
++pool or device resources, and the sleep backend remains uncreated. Changes to
++cleanup, PP handle ownership, decorators or runner contracts require separate
++validation and review. Parent `init_device` is never called.
++
++## Unverified interfaces
++
++All 29 other GPUWorker methods or properties newly visible at the pinned
++dependency are explicitly overridden to raise `NotImplementedError`, including
++private helpers and GPU defaults returning None, False or an empty result.
++The `sleep_mode_backend` and `randomize_dummy_inputs` property descriptors are
++preserved and raise on access.
++
++The complete immutable inventory is `UNVERIFIED_GPU_WORKER_METHODS` in
++`vllm_ascend/worker/worker_interfaces.py`:
++
++| Group | Interfaces |
++| --- | --- |
++| Execution hooks | `_before_execute_model`, `_get_pp_all_gather_group`, `_after_pp_send`, `annotate_profile` |
++| Sleep and draft helpers | `sleep_mode_backend`, `_get_sleep_parameters`, `discard`, `randomize_dummy_inputs`, `get_draft_model` |
++| Weight updates | `supports_draft_weight_updates`, `_set_draft_weight_update_target`, `shutdown_weight_transfer_engine`, `start_draft_weight_update`, `_start_weight_update` |
++| Initialization | `_init_workspace_and_model_runner`, `_make_model_runner` |
++| GPU compilation | `_scoped_allocator_max_split`, `_compile_or_warm_up_model`, `_maybe_activate_jit_monitor`, `_get_cudagraph_capture_context` |
++| Checkpoint and export | `checkpoint_prepare`, `checkpoint_restore`, `save_sharded_state`, `save_tensorized_model` |
++| Other control interfaces | `handle_ft_command`, `reset_mm_cache`, `get_compilation_match_table`, `get_encoder_timing_stats`, `elastic_ep_execute` |
++
++For each later migration, validate the NPU runner and supported vLLM contracts,
++remove the explicit stub and inventory entry together, and update the
++method-resolution guard to allow that verified inherited method. No earlier
++draft implementation is enabled by this change.
++
++## Validation
++
++Portable tests execute every rejection method and property without initialized
++Worker state and verify that the inventory exactly matches the explicit stubs.
++They also cover constructor structure, profiler settings and executor behavior.
++
++Runtime guards compare the actual installed GPUWorker surface with NPUWorker
++declarations. New upstream interfaces fail until an explicit boundary or a
++validated inheritance decision is supplied. Another test executes the real
++GPUWorker constructor on a bare NPUWorker with WorkerBase configuration setup
++replaced by a test double. This checks parent state and hook dispatch, not full
++NPU startup.
++
++Source comparison checks that all existing non-constructor methods and
++decorators remain unchanged. Actual startup, serving and the applicable
++hardware/version validation remain required before merge.
+diff --git a/release_notes/fragments/20865.yaml b/release_notes/fragments/20865.yaml
+index a8c996a2b..9b9946059 100644
+--- a/release_notes/fragments/20865.yaml
++++ b/release_notes/fragments/20865.yaml
+@@ -2,3 +2,5 @@ pr: 20865
+ entries:
+   - category: dependency
+     text: The Worker inheritance migration requires the verified vLLM platform-hook commit; older release lanes require the same hook backport.
++  - category: other
++    text: Worker interfaces newly exposed by GPUWorker inheritance raise NotImplementedError until their NPU contracts are validated. Existing NPU Worker methods retain their behavior.
+diff --git a/tests/ut/worker/test_worker_inheritance.py b/tests/ut/worker/test_worker_inheritance.py
+new file mode 100644
+index 000000000..22c501780
+--- /dev/null
++++ b/tests/ut/worker/test_worker_inheritance.py
+@@ -0,0 +1,61 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Check the quarantine against the actual installed vLLM Worker surface."""
++
++import inspect
++from types import SimpleNamespace
++
++from vllm_ascend.worker.worker_interfaces import UNVERIFIED_GPU_WORKER_METHODS
++
++
++def test_no_unverified_gpu_worker_interface_is_inherited():
++    from vllm.v1.worker.gpu_worker import Worker as GPUWorker
++
++    from vllm_ascend.worker.worker import NPUWorker
++
++    parent_interfaces = {
++        name
++        for name, member in vars(GPUWorker).items()
++        if inspect.isfunction(member) or isinstance(member, (property, classmethod, staticmethod))
++    }
++    assert NPUWorker.__bases__ == (GPUWorker,)
++    assert not parent_interfaces - vars(NPUWorker).keys(), "New upstream interfaces require an explicit NPU boundary."
++    assert set(UNVERIFIED_GPU_WORKER_METHODS) <= parent_interfaces
++    for name in UNVERIFIED_GPU_WORKER_METHODS:
++        assert inspect.getattr_static(NPUWorker, name) is not inspect.getattr_static(GPUWorker, name)
++
++
++def test_parent_constructor_initializes_common_state(monkeypatch):
++    from vllm.v1.worker import gpu_worker
++
++    from vllm_ascend.worker.worker import NPUWorker
++
++    config = SimpleNamespace(
++        use_v2_model_runner=False,
++        parallel_config=SimpleNamespace(enable_fault_tolerance=False),
++        profiler_config=None,
++    )
++    calls = []
++
++    def init_worker_base(self, **kwargs):
++        calls.append(kwargs)
++        self.vllm_config = kwargs["vllm_config"]
++        self.parallel_config = self.vllm_config.parallel_config
++
++    monkeypatch.setattr(gpu_worker.WorkerBase, "__init__", init_worker_base)
++    monkeypatch.setattr(gpu_worker.torch, "set_float32_matmul_precision", lambda precision: None)
++    worker = object.__new__(NPUWorker)
++    gpu_worker.Worker.__init__(worker, config, 0, 0, "env://")
++
++    assert len(calls) == 1
++    assert calls[0]["vllm_config"] is config
++    assert worker._sleep_saved_buffers == {}
++    assert worker._sleep_saved_parameters == {}
++    assert worker._sleep_saved_draft_buffers == {}
++    assert worker.weight_transfer_engine is None
++    assert worker._weight_update_active is False
++    assert worker._weight_update_is_draft is False
++    assert worker.profiler is None
++    assert worker._pp_send_work == []
++    assert worker._sleep_mode_backend is None
++    assert worker.worker_sentinel is None
++    assert vars(worker.elastic_ep_executor) == {}
+diff --git a/tests/ut/worker/test_worker_rfc_contract.py b/tests/ut/worker/test_worker_rfc_contract.py
+index ed170f602..169f00d39 100644
+--- a/tests/ut/worker/test_worker_rfc_contract.py
++++ b/tests/ut/worker/test_worker_rfc_contract.py
+@@ -7,6 +7,7 @@ startup remains an integration check for the supported vLLM dependency.
+ 
+ import ast
+ import copy
++import inspect
+ import types
+ import unittest
+ from pathlib import Path
+@@ -26,13 +27,60 @@ def worker_method(name):
+     method = copy.deepcopy(
+         next(node for node in worker_class().body if isinstance(node, ast.FunctionDef) and node.name == name)
+     )
+-    module = ast.Module(body=[method], type_ignores=[])
++    module = ast.Module(
++        body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), method],
++        type_ignores=[],
++    )
+     scope = {}
+     exec(compile(ast.fix_missing_locations(module), str(WORKER), "exec"), scope)
+     return scope[name]
+ 
+ 
++def worker_interfaces():
++    scope = {}
++    path = ROOT / "vllm_ascend/worker/worker_interfaces.py"
++    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), scope)
++    return scope
++
++
+ class WorkerInheritanceContract(unittest.TestCase):
++    def test_unverified_methods_and_properties_raise_before_accessing_state(self):
++        names = worker_interfaces()["UNVERIFIED_GPU_WORKER_METHODS"]
++        self.assertIsInstance(names, tuple)
++        self.assertEqual(len(names), len(set(names)))
++        for name in names:
++            with self.subTest(method=name):
++                method = worker_method(name)
++                if isinstance(method, property):
++                    with self.assertRaisesRegex(NotImplementedError, name):
++                        method.__get__(object(), object)
++                    continue
++                parameters = list(inspect.signature(method).parameters.values())[1:]
++                required = [p for p in parameters if p.default is inspect.Parameter.empty]
++                args = [object()] + [
++                    object()
++                    for p in required
++                    if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
++                ]
++                kwargs = {p.name: object() for p in required if p.kind is inspect.Parameter.KEYWORD_ONLY}
++                with self.assertRaisesRegex(NotImplementedError, name):
++                    method(*args, **kwargs)
++
++    def test_unverified_registry_matches_explicit_stubs(self):
++        observed = set()
++        for method in worker_class().body:
++            if not isinstance(method, ast.FunctionDef) or len(method.body) != 1:
++                continue
++            statement = method.body[0]
++            if (
++                isinstance(statement, ast.Raise)
++                and isinstance(statement.exc, ast.Call)
++                and isinstance(statement.exc.func, ast.Name)
++                and statement.exc.func.id == "NotImplementedError"
++            ):
++                observed.add(method.name)
++        self.assertEqual(observed, set(worker_interfaces()["UNVERIFIED_GPU_WORKER_METHODS"]))
++
+     def test_real_parent_constructor_is_used(self):
+         cls = worker_class()
+         self.assertEqual([ast.unparse(base) for base in cls.bases], ["GPUWorker"])
+@@ -41,6 +89,45 @@ class WorkerInheritanceContract(unittest.TestCase):
+         self.assertIn("super().__init__", calls)
+         self.assertNotIn("WorkerBase.__init__", calls)
+ 
++    def test_constructor_rejects_missing_hooks_and_fault_tolerance(self):
++        constructor = next(
++            node for node in worker_class().body if isinstance(node, ast.FunctionDef) and node.name == "__init__"
++        )
++        guards = [
++            copy.deepcopy(node)
++            for node in constructor.body
++            if isinstance(node, ast.If)
++            and any(
++                isinstance(statement, ast.Raise)
++                and isinstance(statement.exc, ast.Call)
++                and isinstance(statement.exc.func, ast.Name)
++                and statement.exc.func.id in ("RuntimeError", "NotImplementedError")
++                for statement in node.body
++            )
++        ]
++        self.assertEqual(len(guards), 2)
++        module = ast.fix_missing_locations(ast.Module(body=guards, type_ignores=[]))
++        hooks = {name: object() for name in ("_make_elastic_ep_executor", "_validate_profiler_config")}
++        for missing in (None, *hooks):
++            for fault_tolerance in (False, True):
++                with self.subTest(missing=missing, fault_tolerance=fault_tolerance):
++                    scope = {
++                        "GPUWorker": SimpleNamespace(
++                            **{name: value for name, value in hooks.items() if name != missing}
++                        ),
++                        "vllm_config": SimpleNamespace(
++                            parallel_config=SimpleNamespace(enable_fault_tolerance=fault_tolerance)
++                        ),
++                    }
++                    if missing is not None:
++                        with self.assertRaisesRegex(RuntimeError, "platform hooks"):
++                            exec(compile(module, str(WORKER), "exec"), scope)
++                    elif fault_tolerance:
++                        with self.assertRaisesRegex(NotImplementedError, "fault-tolerance"):
++                            exec(compile(module, str(WORKER), "exec"), scope)
++                    else:
++                        exec(compile(module, str(WORKER), "exec"), scope)
++
+     def test_npu_profiler_validation(self):
+         validate = worker_method("_validate_profiler_config")
+         for config in (None, SimpleNamespace(profiler=None), SimpleNamespace(profiler="torch")):
+diff --git a/vllm_ascend/worker/worker.py b/vllm_ascend/worker/worker.py
+index d6d363c0d..f81f66178 100644
+--- a/vllm_ascend/worker/worker.py
++++ b/vllm_ascend/worker/worker.py
+@@ -23,7 +23,7 @@ import logging
+ from contextlib import AbstractContextManager, nullcontext
+ from fnmatch import filter as fnmatch_filter
+ from types import NoneType
+-from typing import Any
++from typing import TYPE_CHECKING, Any
+ from unittest.mock import patch
+ 
+ import torch
+@@ -121,6 +121,11 @@ from vllm_ascend.utils import (
+     setup_ascend_local_comm_res,
+ )
+ 
++if TYPE_CHECKING:
++    from vllm.device_allocator.sleep_mode_backend import SleepModeBackend
++    from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
++    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
++
+ 
+ def get_kv_cache_groups(
+     vllm_config: VllmConfig,
+@@ -266,6 +271,102 @@ class NPUWorker(GPUWorker):
+ 
+         return UnsupportedElasticEPExecutor()
+ 
++    # Quarantine newly visible GPUWorker interfaces until each NPU contract is
++    # validated. Existing NPU methods retain their bodies and decorators.
++    def _before_execute_model(self, scheduler_output: "SchedulerOutput") -> None:
++        raise NotImplementedError("GPUWorker._before_execute_model is not validated on Ascend.")
++
++    def _get_pp_all_gather_group(self):
++        raise NotImplementedError("GPUWorker._get_pp_all_gather_group is not validated on Ascend.")
++
++    def _after_pp_send(self, output: IntermediateTensors) -> ModelRunnerOutput | AsyncModelRunnerOutput | None:
++        raise NotImplementedError("GPUWorker._after_pp_send is not validated on Ascend.")
++
++    @property
++    def sleep_mode_backend(self) -> "SleepModeBackend":
++        raise NotImplementedError("GPUWorker.sleep_mode_backend is not validated on Ascend.")
++
++    def _get_sleep_parameters(self, model: nn.Module) -> dict[str, nn.Parameter]:
++        raise NotImplementedError("GPUWorker._get_sleep_parameters is not validated on Ascend.")
++
++    def discard(self, tags: tuple[str, ...]) -> None:
++        raise NotImplementedError("GPUWorker.discard is not validated on Ascend.")
++
++    def checkpoint_prepare(self) -> None:
++        raise NotImplementedError("GPUWorker.checkpoint_prepare is not validated on Ascend.")
++
++    def checkpoint_restore(self) -> None:
++        raise NotImplementedError("GPUWorker.checkpoint_restore is not validated on Ascend.")
++
++    def _scoped_allocator_max_split(self, max_split_size_mb: int):
++        raise NotImplementedError("GPUWorker._scoped_allocator_max_split is not validated on Ascend.")
++
++    def _init_workspace_and_model_runner(self) -> None:
++        raise NotImplementedError("GPUWorker._init_workspace_and_model_runner is not validated on Ascend.")
++
++    def _make_model_runner(self) -> "GPUModelRunner":
++        raise NotImplementedError("GPUWorker._make_model_runner is not validated on Ascend.")
++
++    def handle_ft_command(self, ft_request):
++        raise NotImplementedError("GPUWorker.handle_ft_command is not validated on Ascend.")
++
++    def _compile_or_warm_up_model(self) -> CompilationTimes:
++        raise NotImplementedError("GPUWorker._compile_or_warm_up_model is not validated on Ascend.")
++
++    def _maybe_activate_jit_monitor(self) -> None:
++        raise NotImplementedError("GPUWorker._maybe_activate_jit_monitor is not validated on Ascend.")
++
++    def _get_cudagraph_capture_context(self) -> AbstractContextManager[None]:
++        raise NotImplementedError("GPUWorker._get_cudagraph_capture_context is not validated on Ascend.")
++
++    def reset_mm_cache(self) -> None:
++        raise NotImplementedError("GPUWorker.reset_mm_cache is not validated on Ascend.")
++
++    def get_draft_model(self) -> nn.Module | None:
++        raise NotImplementedError("GPUWorker.get_draft_model is not validated on Ascend.")
++
++    def supports_draft_weight_updates(self) -> bool:
++        raise NotImplementedError("GPUWorker.supports_draft_weight_updates is not validated on Ascend.")
++
++    def _set_draft_weight_update_target(self) -> None:
++        raise NotImplementedError("GPUWorker._set_draft_weight_update_target is not validated on Ascend.")
++
++    def get_compilation_match_table(self) -> dict[str, int]:
++        raise NotImplementedError("GPUWorker.get_compilation_match_table is not validated on Ascend.")
++
++    def get_encoder_timing_stats(self) -> dict[str, dict[str, float | int]]:
++        raise NotImplementedError("GPUWorker.get_encoder_timing_stats is not validated on Ascend.")
++
++    def annotate_profile(self, scheduler_output):
++        raise NotImplementedError("GPUWorker.annotate_profile is not validated on Ascend.")
++
++    @property
++    def randomize_dummy_inputs(self) -> bool:
++        raise NotImplementedError("GPUWorker.randomize_dummy_inputs is not validated on Ascend.")
++
++    def save_sharded_state(
++        self,
++        path: str,
++        pattern: str | None = None,
++        max_size: int | None = None,
++    ) -> None:
++        raise NotImplementedError("GPUWorker.save_sharded_state is not validated on Ascend.")
++
++    def save_tensorized_model(self, tensorizer_config: "TensorizerConfig") -> None:
++        raise NotImplementedError("GPUWorker.save_tensorized_model is not validated on Ascend.")
++
++    def shutdown_weight_transfer_engine(self) -> None:
++        raise NotImplementedError("GPUWorker.shutdown_weight_transfer_engine is not validated on Ascend.")
++
++    def start_draft_weight_update(self) -> None:
++        raise NotImplementedError("GPUWorker.start_draft_weight_update is not validated on Ascend.")
++
++    def _start_weight_update(self, is_draft: bool = False) -> None:
++        raise NotImplementedError("GPUWorker._start_weight_update is not validated on Ascend.")
++
++    def elastic_ep_execute(self, execute_method: str, *args, **kwargs):
++        raise NotImplementedError("GPUWorker.elastic_ep_execute is not validated on Ascend.")
++
+     def uninstall_static_kernel(self):
+         import fcntl
+         import os
+diff --git a/vllm_ascend/worker/worker_interfaces.py b/vllm_ascend/worker/worker_interfaces.py
+index 8ce942a45..bc8f36a85 100644
+--- a/vllm_ascend/worker/worker_interfaces.py
++++ b/vllm_ascend/worker/worker_interfaces.py
+@@ -1,6 +1,40 @@
+ # SPDX-License-Identifier: Apache-2.0
+ """Explicit boundaries for GPU Worker facilities unavailable on Ascend."""
+ 
++# Remove an entry and its NPUWorker stub together only after validating the
++# inherited contract. Constructor hooks are implemented separately on NPUWorker.
++UNVERIFIED_GPU_WORKER_METHODS = (
++    "_before_execute_model",
++    "_get_pp_all_gather_group",
++    "_after_pp_send",
++    "sleep_mode_backend",
++    "_get_sleep_parameters",
++    "discard",
++    "checkpoint_prepare",
++    "checkpoint_restore",
++    "_scoped_allocator_max_split",
++    "_init_workspace_and_model_runner",
++    "_make_model_runner",
++    "handle_ft_command",
++    "_compile_or_warm_up_model",
++    "_maybe_activate_jit_monitor",
++    "_get_cudagraph_capture_context",
++    "reset_mm_cache",
++    "get_draft_model",
++    "supports_draft_weight_updates",
++    "_set_draft_weight_update_target",
++    "get_compilation_match_table",
++    "get_encoder_timing_stats",
++    "annotate_profile",
++    "randomize_dummy_inputs",
++    "save_sharded_state",
++    "save_tensorized_model",
++    "shutdown_weight_transfer_engine",
++    "start_draft_weight_update",
++    "_start_weight_update",
++    "elastic_ep_execute",
++)
++
+ 
+ class UnsupportedElasticEPExecutor:
+     """No thread pool is constructed when elastic EP is unsupported."""

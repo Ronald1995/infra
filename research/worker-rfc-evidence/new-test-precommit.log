@@ -1,0 +1,49 @@
+ruff check..................................................................Passed
+ruff format.................................................................Passed
+codespell...................................................................Passed
+typos.......................................................................Passed
+clang-format............................................(no files to check)Skipped
+markdownlint............................................(no files to check)Skipped
+Lint GitHub Actions workflow files......................(no files to check)Skipped
+Gitleaks Secret Scan(Local Binary)..........................................Failed
+- hook id: gitleaks-offline-scan
+- exit code: 1
+
+Executable `/bin/bash` not found
+
+Lint shell scripts......................................(no files to check)Skipped
+Lint PNG exports from excalidraw........................(no files to check)Skipped
+Check for spaces in all filenames...........................................Failed
+- hook id: check-filenames
+- exit code: 1
+
+Executable `bash` not found
+
+Enforce __init__.py in Python packages......................................Passed
+Forbid init_logger(__name__) in vllm_ascend modules.........................Failed
+- hook id: check-logger
+- exit code: 1
+
+Executable `/bin/bash` not found
+
+Check for forbidden imports.................................................Passed
+Check for boolean ops in with-statements....................................Passed
+Check that new functions over 100 lines have comments.......................Failed
+- hook id: check-long-functions
+- exit code: 9009
+
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+
+Check symbolic shapes in meta kernels.......................................Failed
+- hook id: check-symbolic-meta
+- exit code: 9009
+
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+
+Suggestion..................................................................Failed
+- hook id: suggestion
+- duration: 0.02s
+- exit code: 1
+
+Executable `bash` not found
+

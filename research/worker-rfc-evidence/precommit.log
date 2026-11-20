@@ -1,0 +1,29 @@
+An unexpected error has occurred: OperationalError: attempt to write a readonly database
+Check the log at C:\Users\liurong\.cache\pre-commit\pre-commit.log
+Traceback (most recent call last):
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\site-packages\pre_commit\error_handler.py", line 73, in error_handler
+    yield
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\site-packages\pre_commit\main.py", line 384, in main
+    store.mark_config_used(args.config)
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\site-packages\pre_commit\store.py", line 235, in mark_config_used
+    db.execute('INSERT OR IGNORE INTO configs VALUES (?)', (path,))
+sqlite3.OperationalError: attempt to write a readonly database
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\site-packages\pre_commit\__main__.py", line 7, in <module>
+    raise SystemExit(main())
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\site-packages\pre_commit\main.py", line 377, in main
+    with error_handler(), logging_handler(args.color):
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\contextlib.py", line 153, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\site-packages\pre_commit\error_handler.py", line 81, in error_handler
+    _log_and_exit(msg, ret_code, e, traceback.format_exc())
+  File "C:\Users\liurong\AppData\Local\miniconda3\lib\site-packages\pre_commit\error_handler.py", line 36, in _log_and_exit
+    log: IO[bytes] = ctx.enter_context(open(log_path, 'wb'))
+PermissionError: [Errno 13] Permission denied: 'C:\\Users\\liurong\\.cache\\pre-commit\\pre-commit.log'

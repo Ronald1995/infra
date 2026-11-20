@@ -1,0 +1,72 @@
+ruff check..................................................................Passed
+ruff format.................................................................Passed
+codespell...................................................................Passed
+typos.......................................................................Passed
+clang-format................................................................Passed
+markdownlint................................................................Failed
+- hook id: markdownlint
+- files were modified by this hook
+Lint GitHub Actions workflow files..........................................Passed
+Gitleaks Secret Scan(Local Binary)..........................................Failed
+- hook id: gitleaks-offline-scan
+- exit code: 1
+
+Executable `/bin/bash` not found
+
+Lint shell scripts..........................................................Failed
+- hook id: shellcheck
+- exit code: 1
+
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+Please install shellcheck: https://github.com/koalaman/shellcheck?tab=readme-ov-file#installing
+
+Lint PNG exports from excalidraw............................................Passed
+Check for spaces in all filenames...........................................Passed
+Enforce __init__.py in Python packages......................................Passed
+Forbid init_logger(__name__) in vllm_ascend modules.........................Failed
+- hook id: check-logger
+- exit code: 1
+
+Executable `/bin/bash` not found
+
+Check for forbidden imports.................................................Passed
+Check for boolean ops in with-statements....................................Passed
+Check that new functions over 100 lines have comments.......................Failed
+- hook id: check-long-functions
+- exit code: 9009
+
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+
+Check symbolic shapes in meta kernels.......................................Failed
+- hook id: check-symbolic-meta
+- exit code: 9009
+
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+
+Suggestion..................................................................Passed
+- hook id: suggestion
+- duration: 0.03s
+
+To bypass pre-commit hooks, add --no-verify to git commit.
+
