@@ -403,6 +403,7 @@ Jetty 超时和内层 TP 超时有升档校验，配太小会先触发假故障�
 
 以下材料都在本机 CANN 知识库中，可对照阅读：
 
+- **姊妹篇**：本文讲"零件"（Jetty 是什么），[HCCL 与 HCOMM 在通信流程中的分工](HCCL_HCOMM.md) 讲"流程"（谁决定建 Jetty、谁去建、谁往里写工单）
 - **HCCL & HCOMM 软件架构简介**（分层、通信模型、引擎、同步机制）—— `cannbot-knowledge/cann-docs-raw/hcomm/docs/zh/architecture/architecture-brief.md`
 - **通信模型**（Channel / Endpoint / 内存语义）—— `cannbot-knowledge/cann-docs-raw/hcomm/docs/zh/comm_op_dev_guide/prog_models_concepts/comm_model.md`
 - **AIV 算子开发：创建资源**（Channel 与 Notify 的实际用法）—— `cannbot-knowledge/cann-docs-raw/hcomm/docs/zh/comm_op_dev_guide/aiv_comm_op_dev/create_res.md`
