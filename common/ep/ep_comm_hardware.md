@@ -765,4 +765,4 @@ CANN 的 `MoeDistributeDispatch` / `MoeDistributeCombine` 系列算子接口里�
 
 ---
 
-*配套阅读：[UB/Jetty.md](../../UB/Jetty.md) 讲 Jetty 的对象模型、SQE / CQE、超时与排错；[UB/HCCL_HCOMM.md](../../UB/HCCL_HCOMM.md) 讲 HCCL 与 HCOMM 的分工；[../ep.md](../ep.md) 是 EP 通信库与算子的仓库级调研。*
+*配套阅读：[UB/Jetty.md](../../UB/Jetty.md) 讲 Jetty 的对象模型、SQE / CQE、超时与排错；[UB/HCCL_HCOMM.md](../../UB/HCCL_HCOMM.md) 讲 HCCL 与 HCOMM 的分工；[../ep.md](../ep.md) 是按算子去重的 EP 算子库调研（含硬件定位、前反向支持与仓库地址）。*
