@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "infra-ep-benchmark"
+version = "0.1.0"
+description = "Scaffold for distributed expert parallel benchmarks"
+requires-python = ">=3.10"
+
+[project.scripts]
+ep-benchmark = "run_benchmark:main"
+
+[tool.setuptools]
+py-modules = ["run_benchmark"]
+
+[tool.setuptools.packages.find]
+include = ["analysis", "backends", "benchmarks", "common", "profiling"]

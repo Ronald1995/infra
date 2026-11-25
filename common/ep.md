@@ -1,6 +1,8 @@
 # 昇腾 EP 算子库调研
 
-EP（专家并行）后端按具体实现列出。Token 重排、GroupedMatMul（GMM）、SwiGLU、掩码和去重作为相应后端的实现细节记录。窄窗口可以横向滚动表格查看仓库地址。通信数据面见 [EP 通信的两条硬件路径](ep/ep_comm_hardware.md)。
+EP（专家并行）后端按具体实现列出。Token 重排、GroupedMatMul（GMM）、SwiGLU、掩码和去重作为相应后端的实现细节记录。窄窗口可以横向滚动表格查看仓库地址。
+
+架构、算子实现、测试与分析见 [EP 专题目录](ep/README.md)。通信数据面见 [EP 通信的两条硬件路径](ep/01_architecture/ep_comm_hardware.md)。
 
 | 算子名称 | 硬件与定位 | 前反向支持 | 基本实现内容 | 仓库地址 |
 |---|---|---|---|---|

@@ -1,0 +1,41 @@
+# Candidate benchmark configuration.
+distributed:
+  ep_size: 8
+  tp_size: 1
+
+model:
+  hidden_size: 7168
+  intermediate_size: 3072
+  num_experts: 24
+  top_k: 6
+  dtype: bfloat16
+
+workload:
+  tokens_per_rank: 4096
+  routing: balanced
+  seed: 42
+
+load_balance:
+  enabled: false
+  redundant_experts: 0
+
+dedup:
+  mode: none
+
+benchmark:
+  warmup: 20
+  iterations: 50
+  levels: [L1, L2, L3, L4]
+  rank_reduction: max
+  phase: forward
+
+profiling:
+  enabled: false
+  warmup: 1
+  active: 3
+
+backends:
+  - deepep_ascend
+  - deepep_lueelu
+  - alltoallv_gmm_cann
+  - megamoe_cann
