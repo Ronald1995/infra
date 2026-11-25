@@ -1,0 +1,7 @@
+extends: ep8_bf16.yaml
+suite_id: training_tail
+matrix:
+  - workload: {tokens_per_rank: 16}
+  - workload: {tokens_per_rank: 64}
+  - workload: {tokens_per_rank: 128}
+  - workload: {tokens_per_rank: 512}

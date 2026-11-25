@@ -1,0 +1,2 @@
+extends: ../../configs/ep8_bf16.yaml
+operators: [fused_deep_moe_sglang]

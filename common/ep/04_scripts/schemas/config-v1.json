@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Resolved EP benchmark configuration v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "device",
+    "suite_id",
+    "distributed",
+    "model",
+    "workload",
+    "benchmark",
+    "topology",
+    "operators"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "device": {
+      "enum": [
+        "npu",
+        "cpu"
+      ]
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "hidden_size",
+        "intermediate_size",
+        "num_experts",
+        "top_k",
+        "dtype"
+      ]
+    },
+    "distributed": {
+      "type": "object",
+      "required": [
+        "ep_size",
+        "tp_size",
+        "timeout_seconds"
+      ]
+    }
+  }
+}

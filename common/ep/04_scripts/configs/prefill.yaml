@@ -1,4 +1,4 @@
-# Candidate benchmark configuration.
+suite_id: prefill
 distributed:
   ep_size: 8
   tp_size: 1

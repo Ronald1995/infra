@@ -25,6 +25,8 @@
 ## 04 测试脚本
 
 - [脚本目录、配置和入口](04_scripts/README.md)
+- [36 个算子接入矩阵](04_scripts/operators/README.md)
+- [Agent Benchmark Skill](04_scripts/SKILL.md)
 
 ## 05 测试结果
 

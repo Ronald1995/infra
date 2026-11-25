@@ -1,0 +1,5 @@
+extends: ep8_bf16.yaml
+suite_id: quantized
+workload: {tokens_per_rank: 128}
+benchmark: {phase: forward}
+operators: [mc2_dispatch_cann, alltoallv_quant_gmm_cann, megamoe_cann, megamoe_deepgemm_ascend]

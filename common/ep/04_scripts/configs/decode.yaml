@@ -1,4 +1,4 @@
-# Candidate benchmark configuration.
+suite_id: decode
 distributed:
   ep_size: 8
   tp_size: 1
@@ -37,4 +37,4 @@ profiling:
 backends:
   - deepep_lueelu
   - deepep_sglang
-  - vllm_ascend
+  - dispatch_ffn_combine_vllm_ascend

@@ -4,9 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "infra-ep-benchmark"
-version = "0.1.0"
-description = "Scaffold for distributed expert parallel benchmarks"
+version = "0.2.0"
+description = "Distributed expert parallel benchmarks for Ascend and CPU validation"
 requires-python = ">=3.10"
+dependencies = ["PyYAML>=6", "numpy>=1.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "jsonschema>=4"]
+charts = ["matplotlib>=3.7"]
 
 [project.scripts]
 ep-benchmark = "run_benchmark:main"
@@ -15,4 +20,14 @@ ep-benchmark = "run_benchmark:main"
 py-modules = ["run_benchmark"]
 
 [tool.setuptools.packages.find]
-include = ["analysis", "backends", "benchmarks", "common", "profiling"]
+include = ["analysis*", "baselines*", "benchmarks*", "common*", "metrics*", "operators*", "profiling*", "reporting*", "schemas*"]
+exclude = ["*.tests"]
+
+[tool.setuptools.package-data]
+operators = ["registry.yaml", "*/config.yaml"]
+schemas = ["*.json"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests", "operators"]
+markers = ["npu: native tests requiring an explicitly provided Ascend runtime"]

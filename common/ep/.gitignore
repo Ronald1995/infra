@@ -1,0 +1,13 @@
+# Local benchmark dependencies and runtime outputs
+.upstream-*/
+.cpu-venv/
+.uv-cache/
+04_scripts/__pycache__/
+**/__pycache__/
+**/.pytest_cache/
+04_scripts/.pytest-work/
+04_scripts/*.egg-info/
+04_scripts/build/
+05_results/raw/.baseline_cache/
+05_results/raw/20*T*-*/
+05_results/raw/local-*/

@@ -1,0 +1,1136 @@
+{
+  "schema_version": 1,
+  "operators": {
+    "allgather_hccl": {
+      "status": "integrated",
+      "source": "https://github.com/Ascend/pytorch",
+      "commit": null,
+      "api": "torch.distributed.all_gather / reduce_scatter_tensor",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "dispatch",
+        "combine",
+        "router_layer",
+        "recompute",
+        "dynamic_shapes"
+      ],
+      "constraints": {
+        "devices": [
+          "npu",
+          "cpu"
+        ]
+      },
+      "traffic_model": "collective_allgather"
+    },
+    "allgather_megatron": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "MoEAllGatherTokenDispatcher",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "allgather_fsdpturbo": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "all_gather_experts_forward_fn",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "allgather_overlap_mindspeed": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "MoELayerOverlapAllGather.apply",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "alltoall_hccl": {
+      "status": "integrated",
+      "source": "https://github.com/Ascend/pytorch",
+      "commit": null,
+      "api": "torch.distributed.all_to_all_single",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "dispatch",
+        "combine",
+        "router_layer",
+        "recompute",
+        "cached_dispatch",
+        "async_dispatch",
+        "async_combine",
+        "dynamic_shapes"
+      ],
+      "constraints": {
+        "devices": [
+          "npu",
+          "cpu"
+        ]
+      },
+      "traffic_model": "collective_alltoallv"
+    },
+    "alltoall_megatron": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "MoEAlltoAllTokenDispatcher",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "alltoall_fsdpturbo": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "all2all_experts_forward_fn (fused=False)",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "fused_fsdpturbo": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "all2all_experts_forward_fn (fused=True)",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "chunkmoe_fsdpturbo": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "chunkmoe_experts_forward_fn",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "chunk_pipeline"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "domino_fsdpturbo": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "get_domino_experts_forward_fn",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "hierarchical_alltoallv_mindspeed": {
+      "status": "not_implemented",
+      "source": "https://gitcode.com/Ascend/MindSpeed",
+      "commit": "c68e201a5733065b3aa59a3d44dc5e2ec700d7c9",
+      "api": "--moe-hierarchical-alltoallv / --moe-tp-extend-ep",
+      "capabilities": [],
+      "constraints": {
+        "devices": [
+          "npu"
+        ]
+      },
+      "reason": "Pinned ascendep demo is a launcher for a separate Megatron training driver. The TP-extend-EP model and workload integration is pending."
+    },
+    "mc2_dispatch_cann_v1": {
+      "status": "integrated",
+      "source": "https://github.com/Ascend/op-plugin",
+      "commit": "c83e36b808c4e053c9245f95c7bc45cfaae0000d",
+      "api": "npu_moe_distribute_dispatch / npu_moe_distribute_combine",
+      "capabilities": [
+        "dispatch",
+        "combine",
+        "moe_forward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16",
+          "float16"
+        ],
+        "hidden_size": 7168,
+        "min_tokens": 1,
+        "max_tokens": 512,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "ep_sizes": [
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128,
+          144,
+          256,
+          288
+        ],
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "mc2_dispatch_cann": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "npu_moe_distribute_dispatch_v2 / npu_moe_distribute_combine_v2",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "dispatch",
+        "combine",
+        "quantized_dispatch"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "mc2_dispatch_cann_v3": {
+      "status": "not_implemented",
+      "source": "https://gitcode.com/cann/ops-transformer",
+      "commit": "68a67e130417593f37ea3cece1ebfb4be366b95f",
+      "api": "aclnnMoeDistributeDispatchV3 / aclnnMoeDistributeCombineV3",
+      "capabilities": [],
+      "constraints": {
+        "devices": [
+          "npu"
+        ]
+      },
+      "reason": "The published V3 ACLNN API takes a communication context. The pinned op-plugin does not expose V3 dispatch/combine Python bindings."
+    },
+    "mc2_combine_add_rmsnorm_cann": {
+      "status": "integrated",
+      "source": "https://github.com/Ascend/op-plugin",
+      "commit": "c83e36b808c4e053c9245f95c7bc45cfaae0000d",
+      "api": "npu_moe_distribute_combine_add_rms_norm",
+      "capabilities": [
+        "combine_add_rmsnorm"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "hidden_size": 7168,
+        "min_tokens": 1,
+        "max_tokens": 512,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "ep_sizes": [
+          2,
+          8
+        ]
+      },
+      "dependencies": [
+        "torch_npu",
+        "pinned ascendep DispatchV2 aid"
+      ]
+    },
+    "alltoallv_gmm_cann": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "npu_alltoallv_gmm / npu_gmm_alltoallv",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "dispatch_gmm",
+        "gmm_combine",
+        "fused_backward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "alltoallv_quant_gmm_cann": {
+      "status": "integrated",
+      "source": "https://github.com/Ascend/op-plugin",
+      "commit": "c83e36b808c4e053c9245f95c7bc45cfaae0000d",
+      "api": "npu_alltoallv_quant_gmm",
+      "capabilities": [
+        "quantized_fusion"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16",
+          "float16"
+        ],
+        "min_tokens": 1,
+        "contiguous_placement": true,
+        "ep_sizes": [
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128,
+          256
+        ],
+        "numeric_contract": "mxfp8_activations_and_weights"
+      }
+    },
+    "mc2_fsdpturbo": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "dispatcher_mc2",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "ep_gmm_fused_lueelu": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "deep_ep_experimental.ep_gmm_fused",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "dispatch_gmm",
+        "gmm_combine",
+        "fused_backward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "deepep_cann": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "cann_ops_transformer ElasticBuffer",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "routing": [
+          "balanced"
+        ],
+        "unadapted": {
+          "dispatch": "Native dispatch exists. Standalone layout validation is pending.",
+          "combine": "Native combine exists. Standalone layout validation is pending.",
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "deepep_ascend": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "deep_ep.EPBuffer",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "dispatch",
+        "combine",
+        "cached_dispatch"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "deepep_v2_ascend": {
+      "status": "integrated",
+      "source": "https://gitcode.com/lishaoxun/DeepEP_9283",
+      "commit": "69090a120cfee06be431a79873692677bc07b042",
+      "api": "deep_ep.ElasticBuffer",
+      "capabilities": [
+        "dispatch",
+        "combine",
+        "cached_dispatch",
+        "async_dispatch",
+        "async_combine",
+        "moe_forward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          32,
+          64,
+          128
+        ],
+        "hidden_size": 7168,
+        "min_tokens": 256,
+        "max_tokens": 10240,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Separate low-latency buffer lifecycle is pending"
+        }
+      }
+    },
+    "deepep_lueelu": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "deep_ep.ElasticBuffer (Mesh+Clos)",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "dispatch",
+        "combine",
+        "cached_dispatch",
+        "async_dispatch",
+        "async_combine"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128,
+          256,
+          512
+        ],
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "max_tokens": 16384,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "deepep_direct_lueelu": {
+      "status": "integrated",
+      "source": "https://github.com/lueelu/DeepEP",
+      "commit": "83252a54d2363734a706a7dd8368bebc3094af5a",
+      "api": "deep_ep.backends.direct.api.ElasticBuffer",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "dispatch",
+        "combine",
+        "cached_dispatch",
+        "async_dispatch",
+        "async_combine"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      },
+      "upstream": "deepep_ascend"
+    },
+    "deepep_sglang": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "CamMoeDispatchNormal / CamMoeCombineNormal",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dispatch": "Native dispatch exists. Standalone layout validation is pending.",
+          "combine": "Native combine exists. Standalone layout validation is pending.",
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "megamoe_cann": {
+      "status": "integrated",
+      "source": "https://gitcode.com/cann/ops-transformer",
+      "commit": "68a67e130417593f37ea3cece1ebfb4be366b95f",
+      "api": "cann_ops_transformer.ops.mega_moe (A16W16)",
+      "capabilities": [
+        "moe_forward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Symmetric window resize and reuse are pending"
+        }
+      }
+    },
+    "megamoe_lueelu": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "bf16_mega_moe",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "routing": [
+          "balanced"
+        ],
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "megamoe_fsdpturbo": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "get_mega_moe_forward_fn",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "megamoe_td": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "MegaMoEFunction.apply",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "routing": [
+          "balanced"
+        ],
+        "unadapted": {
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "megamoe_deepgemm_ascend": {
+      "status": "integrated",
+      "source": "https://github.com/deepseek-ai/DeepGEMM-Ascend",
+      "commit": "3a35326271b069b8b5bf1a754435acd6cc91575b",
+      "api": "deep_gemm.fp8_fp4_mega_moe",
+      "capabilities": [
+        "moe_forward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          8
+        ],
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "numeric_contract": "mxfp8_activations_mxfp4_weights_no_shared_expert"
+      }
+    },
+    "moonep": {
+      "status": "historical_verified",
+      "source": "https://github.com/penn513/ascendep",
+      "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+      "api": "npu_patch.Buffer.dispatch / combine (UDMA)",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "num_experts": 24,
+        "top_k": 6,
+        "swiglu_limit": 10,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "routing": [
+          "balanced"
+        ],
+        "unadapted": {
+          "dispatch": "Native dispatch exists. Standalone layout validation is pending.",
+          "combine": "Native combine exists. Standalone layout validation is pending.",
+          "dynamic_shapes": "Native resized workspace lifecycle is pending"
+        }
+      }
+    },
+    "moonep_dynamic_planner": {
+      "status": "integrated",
+      "source": "https://gitcode.com/Ascend/MoonEP/tree/dev_npu",
+      "commit": "b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f",
+      "api": "MoonEP dev_npu planner / replica refresh",
+      "capabilities": [
+        "planned_dispatch"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "dynamic_planner": "End-to-end replica weight refresh and gradient reduction are not integrated"
+        }
+      }
+    },
+    "moonep_server_dedup": {
+      "status": "integrated",
+      "source": "https://gitcode.com/Ascend/MoonEP/tree/dev_server_dedup",
+      "commit": "d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d",
+      "api": "MoonEP dev_server_dedup dispatch / combine",
+      "capabilities": [
+        "rank_dedup",
+        "server_dedup"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "unadapted": {
+          "router_layer": "Full native Router, experts and dedup layer is pending"
+        }
+      }
+    },
+    "dispatch_ffn_combine_vllm_ascend": {
+      "status": "integrated",
+      "source": "https://github.com/vllm-project/vllm-ascend",
+      "commit": "0f63cfa1a52225f301ffd4a335b8daa3028c283f",
+      "api": "torch.ops._C_ascend.dispatch_ffn_combine",
+      "capabilities": [
+        "moe_forward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "hardware": [
+          "Atlas A3 (ascend910_93)"
+        ]
+      }
+    },
+    "dispatch_ffn_combine_sglang": {
+      "status": "integrated",
+      "source": "https://github.com/sgl-project/sgl-kernel-npu",
+      "commit": "458e72caf6cdfb5b9c06711e6f84d134d15e3f97",
+      "api": "FuseMode.DISPATCH_FFN_COMBINE",
+      "capabilities": [
+        "moe_forward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "hardware": [
+          "Atlas A3"
+        ],
+        "numeric_contract": "w8a8_integer"
+      }
+    },
+    "fused_deep_moe_sglang": {
+      "status": "integrated",
+      "source": "https://github.com/sgl-project/sgl-kernel-npu",
+      "commit": "458e72caf6cdfb5b9c06711e6f84d134d15e3f97",
+      "api": "FuseMode.FUSED_DEEP_MOE",
+      "capabilities": [
+        "moe_forward"
+      ],
+      "constraints": {
+        "devices": [
+          "npu"
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "ep_sizes": [
+          2,
+          8
+        ],
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "hardware": [
+          "Ascend 950"
+        ],
+        "numeric_contract": "mxfp8_activations_and_weights"
+      }
+    }
+  }
+}

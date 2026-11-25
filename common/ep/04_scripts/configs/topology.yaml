@@ -1,0 +1,6 @@
+extends: ep8_bf16.yaml
+suite_id: topology
+# Supply the physical rank-to-server map before adding cross_server_heavy.
+matrix:
+  - workload: {routing: balanced}
+  - workload: {routing: high_locality, preferred_route_ratio: 0.5}

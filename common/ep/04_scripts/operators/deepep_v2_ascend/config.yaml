@@ -1,0 +1,5 @@
+extends: ../../configs/ep64_bf16.yaml
+benchmark:
+  levels: [L1, L3]
+  phase: forward
+operators: [deepep_v2_ascend]

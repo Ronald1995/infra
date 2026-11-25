@@ -1,0 +1,5 @@
+extends: ../../configs/decode.yaml
+operators: [dispatch_ffn_combine_vllm_ascend]
+benchmark:
+  levels: [L3]
+  phase: forward

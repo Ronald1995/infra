@@ -1,0 +1,18 @@
+device: cpu
+suite_id: smoke_cpu
+distributed:
+  ep_size: 2
+model:
+  hidden_size: 16
+  intermediate_size: 24
+  num_experts: 8
+  top_k: 2
+  dtype: float32
+workload:
+  tokens_per_rank: [5, 3]
+benchmark:
+  warmup: 0
+  iterations: 2
+  levels: [L1, L2, L3, L4]
+  task_timeout_seconds: 90
+operators: [alltoall_hccl, allgather_hccl]

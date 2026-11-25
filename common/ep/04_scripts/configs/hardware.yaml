@@ -1,0 +1,5 @@
+extends: ep8_bf16.yaml
+suite_id: hardware
+benchmark:
+  levels: [L0]
+  message_bytes: [4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824]

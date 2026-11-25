@@ -1,0 +1,16 @@
+extends: smoke_cpu.yaml
+device: npu
+suite_id: smoke_npu
+model:
+  hidden_size: 512
+  intermediate_size: 256
+  num_experts: 24
+  top_k: 6
+  dtype: bfloat16
+workload:
+  tokens_per_rank: 64
+benchmark:
+  levels: [L0, L1, L3]
+matrix:
+  - distributed: {ep_size: 1}
+  - distributed: {ep_size: 2}

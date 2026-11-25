@@ -1,4 +1,4 @@
-# Candidate benchmark configuration.
+suite_id: dedup
 distributed:
   ep_size: 8
   tp_size: 1
@@ -25,7 +25,7 @@ dedup:
 benchmark:
   warmup: 20
   iterations: 50
-  levels: [L1, L3]
+  levels: [L1, L4]
   rank_reduction: max
 
 profiling:
@@ -34,4 +34,4 @@ profiling:
   active: 3
 
 backends:
-  - moonep
+  - moonep_server_dedup

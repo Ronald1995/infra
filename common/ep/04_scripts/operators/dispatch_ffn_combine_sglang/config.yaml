@@ -1,0 +1,2 @@
+extends: ../../configs/ep8_bf16.yaml
+operators: [dispatch_ffn_combine_sglang]

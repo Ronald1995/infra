@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EP benchmark result v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "task_id",
+    "case_id",
+    "suite_id",
+    "backend_id",
+    "benchmark_level",
+    "status",
+    "environment",
+    "topology",
+    "source_versions",
+    "config",
+    "workload",
+    "routing_trace_hash",
+    "correctness",
+    "raw_samples",
+    "latency",
+    "bandwidth",
+    "throughput",
+    "compute",
+    "overlap",
+    "memory",
+    "load_balance",
+    "profiling_artifacts",
+    "logs",
+    "error_reason"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "benchmark_level": {
+      "enum": [
+        "L0",
+        "L1",
+        "L2",
+        "L3",
+        "L4"
+      ]
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "unsupported",
+        "dependency_missing",
+        "environment_unavailable",
+        "source_unavailable",
+        "not_implemented",
+        "correctness_failed",
+        "runtime_failed",
+        "timeout",
+        "oom",
+        "not_run"
+      ]
+    },
+    "raw_samples": {
+      "type": "array"
+    },
+    "error_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "profiling_artifacts": {
+      "type": "array"
+    }
+  }
+}

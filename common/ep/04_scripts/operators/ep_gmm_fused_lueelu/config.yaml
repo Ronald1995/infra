@@ -1,0 +1,2 @@
+extends: ../../configs/ep8_bf16.yaml
+operators: [ep_gmm_fused_lueelu]

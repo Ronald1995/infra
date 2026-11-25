@@ -1,4 +1,4 @@
-# Candidate benchmark configuration.
+suite_id: load_balance
 distributed:
   ep_size: 8
   tp_size: 1
@@ -17,7 +17,7 @@ workload:
 
 load_balance:
   enabled: true
-  redundant_experts: 1
+  redundant_experts: 3
 
 dedup:
   mode: none
@@ -25,7 +25,7 @@ dedup:
 benchmark:
   warmup: 20
   iterations: 50
-  levels: [L3, L4]
+  levels: [L1, L3, L4]
   rank_reduction: max
 
 profiling:
@@ -34,4 +34,4 @@ profiling:
   active: 3
 
 backends:
-  - moonep
+  - moonep_dynamic_planner
