@@ -560,12 +560,12 @@ $$
 
 ### 4.6 负载均衡指标
 
-设专家 e 收到的 Token 数量为 $L_e$。
+设共有 $E$ 个专家，专家 $e$ 收到的 Token 数量为 $L_e$。
 
 定义专家负载不均衡比例：
 
 $$
-R_{\mathrm{expert}}= \frac{\max_e L_e}{\operatorname{mean}_e L_e}
+R_{\mathrm{expert}} = \frac{\max_e L_e}{\frac{1}{E}\sum_{e=1}^{E} L_e}
 $$
 
 对应的最大相对超载程度：
