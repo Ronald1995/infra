@@ -33,7 +33,7 @@
 | L1 | Dispatch、Combine             | 评价通信算子本身          |
 | L2 | Dispatch + GMM、GMM + Combine | 评价单段通算融合能力        |
 | L3 | 完整 Expert FFN 前反向            | 评价完整 EP 后端业务性能    |
-| L4 | Router、Top-K、动态规划及专家计算       | 评价真实 MoE Layer 性能 |
+| L4 | Router、Top-K、动态规划及专家前反向 | 评价真实 MoE 训练层性能 |
 
 所有后端只在相同测试层次、相同计算语义下进行横向排名。
 
@@ -45,22 +45,28 @@
 
 ### 2.1 基础参数定义
 
-| 参数                       | 符号  | 建议测试值                                   |
-| ------------------------ | --- | --------------------------------------- |
-| EP Size                  | P   | 8、16、32、64、128                          |
-| 每卡源 Token 数              | T   | 1、16、64、128、256、512、1024、2048、4096、8192 |
-| Hidden Size              | H   | 4096、7168、8192                          |
-| Expert Intermediate Size | I   | 1024、2048、3072                          |
-| 全局专家数量                   | E   | 24、128、256、384                          |
-| Top-K                    | K   | 1、4、6、8                                 |
-| 每卡专家数量                   | E/P | 1、2、3、4、8                               |
-| Dispatch dtype           | —   | BF16、FP8 等                              |
-| Combine dtype            | —   | BF16、其他受支持类型                            |
-| Tensor Parallel          | TP  | 第一阶段固定为 1                               |
-| 路由分布                     | —   | 均衡、随机、热点、真实 Trace                       |
-| 去重策略                     | —   | None、Rank、Server                        |
-| 动态专家规划                   | —   | Off、On                                  |
-| 执行模式                     | —   | Inference、Training                      |
+本方案覆盖 MoE 训练。测试输入规模按每卡源 Token 数定义。
+
+| 参数 | 符号 | 建议测试值 |
+| --- | --- | --- |
+| EP Size | P | 8、16、32、64、128 |
+| 每卡源 Token 数 | T | Dispatch 前本 Rank 的 Token 数。基础测点为 512、1024、2048、4096、8192，大输入测点按训练负载与后端容量向上扩展 |
+| Hidden Size | H | 4096、7168、8192 |
+| Expert Intermediate Size | I | 1024、2048、3072 |
+| 全局专家数量 | E | 24、128、256、384 |
+| Top-K | K | 采用各场景模型的实际路由 Top-K，同一对照组固定 K |
+| 每卡专家数量 | E/P | 1、2、3、4、8 |
+| Dispatch dtype | — | BF16、FP8 等 |
+| Combine dtype | — | BF16、其他受支持类型 |
+| Tensor Parallel | TP | EP8 基线固定为 1，其余测点记录场景模型的实际配置 |
+| 路由分布 | — | 均衡、随机、热点、真实训练 Trace |
+| 去重策略 | — | None、Rank、Server |
+| 动态专家规划 | — | Off、On |
+| 执行模式 | — | 训练前向、训练反向、完整前反向 |
+
+记录各 Rank 在 Dispatch 前的实际输入 Token 数。存在补齐或复制时，同时记录用于吞吐统计的有效源 Token 数。
+
+原生算子有单次调用上限时，按训练路径分块。保留完整测点的每卡源 Token 数，另记块大小、次数与尾块，并将全部分块纳入计时和显存统计。
 
 上述参数不做全量笛卡尔积组合，而是构造具有明确测试目的的专项测试集合。
 
@@ -144,14 +150,14 @@ grad_output:   [T, H]
 
 控制一个 Token 的 K 个专家在多少个不同 Rank、Server 上分布。
 
-例如 Top-K=8：
+按场景模型固定 K，根据专家放置构造不同的去重机会。
 
-| 场景               | 不同专家数 | 目标 Rank 数 | 目标 Server 数 |
-| ---------------- | ----- | --------- | ----------- |
-| 无 Rank 去重机会      | 8     | 8         | 视拓扑而定       |
-| Rank 去重          | 8     | 4         | 视拓扑而定       |
-| Rank + Server 去重 | 8     | 4         | 2           |
-| 高局部性             | 8     | 2         | 1           |
+| 场景 | 不同专家数 | 目标 Rank 数 | 目标 Server 数 |
+| --- | --- | --- | --- |
+| 无 Rank 去重机会 | K | K（拓扑允许时） | 视拓扑而定 |
+| Rank 去重 | K | 少于 K | 视拓扑而定 |
+| Rank + Server 去重 | K | 少于 K | 少于目标 Rank 数 |
+| 高局部性 | K | 按域内专家放置确定 | 1 |
 
 此类 Trace 必须根据每卡专家数量和实际拓扑构造，不能生成数学上无法满足的路由。
 
@@ -159,7 +165,7 @@ grad_output:   [T, H]
 
 #### Case F：真实模型路由
 
-从实际 MoE 模型的训练、Prefill、Decode 过程中采集路由 Trace，保留每层专家分布、Token 数量、Rank 局部性以及动态变化特征。
+从实际 MoE 模型的训练过程中采集路由 Trace，保留每层专家分布、Token 数量、Rank 局部性以及动态变化特征。
 
 合成路由用于性能归因，真实路由用于验证优化是否具有实际业务价值。
 
@@ -230,7 +236,7 @@ Combine 使用预构造的专家输出，不需要实际执行 GMM。
 | COMM-004 | Dispatch + Combine       | 完整通信闭环，不含 GMM                   |
 | COMM-005 | Dispatch Async           | 异步提交、等待和结果可用时间                  |
 | COMM-006 | Combine Async            | 异步提交、等待和结果可用时间                  |
-| COMM-007 | Low-Latency Dispatch     | 小 Token 数通信延迟                   |
+| COMM-007 | Training Tail Dispatch | 训练分块尾部的通信延迟 |
 | COMM-008 | High-Throughput Dispatch | 大 Token 数通信带宽                   |
 | COMM-009 | Quantized Dispatch       | 量化、通信及必要反量化                     |
 | COMM-010 | Deduplicated Dispatch    | Rank/Server 去重通信                |
@@ -325,7 +331,7 @@ L4 需要引入真实的 Router，以及根据配置启用的动态专家规划�
 | LAYER-006 | Server Dedup Off / On            |
 | LAYER-007 | 真实模型 Routing Trace 回放            |
 | LAYER-008 | 连续多个训练 Step 的动态负载均衡              |
-| LAYER-009 | 推理 Prefill / Decode 完整 MoE Layer |
+| LAYER-009 | 大源 Token 数下的完整 MoE 训练层前反向 |
 
 这层测试特别适合评估 MoonEP。仅仅测试关闭 Planner 的 `moonep` Dispatch/Combine，无法完整评价其动态冗余专家方案。
 
@@ -430,7 +436,7 @@ $$
 
 假设专家在各 Rank 均匀部署且路由均匀；去重比例为假设输入。仅计算 Hidden States 的单向发送量，不含元数据、Padding、FP8 Scale、协议开销和多跳流量。正式测试必须使用实际 Trace 及通信计数。
 
-这里采用现有 EP8 Benchmark 的默认参数作为初始值。
+此估算示例采用已有 EP8 基线参数。新训练测点按场景模型选取 Top-K。
 
 一个非常重要的结论是：采用去重的算子可能 Payload Bandwidth 更低，但是业务性能更好。 因为它完成同样专家计算所需要传输的数据更少。
 
@@ -660,7 +666,7 @@ Weak Scaling 更适合观察 EP 通信库的大规模扩展能力；Strong Scali
 | FFN Size        | 3072         |
 | Experts         | 24           |
 | Local Experts   | 3            |
-| Top-K           | 6            |
+| Top-K           | 6（复现已有 EP8 基线） |
 | Tokens per Rank | 4096         |
 | dtype           | BF16         |
 | Routing         | 完全均衡         |
@@ -669,36 +675,30 @@ Weak Scaling 更适合观察 EP 通信库的大规模扩展能力；Strong Scali
 
 目标是验证新 Benchmark 框架的正确性，与现有 22 个成功采样的 Backend 性能数据进行对照，并补齐纯通信和单段融合测试。
 
-### Suite 02：低时延通信测试
+### Suite 02：大 Token 数 MoE 训练测试
 
-模拟推理 Decode 或小 Batch 通信场景。
+按每卡源 Token 数扩大训练输入，候选测点为 8192、16384、32768、65536、131072。EP 从 8、64、128 中按场景模型和拓扑选择，结合算子容量和显存预算筛选测点。
 
-| 参数              | 配置                   |
-| --------------- | -------------------- |
-| EP              | 8、64、128             |
-| Hidden Size     | 7168                 |
-| Experts         | 256                  |
-| Top-K           | 8                    |
-| Tokens per Rank | 1、4、16、32、64、128、256 |
-| dtype           | BF16、受支持的 FP8        |
-| Routing         | 随机、热点                |
-| 测试层次            | L1、L3 Forward        |
+| 参数 | 配置 |
+| --- | --- |
+| 模型参数 | Hidden Size、专家数和 Top-K 按场景模型配置 |
+| dtype 和路由 | 使用场景模型的训练精度及训练路由 |
+| 测试层次 | L3 完整专家子层前反向、L4 完整 MoE 训练层 |
+| 主要指标 | 完整输入的前向、反向和前反向耗时，有效源 Token 吞吐、峰值显存及尾块开销 |
 
-核心评价指标为 Dispatch/Combine P50、P95、P99、API 固定开销、Issue Latency、Ready Latency。
-
-这一组不以达到最大带宽为目标，而是测量通信的固定成本和长尾。
+完整测点的计时包含所有分块和训练路径必需的同步。记录各 Rank 的实际输入、原生调用上限、块大小、次数及尾块。
 
 ### Suite 03：高吞吐通信测试
 
-模拟大 Batch Prefill 和训练场景。
+覆盖训练中源 Token 量较大的通信与通算融合路径。
 
 | 参数              | 配置                          |
 | --------------- | --------------------------- |
 | EP              | 8、64、128                    |
 | Hidden Size     | 7168                        |
 | Experts         | 256                         |
-| Top-K           | 8                           |
-| Tokens per Rank | 256、512、1024、2048、4096、8192 |
+| Top-K           | 按场景模型配置，同组固定 |
+| 每 Rank 调用块大小（Token） | 256、512、1024、2048、4096、8192，按训练分块和接口能力选取 |
 | dtype           | BF16、FP8                    |
 | Routing         | 均衡、随机                       |
 | 测试层次            | L1、L2、L3                    |
@@ -719,7 +719,7 @@ Weak Scaling 更适合观察 EP 通信库的大规模扩展能力；Strong Scali
 | 每卡 Token 数 | 固定 4096        | 32768 / EP     |
 | 全局 Token 数 | 4096 × EP      | 固定 32768       |
 | H / I      | 7168 / 2048    | 7168 / 2048    |
-| Top-K      | 8              | 8              |
+| Top-K      | 按场景模型配置，同组固定 | 按场景模型配置，同组固定 |
 | dtype      | BF16           | BF16           |
 
 注意 Weak Scaling 中全局专家数随 EP 变化，因此它是通信及计算扩展实验，不是同一个模型在不同设备数量下的性能实验。
@@ -852,7 +852,7 @@ Weak Scaling 更适合观察 EP 通信库的大规模扩展能力；Strong Scali
 | 测试类型           | Warmup | 正式采样       | 独立重复运行 |
 | -------------- | ------ | ---------- | ------ |
 | L0 硬件基线        | 50     | 500        | 3      |
-| L1 小 Batch 低时延 | 100    | 2000       | 3      |
+| L1 训练尾块延迟 | 100    | 2000       | 3      |
 | L1 大 Batch 高吞吐 | 50     | 200        | 3      |
 | L2 通算融合        | 20     | 100        | 3      |
 | L3 完整 MoE      | 20     | 100        | 3      |
@@ -987,7 +987,7 @@ infra/common/ep/
 │   │
 │   ├── configs/
 │   │   ├── ep8_baseline.yaml
-│   │   ├── low_latency.yaml
+│   │   ├── large_token_training.yaml
 │   │   ├── high_throughput.yaml
 │   │   ├── weak_scaling.yaml
 │   │   ├── strong_scaling.yaml
@@ -1126,13 +1126,13 @@ python run_benchmark.py \
 
 ### 10.2 综合评价权重
 
-不建议所有场景使用一个统一的总分。训练、Prefill 和 Decode 对 EP 算子的性能要求不同。
+不同训练场景可按实际瓶颈调整综合评价权重。
 
 下面可以作为初始评价体系。
 
 #### 不同业务场景的评价指标权重
 
-评价场景包括 RL / 训练、Prefill 和 Decode。下表给出原设计的初始权重示例。
+下表给出训练场景的初始权重示例。
 
 | 指标 | 初始权重 |
 | --- | ---: |
@@ -1165,7 +1165,7 @@ python run_benchmark.py \
 | 高吞吐 P95/P50        | ≤ 1.10                    |
 | 去重方案               | 流量下降且端到端性能提升              |
 | 动态负载均衡             | 计入全部额外开销后仍有正收益            |
-| 显存消耗               | 满足实际训练或推理资源预算             |
+| 显存消耗               | 满足实际训练资源预算             |
 
 这些阈值需要在第一轮 L0 和 EP8 测试后修订，尤其是跨 Server 拓扑条件下的 EP64/128 扩展效率。
 
@@ -1181,7 +1181,7 @@ python run_benchmark.py \
 | Phase 6  | EP64/128 Weak/Strong Scaling         | P0  |
 | Phase 7  | Profiling、带宽、设备空闲归因                  | P0  |
 | Phase 8  | MoonEP 动态负载均衡及去重专项                   | P1  |
-| Phase 9  | 量化、低时延及真实模型路由                        | P1  |
+| Phase 9  | 量化训练、大 Token 数及真实训练路由 | P1  |
 | Phase 10 | L4 完整业务评估与自动化选型报告                    | P1  |
 
 ## 最终总结
