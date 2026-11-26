@@ -1,0 +1,18 @@
+# Small native-transport matrix for bring-up on a real device.
+# The full sweep lives in transport.yaml; this one keeps the first on-device run
+# short enough to debug channel creation.
+extends: ep8_bf16.yaml
+suite_id: transport
+benchmark:
+  levels: [L0]
+  warmup: 2
+  iterations: 5
+  message_bytes: [4096, 1048576]
+  outstanding: [1, 4]
+  peer_counts: [0]
+  task_timeout_seconds: 900
+  transport:
+    enabled: [ub_memory, urma, ub_ctp, ub_rtp, roce, hccs, uboe]
+  verification:
+    enabled: true
+    require_verified_for_comparison: true

@@ -35,6 +35,8 @@
 
 #if __has_include(<hccl/hccl.h>)
 #include <hccl/hccl.h>
+#include <hccl/hccl_channel.h>
+#include <hccl/hccl_rank_graph.h>
 #define L0_BRIDGE_HAS_HCCL 1
 #else
 #define L0_BRIDGE_HAS_HCCL 0
@@ -42,6 +44,7 @@
 
 #if __has_include(<hcomm/hcomm_res.h>)
 #include <hcomm/hcomm_res.h>
+#include <hcomm/hcomm_primitives.h>
 #define L0_BRIDGE_HAS_HCOMM 1
 #else
 #define L0_BRIDGE_HAS_HCOMM 0
@@ -59,6 +62,10 @@
 #define L0_MAX_TEXT 8192
 #define L0_MAX_PEERS 256
 #define L0_MAX_MEMS 8
+
+// HCOMM success is 0 in every released header set; the named constant moved
+// between releases, so compare against the documented value.
+constexpr int32_t kHcommSuccess = 0;
 
 namespace {
 
@@ -228,18 +235,23 @@ L0_API int l0_bridge_describe(char* buffer, uint32_t capacity)
 #endif
     json += ",\"channels\":[";
     bool first = true;
-    const struct { const char* name; const char* engine; const char* protocol; } channels[] = {
+    // Protocols each channel class is selected for, taken from the HCOMM
+    // dispatch in Channel::CreateChannel (engine + remoteEndpoint.protocol):
+    // AIV + UB_CTP/UBC_TP/UB_RTP -> AivUrmaChannel, AIV + anything else ->
+    // AivUbMemChannel, AICPU_TS + UB_RTP -> AicpuTsUbRtpChannel, CCU requires
+    // UB_CTP/UBC_TP -> CcuUrmaChannel.
+    const struct { const char* name; const char* engine; const char* protocols; } channels[] = {
         {"AivUbMemChannel", "AIV", "UB_MEM"},
-        {"AivUrmaChannel", "AIV", "UB_CTP"},
+        {"AivUrmaChannel", "AIV", "UB_CTP,UBC_TP,UB_RTP"},
         {"AivRoceHostLocChannel", "AIV", "ROCE"},
-        {"AicpuTsUrmaChannel", "AICPU_TS", "UB_CTP"},
+        {"AicpuTsUrmaChannel", "AICPU_TS", "UB_CTP,UBC_TP"},
         {"AicpuTsHccsChannel", "AICPU_TS", "HCCS"},
         {"AicpuTsUbRtpChannel", "AICPU_TS", "UB_RTP"},
         {"AicpuTsUboeChannel", "AICPU_TS", "UBOE"},
         {"AicpuTsRoceHostLocChannel", "AICPU_TS", "ROCE"},
         {"AicpuTsP2pChannel", "AICPU_TS", "PCIE"},
-        {"CcuUrmaChannel", "CCU", "UB_CTP"},
-        {"HostCpuUrmaChannel", "CPU", "UB_CTP"},
+        {"CcuUrmaChannel", "CCU", "UB_CTP,UBC_TP"},
+        {"HostCpuUrmaChannel", "CPU", "UB_CTP,UBC_TP"},
         {"HostCpuRoceChannel", "CPU", "ROCE"},
     };
     for (const auto& channel : channels) {
@@ -254,7 +266,27 @@ L0_API int l0_bridge_describe(char* buffer, uint32_t capacity)
         first = false;
         json += "{\"channel\":\"" + std::string(channel.name) + "\"";
         json += ",\"engine\":\"" + std::string(channel.engine) + "\"";
-        json += ",\"mechanisms\":[\"" + std::string(channel.protocol) + "\"]";
+        json += ",\"mechanisms\":[";
+        const std::string protocols(channel.protocols);
+        size_t start = 0;
+        bool firstProtocol = true;
+        while (start <= protocols.size()) {
+            const size_t comma = protocols.find(',', start);
+            const std::string name = protocols.substr(
+                start, comma == std::string::npos ? std::string::npos : comma - start);
+            if (!name.empty()) {
+                if (!firstProtocol) {
+                    json += ",";
+                }
+                firstProtocol = false;
+                json += "\"" + name + "\"";
+            }
+            if (comma == std::string::npos) {
+                break;
+            }
+            start = comma + 1;
+        }
+        json += "]";
         json += ",\"compiled\":";
         json += compiled ? "true" : "false";
         json += "}";
@@ -300,11 +332,11 @@ L0_API int l0_bridge_probe_endpoint(const char* protocol, int locType, int devic
     }
     EndpointHandle handle = nullptr;
     const HcommResult result = HcommEndpointCreate(&desc, &handle);
-    if (result == HCOMM_SUCCESS && handle != nullptr) {
+    if (result == kHcommSuccess && handle != nullptr) {
         (void)HcommEndpointDestroy(handle);
     }
     std::string json = "{\"ok\":";
-    json += (result == HCOMM_SUCCESS) ? "true" : "false";
+    json += (result == kHcommSuccess) ? "true" : "false";
     json += ",\"protocol\":\"" + std::string(protocol) + "\"";
     json += ",\"loc\":\"";
     json += (locType == 1) ? "HOST" : "DEVICE";
@@ -688,11 +720,11 @@ L0_API int l0_session_thread_alloc(int64_t handle, const char* engineName, uint3
     ThreadHandle thread = 0;
     const HcommResult result = HcommThreadAlloc(
         static_cast<CommEngine>(engineValue), 1, &notify, &thread);
-    if (result == HCOMM_SUCCESS) {
+    if (result == kHcommSuccess) {
         session->thread = thread;
     }
     std::string json = "{\"ok\":";
-    json += (result == HCOMM_SUCCESS) ? "true" : "false";
+    json += (result == kHcommSuccess) ? "true" : "false";
     json += ",\"result\":" + std::to_string(result) + "}";
     return CopyOut(json, buffer, capacity);
 #else

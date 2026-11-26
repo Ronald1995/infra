@@ -57,7 +57,8 @@ def prepare(ctx, case, size, params):
     try:
         blob = bridge.root_info(ctx.config)
         gathered = ctx.gather(base64.b64encode(blob).decode("ascii"))
-        root_info = base64.b64decode(gathered[ctx.rank])
+        # Every rank initialises from the root rank's blob, not from its own.
+        root_info = base64.b64decode(gathered[0])
         initialized = session.comm_init(root_info)
         if not initialized.get("ok"):
             raise BenchmarkUnavailable("environment_unavailable",

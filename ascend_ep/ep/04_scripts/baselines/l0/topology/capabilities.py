@@ -137,6 +137,19 @@ def probe_memory_library(config):
     return Probe("memory_library", True, None, {"library": library})
 
 
+MECHANISM_FOR_PROTOCOL = {
+    "UB_MEM": "ub_memory", "UB_CTP": "ub_ctp", "UBC_TP": "ub_ctp", "UB_RTP": "ub_rtp",
+    "ROCE": "roce", "HCCS": "hccs", "HCCS_ONLY": "hccs", "UBOE": "uboe",
+    "PCIE": "pcie", "SIO": "sio",
+}
+
+
+def mechanisms_for_protocols(protocols):
+    """Translate the bridge's CommProtocol names into mechanism tokens."""
+    return tuple(MECHANISM_FOR_PROTOCOL[name] for name in protocols
+                 if name in MECHANISM_FOR_PROTOCOL)
+
+
 def _channel_support(entry, descriptor, probes):
     """Resolve one catalog entry against the bridge/shared-library probes."""
     reasons, evidence = [], []
@@ -154,7 +167,8 @@ def _channel_support(entry, descriptor, probes):
             match = channels[channel]
         else:
             for item in descriptor.get("channels", ()):
-                if set(item.get("mechanisms", ())) & set(entry["mechanisms"]) and (
+                observed = set(mechanisms_for_protocols(item.get("mechanisms", ())))
+                if observed & set(entry["mechanisms"]) and (
                         item.get("execution_resource") == entry["execution_resource"]):
                     match = item
                     break
