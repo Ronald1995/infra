@@ -28,11 +28,13 @@ export EP_ASCENDEP_ROOT=/path/to/ascendep
 python run_benchmark.py pipeline --config configs/smoke_cpu.yaml \
   --cases COMM-001,COMM-004,COMM-005,MOE-003,LAYER-002 --run-id local-cpu
 
-# 单卡 GMM/SwiGLU 和双卡通信
+# 单卡 GMM/SwiGLU、双卡通信和 EP8 前反向
 python run_benchmark.py baseline --config configs/smoke_npu.yaml --ep-size 1 \
   --cases HW-010,HW-011
 python run_benchmark.py run --config configs/smoke_npu.yaml --ep-size 2 \
   --operators alltoall_hccl --cases COMM-001,COMM-003
+python run_benchmark.py run --config configs/smoke_npu.yaml --ep-size 8 \
+  --operators alltoall_hccl --cases MOE-003
 
 # 单算子和公共基线
 python -m operators.deepep_ascend.benchmark --config operators/deepep_ascend/config.yaml --levels L3
