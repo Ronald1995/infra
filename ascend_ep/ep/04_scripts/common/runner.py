@@ -116,12 +116,11 @@ def run_task(ctx, task, record, output, profile):
             cleanup = l0_prepared.cleanup
             payload = l0_prepared.payload
             status_evidence = list(l0_prepared.evidence)
-            if l0_prepared.direct:
-                call, validate = l0_prepared.run, l0_prepared.validate
-                prepared = Operation(lambda _: None, lambda _: call(), validate)
-            else:
-                prepared = Operation(lambda _: None, l0_prepared.run, l0_prepared.validate,
-                                     l0_prepared.wait)
+            # The timer calls operation(setup_output) and wait(result); the L0
+            # baselines are zero-argument closures, so adapt them here instead of
+            # forcing every baseline to accept an unused argument.
+            prepared = Operation(lambda _: None, lambda _: l0_prepared.run(),
+                                 l0_prepared.validate, lambda _: l0_prepared.wait(None))
         else:
             spec = registry()[task["backend_id"]]
             backend = spec.create()
@@ -149,7 +148,7 @@ def run_task(ctx, task, record, output, profile):
         memory.reset(ctx)
         if is_hw and l0_prepared is not None and l0_prepared.direct:
             # The backend measured internally: run it once, keep its numbers.
-            prepared.call()
+            prepared.call(None)
             direct_metrics = l0_prepared.direct["extract"]()
             if direct_metrics is None:
                 raise BenchmarkUnavailable("runtime_failed",
