@@ -45,6 +45,31 @@ def _device(manifest, rows):
     }
 
 
+def _cann(device):
+    """The CANN cell: the version with its source, or an explicit unavailability."""
+    if device.get("cann_version"):
+        source = device.get("cann_version_source")
+        return (f"{device['cann_version']} (source: {source})" if source
+                else device["cann_version"])
+    return f"unavailable ({device.get('cann_version_error') or 'ASCEND_TOOLKIT_VERSION is unset'})"
+
+
+def _driver(device):
+    return device.get("driver_version") or (
+        "unavailable (npu-smi was not available or printed no driver version)")
+
+
+def _packages(packages):
+    if not packages:
+        return "unavailable (no package version was recorded)"
+    return ", ".join(f"{name} {value or 'unavailable'}"
+                     for name, value in sorted(packages.items()))
+
+
+def _no_device():
+    return "unavailable (the run did not record an NPU device name)"
+
+
 def curves(rows):
     """One row per L0 record, keeping the full measurement point.
 
@@ -118,13 +143,11 @@ def write(root, manifest, rows, capabilities=None, analysis=None, charts=None):
     lines += ["## 1. Device and software", "",
               f"- host: {F.text(device['host'])}",
               f"- platform: {F.text(device['platform'])}",
-              f"- CANN: {F.text(device['cann_version'])}"
-              + (f" (source: {device['cann_version_source']})"
-                 if device["cann_version"] and device["cann_version_source"] else ""),
-              f"- driver: {F.text(device['driver_version'])}",
-              f"- NPU models: {F.join(device['npu_models'])}",
+              f"- CANN: {_cann(device)}",
+              f"- driver: {_driver(device)}",
+              f"- NPU models: {F.join(device['npu_models']) if device['npu_models'] else _no_device()}",
               f"- git commit: {F.text(device['git_commit'])}",
-              f"- packages: {F.text(device['packages'])}", ""]
+              f"- packages: {_packages(device['packages'])}", ""]
     if not device["cann_version"] and device["cann_version_error"]:
         lines += [f"CANN version unavailable: {device['cann_version_error']}.", ""]
 
