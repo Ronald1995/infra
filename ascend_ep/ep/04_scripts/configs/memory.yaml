@@ -1,0 +1,13 @@
+# L0 local memory suite: MEM-001..MEM-004 (HBM copy, local MTE copy, UB copy,
+# strided copy).  Every rank executes the copy concurrently, so the result keeps
+# per-rank bytes and global bytes separate.
+extends: base_benchmark.yaml
+suite_id: memory
+benchmark:
+  levels: [L0]
+  warmup: 5
+  iterations: 20
+  message_bytes: [4096, 1048576, 268435456, 1073741824]
+  verification:
+    enabled: true
+    require_verified_for_comparison: true

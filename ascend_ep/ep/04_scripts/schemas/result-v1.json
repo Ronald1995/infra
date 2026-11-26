@@ -55,7 +55,8 @@
         "runtime_failed",
         "timeout",
         "oom",
-        "not_run"
+        "not_run",
+        "not_applicable"
       ]
     },
     "raw_samples": {

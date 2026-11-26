@@ -238,10 +238,33 @@ def run_task(ctx, task, record, output, profile):
                 record["throughput"] = throughput(sum(tokens) * request_count, ctx.size, p50)
                 if request_count > 1:
                     record["workload"]["requests_per_sample"] = request_count
+        if is_hw and case.category == "compute":
+            # Standalone compute: separate fixed-shape from workload-shape results.
+            shape = task["parameters"].get("shape")
+            if task["parameters"].get("shape_mode") == "fixed" and shape:
+                model = {**cfg["model"], "hidden_size": shape["k"],
+                         "intermediate_size": shape["n"]}
+                routes = shape["m"]
+                record["compute_shape"] = {"source": "fixed_shape_parameter",
+                                           "mode": "fixed", **shape}
+            else:
+                model = cfg["model"]
+                routes = sum(traces[0]["expert_counts"]) if traces else 0
+                record["compute_shape"] = {"source": "workload_expert_rows", "mode": "workload",
+                                           "rows": routes,
+                                           "groups": len(works[0].local_experts) if works else 0,
+                                           "k": cfg["model"]["hidden_size"],
+                                           "n": cfg["model"]["intermediate_size"]}
+            record["compute"] = compute({**cfg, "model": model}, routes, operation, p50)
+            record["compute"]["shape_mode"] = task["parameters"].get("shape_mode", "workload")
         if direct_metrics:
             record["latency"] = direct_metrics.get("latency")
             record["bandwidth"] = direct_metrics.get("bandwidth")
             record["metrics_source"] = direct_metrics.get("provider")
+            if direct_metrics.get("compute_shape") is not None:
+                record["compute_shape"] = direct_metrics["compute_shape"]
+            if direct_metrics.get("overlap") is not None:
+                record["overlap"] = direct_metrics["overlap"]
         if payload is not None and not direct_metrics:
             if isinstance(payload, dict) and "per_rank_bytes" in payload:
                 volume = {**payload, "payload_bytes": payload["per_rank_bytes"],

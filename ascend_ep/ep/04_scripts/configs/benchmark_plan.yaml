@@ -1,0 +1,73 @@
+# Unified EP benchmark plan.
+#
+# One plan -> EP8 x EP64 x EP128 manifest covering every case in the catalog and
+# every registered EP operator.  Each EP size loads its own environment file, but
+# the case scope, levels and parameters come from this plan, so the three EP
+# sizes cannot drift apart.
+#
+# CLI:
+#   python run_benchmark.py plan  --plan configs/benchmark_plan.yaml
+#   python run_benchmark.py run   --plan configs/benchmark_plan.yaml
+#   python run_benchmark.py run   --plan configs/benchmark_plan.yaml --ep-size 64
+#   python run_benchmark.py run   --plan configs/benchmark_plan.yaml --suite overlap
+#   python run_benchmark.py run   --plan configs/benchmark_plan.yaml \
+#       --cases COMM-001,COMM-003 --operators deepep_ascend,moonep
+schema_version: 1
+
+plan:
+  name: ep-l0-l4-matrix
+  ep_sizes: [8, 64, 128]
+  operators: all
+  levels: [L0, L1, L2, L3, L4]
+  suites: [all]
+  # `dedupe` keeps the legacy L0 IDs (HW-007/HW-008/HW-009/HW-012) out of the
+  # task list because their canonical case is already covered.  Use `run` to
+  # execute them as their own task.
+  aliases: dedupe
+
+  # Layer 1: shared measurement definitions.
+  base_config: base_benchmark.yaml
+  # Layer 2: EP environment only (no case scope).
+  ep_configs:
+    8: ep8_bf16.yaml
+    64: ep64_bf16.yaml
+    128: ep128_bf16.yaml
+  # Layer 3: scenario layer for focused `--suite` runs.  The `all` expansion
+  # uses the base configuration so one case keeps one parameter definition
+  # across EP sizes.
+  suite_configs:
+    hardware: hardware.yaml
+    memory: memory.yaml
+    transport: transport.yaml
+    collectives: collectives.yaml
+    overlap: overlap.yaml
+    decode: decode.yaml
+    prefill: prefill.yaml
+    training_tail: training_tail.yaml
+    high_throughput: high_throughput.yaml
+    strong_scaling: strong_scaling.yaml
+    weak_scaling: weak_scaling.yaml
+    topology: topology.yaml
+    load_balance: load_balance.yaml
+    dedup: dedup.yaml
+    quantized: quantized.yaml
+
+  # Rank-to-server map used when an EP environment file does not carry one.
+  # 8 ranks per server, 16 ranks per supernode: EP8 is one board, EP64 spans 8
+  # servers, EP128 spans 16 servers / 8 supernodes.
+  topology:
+    server_size: 8
+    supernode_size: 16
+
+execution:
+  # A failing case never stops the remaining cases of the same EP size, and a
+  # failing EP size never stops the other EP sizes.
+  fail_fast: false
+  continue_on_unsupported: true
+  continue_on_error: true
+  run_ep_sizes_sequentially: true
+
+report:
+  compare_ep_sizes: true
+  compare_operators: true
+  generate_coverage_matrix: true

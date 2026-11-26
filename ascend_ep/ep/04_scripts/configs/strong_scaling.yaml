@@ -1,7 +1,19 @@
+# Strong scaling: the global token workload is constant and each rank gets
+# `global_tokens / EP size`, so EP8/EP64/EP128 process exactly the same total
+# number of tokens.  The case set is identical to weak_scaling; only the workload
+# policy differs.
+#
+# `matrix` keeps the standalone `--config` behaviour (three EP points).  A
+# benchmark plan derives the same points from the `scaling` block.
 extends: ep8_bf16.yaml
 suite_id: strong_scaling
-scaling: {name: 950dt-strong-bf16, mode: strong}
-model: {num_experts: 256}
+scaling:
+  name: 950dt-strong-bf16
+  mode: strong
+  global_tokens: 32768
+  num_experts: 256
+model:
+  num_experts: 256
 matrix:
   - distributed: {ep_size: 8}
     workload: {tokens_per_rank: 4096}

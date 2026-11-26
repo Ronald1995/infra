@@ -1,6 +1,13 @@
+# Weak scaling: every rank keeps the same token count and the same number of
+# local experts, so the global workload grows with the EP size.  The case set is
+# identical to strong_scaling; only the workload policy differs.
 extends: ep8_bf16.yaml
 suite_id: weak_scaling
-scaling: {name: 950dt-weak-bf16, mode: weak}
+scaling:
+  name: 950dt-weak-bf16
+  mode: weak
+  tokens_per_rank: 4096
+  experts_per_rank: 4
 matrix:
   - distributed: {ep_size: 8}
     model: {num_experts: 32}

@@ -114,6 +114,17 @@ def report(root, manifest, rows, analysis):
                 ("Task", "Backend", "Status", "Evidence"),
                 ((row["task_id"], row["backend_id"], row["status"], row["error_reason"] or "No run record")
                  for row in rows if row["status"] != "passed"))
+    from reporting.coverage import write as write_coverage
+    coverage = write_coverage(root, manifest, rows)
+    with (destination / "benchmark_report.md").open("a", encoding="utf-8") as file:
+        file.write("\n## Coverage and EP comparison\n\n")
+        for label, key in (("Case coverage matrix", "coverage"),
+                           ("Case x operator coverage", "case_operator"),
+                           ("Operator coverage", "operators"),
+                           ("EP size comparison", "comparison"),
+                           ("L0 scale-out", "l0_scaleout")):
+            if key in coverage:
+                file.write(f"- [{label}]({coverage[key].name})\n")
     from reporting.l0_report import write as write_l0
     capabilities = None
     capability_path = root / "capabilities.json"

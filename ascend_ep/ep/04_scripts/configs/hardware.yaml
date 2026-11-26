@@ -1,17 +1,18 @@
-extends: ep8_bf16.yaml
+# L0 hardware suite: framework collectives (HW-001..HW-006) and the standalone
+# compute baselines (HW-010..HW-011).
+#
+# The suite is selected by case *category*, not by this filename, and it does not
+# contain the memory / transport / execution / overlap families: those have their
+# own suites and their own YAML files.
+extends: base_benchmark.yaml
 suite_id: hardware
 benchmark:
   levels: [L0]
-  message_bytes: [4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824]
-  outstanding: [1, 2, 4, 8, 16]
-  peer_counts: [0]
-  cores: [1, 2, 4]
-  quiet_modes: [0, 1]
-  transport_mode: write
-  transport:
-    enabled: [ub_memory, urma, ub_ctp, ub_rtp, roce, hccs, uboe, shmem_mte, shmem_udma]
-  execution:
-    modes: [default, aicpu_ts, aiv, aiv_only, ccu_sched]
+  warmup: 5
+  iterations: 20
+  message_bytes: [4096, 65536, 1048576]
+  compute:
+    fixed_shape: {m: 8192, k: 7168, n: 3072, groups: 8}
   verification:
     enabled: true
     require_verified_for_comparison: true

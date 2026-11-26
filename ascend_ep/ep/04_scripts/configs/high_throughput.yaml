@@ -1,3 +1,6 @@
+# Large-scale communication throughput: the `high_throughput` suite selects
+# COMM-001/003/004/008, MOE-003 and MOE-009; the matrix only scales the token
+# count per rank.
 extends: ep8_bf16.yaml
 suite_id: high_throughput
 matrix:

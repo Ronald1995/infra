@@ -1,3 +1,6 @@
+# Topology locality: the `topology` suite selects COMM-001/002/003 and MOE-001;
+# the matrix varies the routing locality.  Supply the physical rank-to-server map
+# in the EP environment or the benchmark plan before adding cross_server_heavy.
 extends: ep8_bf16.yaml
 suite_id: topology
 # Supply the physical rank-to-server map before adding cross_server_heavy.

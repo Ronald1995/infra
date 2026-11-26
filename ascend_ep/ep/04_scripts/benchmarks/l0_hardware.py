@@ -39,7 +39,7 @@ def l0_case(ctx, case, params, output=None):
         return runner.prepare(ctx, case, ctx.workload, size, params)
     if family == "compute":
         from baselines.l0.compute import torch_ops
-        return torch_ops.prepare(ctx, case, ctx.workload, size, variant)
+        return torch_ops.prepare(ctx, case, ctx.workload, size, variant, params)
     if family == "collective":
         from baselines.l0.collectives import torch_hccl
         return torch_hccl.prepare(ctx, case, size, variant)

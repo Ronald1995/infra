@@ -1,39 +1,28 @@
-"""Construct a bounded, dependency-free benchmark manifest."""
+"""Construct a bounded, dependency-free benchmark manifest.
+
+Expansion model (see ``docs/benchmark_matrix.md``):
+
+``L0``    ``EP size x L0 case x parameter variant`` -- never multiplied by the
+          EP-operator dimension, because a hardware baseline does not belong to
+          an operator.
+``L1-L4`` ``EP size x case x operator x parameter variant`` -- capability checked
+          per case, not per level.
+
+Every task carries its EP size, suite membership, effective configuration
+fingerprint and resolved status, so the manifest itself is the coverage record.
+"""
 from copy import deepcopy
 
-from common.cases import L0_PARAMETERS, catalog, l0_family
+from common.cases import L0_PARAMETERS, canonical_cases, catalog, l0_family
 from common.registry import check_constraints, registry
+from common.suites import select as select_suite_cases, suite as suite_of
 from common.storage import fingerprint
+from common.variants import message_sizes, parameter_problems, task_parameters, variants_for
 
-SUITE_CASES = {
-    "training_tail": {"COMM-007", "MOE-003"},
-    "high_throughput": {"COMM-008", "MOE-003"},
-    "weak_scaling": {"COMM-001", "COMM-003", "MOE-003"},
-    "strong_scaling": {"COMM-001", "COMM-003", "MOE-003"},
-    "topology": {"COMM-001", "COMM-003", "MOE-001"},
-    "load_balance": {"COMM-012", "MOE-005", "LAYER-003", "LAYER-004", "LAYER-008"},
-    "dedup": {"COMM-010", "LAYER-005", "LAYER-006"},
-    "overlap": {"HW-012", "FUSE-001", "FUSE-002", "FUSE-003", "FUSE-004",
-                "FUSE-005", "FUSE-006", "FUSE-007", "FUSE-009", "MOE-007"},
-    "quantized": {"COMM-009", "FUSE-008", "MOE-006"},
-    "prefill": {"MOE-001", "LAYER-001"},
-    "decode": {"MOE-001", "LAYER-001"},
-}
-L0_VARIANTS = {
-    "HW-006": ("allgather", "reduce_scatter"),
-    "HW-007": ("mte",), "HW-008": ("urma", "udma"),
-    "HW-010": ("gmm1", "gmm2", "gmm1_dgrad", "gmm1_wgrad", "gmm2_dgrad", "gmm2_wgrad"),
-    "HW-011": ("forward", "backward"),
-}
-CASE_VARIANTS = {
-    **L0_VARIANTS, "LAYER-003": ("fresh_plan", "cached_plan"),
-    "FUSE-005": ("chunks_2", "chunks_4", "chunks_8"),
-    "FUSE-006": ("tile_128_256_256", "tile_256_128_256", "tile_256_256_256"),
-    "FUSE-007": ("copy_cores_1", "copy_cores_2", "copy_cores_4", "copy_cores_8"),
-}
 FIXED_OWNER = "fixed_owner"
 FIXED_OWNER_CASES = {"LAYER-003", "LAYER-005", "LAYER-006"}
 
+ALIAS_MODES = ("dedupe", "run")
 
 
 def _l0_matrix(cfg, cases):
@@ -49,15 +38,20 @@ def _l0_matrix(cfg, cases):
 
 
 def _l0_status(case, params, matrix):
-    """Return ``(status, reason)`` for one L0 parameter set from the matrix."""
+    """Return ``(status, reason)`` for one L0 parameter set from the matrix.
+
+    A legacy alias is checked against the capability of its canonical case, so an
+    explicit ``--cases HW-008`` run reports the same hardware verdict as LINK-013.
+    """
     if matrix is None:
         return None, None
     from baselines.l0.topology import capabilities as capability_table
+    lookup = case.alias_of or case.id
     if case.category == "transport":
-        mechanism = L0_PARAMETERS.get(case.id, {}).get("mechanism")
-        resource = params.get("execution_resource") or L0_PARAMETERS.get(case.id, {}).get(
-            "execution_resource")
-        supported, reason = capability_table.support(matrix, case_id=case.id,
+        settings = L0_PARAMETERS.get(lookup, {})
+        mechanism = settings.get("mechanism")
+        resource = params.get("execution_resource") or settings.get("execution_resource")
+        supported, reason = capability_table.support(matrix, case_id=lookup,
                                                      mechanism=mechanism,
                                                      execution_resource=resource)
         return ("not_run", None) if supported else ("unsupported", reason)
@@ -71,41 +65,13 @@ def _l0_status(case, params, matrix):
     return "not_run", None
 
 
-def l0_parameter_sets(case, cfg, size, variant, matrix=None):
-    """Expand one L0 case into parameter dictionaries."""
-    settings = cfg["benchmark"]
-    family = l0_family(case)
-    static = dict(L0_PARAMETERS.get(case.id, {}))
-    base = {"variant": variant, "message_bytes": size}
-    if family == "transport":
-        outstanding = settings.get("outstanding") or [1]
-        peers = settings.get("peer_counts") or [0]
-        if case.id == "HW-008":
-            return [{"variant": engine, "message_bytes": size} for engine in ("mte", "udma", "urma")]
-        if case.id in ("LINK-012", "LINK-013"):
-            variants = ("default",) if case.id == "LINK-012" else ("device", "host")
-            return [{**base, **static, "outstanding": count, "peer_count": peer_count,
-                     "variant": item, "cores": settings.get("cores", [1])[-1],
-                     "quiet_mode": (settings.get("quiet_modes") or [0])[-1],
-                     "mode": settings.get("transport_mode", "write")}
-                    for item in variants
-                    for count in outstanding for peer_count in peers]
-        return [{**base, **static, "outstanding": count, "peer_count": peer_count,
-                 "mode": settings.get("transport_mode", "write")}
-                for count in outstanding for peer_count in peers]
-    if family == "execution":
-        modes = settings.get("execution", {}).get("modes") or ["default"]
-        return [{**base, **static, "accelerator": mode, "operation": static.get("operation",
-                                                                                 case.operation)}
-                for mode in modes]
-    if family == "overlap":
-        return [{**base, **static, "transport": static.get("mechanism", "auto"),
-                 "compute": static.get("compute", "gmm")}]
-    if family == "memory":
-        return [{**base, "variant": "default"}]
-    return [{**base}]
-
 def status_for(spec, case, cfg, baseline=False):
+    """Return ``(status, reason)`` for one (operator, case, configuration).
+
+    The decision is made per *case*: an adapter capability is only accepted when
+    the case's own requirement is present, so a README that claims a level does
+    not make every case of that level runnable.
+    """
     if spec.status not in ("integrated", "historical_verified"):
         return spec.status, spec.reason
     if case.id == "MOE-007" and (cfg["device"] != "npu" or cfg["distributed"]["ep_size"] < 2):
@@ -113,12 +79,14 @@ def status_for(spec, case, cfg, baseline=False):
     if case.id == "COMM-010":
         mode = cfg["dedup"]["mode"]
         if mode == "none":
-            return "not_run", "choose a dedicated rank or server dedup configuration"
+            return ("not_applicable",
+                    "deduplicated dispatch has no dedup path; the None control for this suite is "
+                    "COMM-001 with dedup.mode=none")
         if f"{mode}_dedup" not in spec.capabilities:
             return "unsupported", f"no {mode} dedup path"
     layer_dedup = {"LAYER-005": "rank", "LAYER-006": "server"}.get(case.id)
     if layer_dedup is not None and layer_dedup != cfg["dedup"]["mode"]:
-        return "not_run", f"select the {layer_dedup} dedup mode for this training case"
+        return "not_applicable", f"this case measures {layer_dedup} dedup; the plan selects dedup.mode={cfg['dedup']['mode']}"
     if case.id == "LAYER-007" and cfg["workload"]["routing"] != "real_trace_replay":
         return "not_run", "L3 replay requires a real_trace_replay workload"
     if case.id in {"COMM-012", "LAYER-003", "LAYER-004", "LAYER-008"} and not cfg["load_balance"]["enabled"]:
@@ -126,7 +94,7 @@ def status_for(spec, case, cfg, baseline=False):
     if case.level == "L4" and cfg["workload"]["routing"] == "real_trace_replay":
         return "not_run", "replay is measured in LAYER-007 with the L3 boundary"
     if cfg["benchmark"].get("phase") == "forward" and case.training:
-        return "not_run", "forward-only configuration"
+        return "not_applicable", "forward-only configuration selects a training case"
     if case.level == "L1" and spec.id == "mc2_dispatch_cann":
         tokens = cfg["workload"]["tokens_per_rank"]
         if max(tokens if isinstance(tokens, list) else [tokens]) > 512:
@@ -161,64 +129,103 @@ def prepare_case(config, case):
     return cfg
 
 
-def make_plan(configs, operators=None, levels=None, cases=None, baselines=False):
+def _operator_ids(config, operators, specs):
+    ids = operators or config["operators"]
+    if isinstance(ids, str):
+        ids = [ids]
+    if ids == ["all"]:
+        ids = list(specs)
+    unknown = set(ids) - set(specs)
+    if unknown:
+        raise ValueError(f"unknown operators: {', '.join(sorted(unknown))}")
+    return ids
+
+
+def _selected_cases(config, levels, cases, suites):
+    """Resolve the case set for one configuration.
+
+    An explicit ``cases`` argument (CLI ``--cases``) is a deliberate narrowing by
+    the user, so it is only level-filtered when ``--levels`` was also given.  A
+    suite selection is always filtered by the configured levels.
+    """
+    all_cases = catalog()
+    canonical = canonical_cases()
+    explicit = list(cases or ())
+    unknown = set(explicit) - set(all_cases)
+    if unknown:
+        raise ValueError(f"unknown cases: {', '.join(sorted(unknown))}")
+    if explicit:
+        return [all_cases[case_id] for case_id in explicit
+                if not levels or all_cases[case_id].level in levels]
+    level_filter = levels or config["benchmark"]["levels"]
+    return [canonical[case_id] for case_id in select_suite_cases(suites, level_filter)]
+
+
+def _identity(config, case_id, operator_id, params):
+    """Task identity: two suites with the same point must not duplicate work."""
+    effective = {key: value for key, value in config.items() if key != "suite_id"}
+    return {"config": effective, "backend": operator_id, "case": case_id,
+            "parameters": params,
+            "ep_size": config["distributed"]["ep_size"]}
+
+
+def make_plan(configs, operators=None, levels=None, cases=None, baselines=False,
+              suites=None, aliases="dedupe"):
+    """Expand configurations into manifest tasks.
+
+    ``aliases`` controls legacy L0 identifiers: ``dedupe`` (default) keeps them
+    out of the task list because their canonical case is already covered, while
+    ``run`` expands them as their own task.  Either way the manifest keeps the
+    alias mapping so nothing is silently lost.
+    """
+    if aliases not in ALIAS_MODES:
+        raise ValueError(f"aliases must be one of {ALIAS_MODES}")
     specs, all_cases = registry(), catalog()
     if cases and set(cases) - set(all_cases):
         raise ValueError(f"unknown cases: {', '.join(sorted(set(cases) - set(all_cases)))}")
     tasks = {}
     for config in configs:
-        ids = operators or config["operators"]
-        if ids == ["all"]:
-            ids = list(specs)
+        ids = _operator_ids(config, operators, specs)
         if baselines:
             ids = ["alltoall_hccl", "allgather_hccl"]
-        unknown = set(ids) - set(specs)
-        if unknown:
-            raise ValueError(f"unknown operators: {', '.join(sorted(unknown))}")
-        suite_cases = None if baselines else SUITE_CASES.get(config["suite_id"])
+        ep_size = config["distributed"]["ep_size"]
+        suite_ids = [suite_of(item).id for item in (suites or [config["suite_id"]])]
         selected_levels = levels or (["L0", "L1", "L2"] if baselines else config["benchmark"]["levels"])
-        for case in all_cases.values():
-            if case.level not in selected_levels and (case.id != "LAYER-007" or "L4" not in selected_levels):
-                continue
-            if (cases or suite_cases) and case.id not in (cases or suite_cases):
-                continue
-            if baselines and case.level == "L2" and case.id not in {"FUSE-001", "FUSE-003"} and not cases:
-                continue
-            if baselines and case.level not in {"L0", "L1", "L2"}:
+        # `--cases` is an explicit narrowing: it is only level-filtered when the
+        # user also passed `--levels`, never by the configuration default.
+        selected = _selected_cases(config, levels if cases else selected_levels, cases, suite_ids)
+        if baselines:
+            selected = [case for case in selected if case.level in {"L0", "L1", "L2"}]
+            if not cases:
+                selected = [case for case in selected
+                            if case.level != "L2" or case.id in {"FUSE-001", "FUSE-003"}]
+        matrix = _l0_matrix(config, selected) if not baselines else None
+        for case in selected:
+            if case.alias_of and aliases != "run" and not (cases and case.id in cases):
                 continue
             cfg = prepare_case(config, case)
+            settings = cfg["benchmark"]
             for op_id in ["hardware"] if case.level == "L0" else ids:
                 spec = specs.get(op_id)
+                if spec is None and case.level != "L0":
+                    continue
                 status, reason = status_for(spec, case, cfg, baselines) if spec else ("not_run", None)
-                message_sizes = cfg["benchmark"].get("message_bytes", [4096])
-                if case.id in {"HW-010", "HW-011"} or spec:
-                    message_sizes = [None]
-                matrix = _l0_matrix(cfg, [case]) if case.level == "L0" else None
-                parameter_sets = []
-                if case.level == "L0":
-                    if reason is None:
-                        for size in message_sizes:
-                            variants = CASE_VARIANTS.get(case.id, ("default",))
-                            for variant in variants:
-                                parameter_sets.extend(
-                                    l0_parameter_sets(case, cfg, size, variant, matrix))
-                    else:
-                        parameter_sets = [{"variant": "default", "message_bytes": message_sizes[0]}]
-                else:
-                    for size in message_sizes:
-                        variants = CASE_VARIANTS.get(case.id, ("default",)) if reason is None else ("default",)
-                        if case.id in FIXED_OWNER_CASES and op_id == "alltoall_hccl" and reason is None:
-                            variants = (FIXED_OWNER,)
-                        for variant in variants:
-                            parameter_sets.append({"variant": variant, "message_bytes": size})
+                parameter_sets = _parameters_for(case, cfg, ep_size, op_id, status, reason)
                 for params in parameter_sets:
                     case_status, case_reason = status, reason
-                    if case.level == "L0" and reason is None:
+                    problem = parameter_problems(case, params, ep_size)
+                    if problem and not case_reason:
+                        case_status, case_reason = "unsupported", problem
+                    if case.level == "L0" and case_reason is None:
                         derived_status, derived_reason = _l0_status(case, params, matrix)
                         if derived_status:
                             case_status, case_reason = derived_status, derived_reason
-                    identity = dict(config=cfg, backend=op_id, case=case.id, parameters=params)
+                    identity = _identity(cfg, case.id, op_id, params)
                     task_id = f"{case.id}-{fingerprint(identity)[:16]}"
+                    if task_id in tasks:
+                        existing = tasks[task_id]
+                        existing["suite_ids"] = sorted(set(existing["suite_ids"]) | set(suite_ids))
+                        continue
                     tasks[task_id] = {
                         "task_id": task_id, "case_id": case.id, "level": case.level,
                         "operation": case.operation, "backend_id": op_id, "config": cfg,
@@ -226,5 +233,108 @@ def make_plan(configs, operators=None, levels=None, cases=None, baselines=False)
                         "source_versions": {"adapter_source": spec.source, "adapter_commit": spec.commit}
                         if spec else {},
                         "baseline": baselines or not spec,
+                        "ep_size": ep_size,
+                        "suite_ids": list(suite_ids),
+                        "case_category": case.category,
+                        "case_family": l0_family(case) or "operator",
+                        "alias_of": case.alias_of,
+                        "config_fingerprint": fingerprint(
+                            {key: value for key, value in cfg.items() if key != "suite_id"}),
                     }
     return list(tasks.values())
+
+
+def _parameters_for(case, cfg, ep_size, op_id, status, reason):
+    """Parameter sets for one (case, operator) point.
+
+    A runnable point expands into its case-specific variants; an unrunnable one
+    keeps a single default parameter set so the manifest can record the explicit
+    status and reason for that exact case.
+    """
+    settings = cfg["benchmark"]
+    fixed_owner = case.id in FIXED_OWNER_CASES and op_id == "alltoall_hccl"
+    if status not in (None, "not_run") or reason is not None:
+        if case.level != "L0":
+            return [{"variant": "default", "message_bytes": None}]
+        return [{"variant": "default", "message_bytes": message_sizes(case, settings)[0]}]
+    if case.level == "L0":
+        return task_parameters(case, "hardware", settings, ep_size)
+    variants = (FIXED_OWNER,) if fixed_owner else variants_for(case)
+    return [{"variant": variant, "message_bytes": None} for variant in variants]
+
+
+def merge_tasks(store, tasks):
+    """Merge per-suite expansions, keeping one task per identical point."""
+    for task in tasks:
+        key = task["task_id"]
+        if key in store:
+            previous = store[key]
+            previous["suite_ids"] = sorted(set(previous["suite_ids"]) | set(task["suite_ids"]))
+            previous["config_source"] = sorted(set(previous.get("config_source") or ()) |
+                                               set(task.get("config_source") or ()))
+            continue
+        store[key] = task
+    return store
+
+
+def case_index(tasks, show_aliases=True):
+    """Every catalog case -> task IDs covering it, or its alias target.
+
+    Aliases are reported as ``alias`` entries rather than expanded twice, so a
+    coverage matrix can prove that a legacy ID is accounted for.
+    """
+    index = {}
+    for case_id, case in catalog().items():
+        if case.alias_of:
+            if show_aliases:
+                index[case_id] = {"status": "alias", "alias_of": case.alias_of, "tasks": []}
+            continue
+        index[case_id] = {"status": "task", "alias_of": None, "tasks": []}
+    for task in tasks:
+        entry = index.get(task["case_id"])
+        if entry is None:
+            entry = index[task["case_id"]] = {"status": "task", "alias_of": None, "tasks": []}
+        entry["tasks"].append(task["task_id"])
+    return {case_id: {"status": entry["status"], "alias_of": entry["alias_of"],
+                      "task_count": len(entry["tasks"]), "tasks": entry["tasks"]}
+            for case_id, entry in index.items()}
+
+
+def coverage_by_ep_size(tasks):
+    """Case ID set per EP size, used by the completeness check."""
+    coverage = {}
+    for task in tasks:
+        coverage.setdefault(task["ep_size"], {})[task["case_id"]] = True
+    return {ep: sorted(cases) for ep, cases in sorted(coverage.items())}
+
+
+def check_completeness(tasks, ep_sizes=None, expected=None):
+    """Raise when an EP size is missing a case another EP size has.
+
+    The check is about *presence in the manifest*, not about runnability: an
+    unsupported point still produces a task with an explicit reason.  ``expected``
+    defaults to every case that the plan selected, so the same function validates
+    a focused suite and the complete matrix.
+    """
+    coverage = coverage_by_ep_size(tasks)
+    if not coverage:
+        raise ValueError("the plan generated no tasks")
+    if expected is None:
+        expected = set().union(*(set(items) for items in coverage.values()))
+    expected = set(expected)
+    sizes = sorted(ep_sizes or coverage)
+    problems = []
+    for size in sizes:
+        present = set(coverage.get(size, ()))
+        missing = sorted(expected - present)
+        if missing:
+            problems.append(f"EP{size} is missing {len(missing)} case(s): {', '.join(missing)}")
+    reference = set(coverage.get(sizes[0], ()))
+    for size in sizes[1:]:
+        if set(coverage.get(size, ())) != reference:
+            missing = sorted(reference - set(coverage.get(size, ())))
+            extra = sorted(set(coverage.get(size, ())) - reference)
+            problems.append(f"EP{size} differs from EP{sizes[0]}: missing={missing} extra={extra}")
+    if problems:
+        raise ValueError("benchmark plan is incomplete: " + "; ".join(problems))
+    return coverage

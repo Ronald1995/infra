@@ -1,0 +1,28 @@
+# CPU-only smoke plan: validates the plan -> manifest -> run -> coverage pipeline
+# without an Ascend device.  It is deliberately small and must never be used as a
+# performance result.
+schema_version: 1
+
+plan:
+  name: smoke-cpu
+  ep_sizes: [2]
+  operators: [alltoall_hccl, allgather_hccl]
+  levels: [L1, L2, L3, L4]
+  suites: [all]
+  base_config: smoke_cpu.yaml
+  ep_configs:
+    2: smoke_cpu.yaml
+  topology:
+    server_size: 2
+    supernode_size: 2
+
+execution:
+  fail_fast: false
+  continue_on_unsupported: true
+  continue_on_error: true
+  run_ep_sizes_sequentially: true
+
+report:
+  compare_ep_sizes: true
+  compare_operators: true
+  generate_coverage_matrix: true
