@@ -33,7 +33,7 @@ LEVELS = ("L0", "L1", "L2", "L3", "L4")
 ROUTINGS = (
     "balanced", "uniform_random", "expert_hotspot", "rank_hotspot",
     "server_hotspot", "high_locality", "cross_server_heavy", "dedup_controlled",
-    "real_trace_replay", "dynamic_trace",
+    "real_trace_replay", "dynamic_trace", "target_distribution",
 )
 DTYPES = {"float32": 4, "float16": 2, "bfloat16": 2}
 TIMINGS = ("output_ready", "host_api", "device", "async", "throughput", "cold_start")
@@ -101,7 +101,7 @@ OPTIONAL_FIELDS = {
     },
     "distributed": {"hierarchical_inner_size": True},
     "workload": {"expert_placement": True, "router_bias": True, "trace_path": True,
-                 "preferred_route_ratio": True},
+                 "preferred_route_ratio": True, "routing_control": True},
     "profiling": {"enabled": True},
     "load_balance": {"redundant_experts": True},
     "topology": {"server_ids": True, "supernode_ids": True, "source": True,
@@ -213,6 +213,37 @@ def validate(config):
         raise ValueError("remote-rank router logit bias requires at least two server domains")
     if w["routing"] == "real_trace_replay" and not w.get("trace_path"):
         raise ValueError("real_trace_replay requires workload.trace_path")
+    if w["routing"] == "target_distribution":
+        from common.routing import STATISTICAL_METRICS, TARGET_METRICS
+
+        control = w.get("routing_control")
+        if not isinstance(control, dict) or not control:
+            raise ValueError("target_distribution requires workload.routing_control")
+        metric = control.get("target_metric")
+        if metric in STATISTICAL_METRICS:
+            raise ValueError(
+                f"routing_control.target_metric {metric!r} is statistical only; this "
+                f"generator controls {TARGET_METRICS}")
+        if metric not in TARGET_METRICS:
+            raise ValueError(f"routing_control.target_metric must be one of {TARGET_METRICS}")
+        value = control.get("target_value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ValueError("routing_control.target_value must be a non-negative number")
+        if metric == "local_route_ratio" and value > 1:
+            raise ValueError("routing_control.target_value for local_route_ratio must be <= 1")
+        if metric != "local_route_ratio" and value == 0:
+            raise ValueError("routing_control.target_value must be positive for max/mean targets")
+        tolerance = (control.get("tolerance") or {}).get("relative", 0.02)
+        if not 0 < float(tolerance) <= 1:
+            raise ValueError("routing_control.tolerance.relative must be in (0, 1]")
+        hotspot = control.get("hotspot") or {}
+        if hotspot.get("mode", "fixed") not in ("fixed", "rotating"):
+            raise ValueError("routing_control.hotspot.mode must be fixed or rotating")
+        for key in ("on_infeasible", "on_target_miss"):
+            allowed = (("not_applicable", "blocked")
+                       if key == "on_infeasible" else ("failed", "not_applicable"))
+            if control.get(key) is not None and control[key] not in allowed:
+                raise ValueError(f"routing_control.{key} must be one of {allowed}")
     if b["timing"] not in TIMINGS or b["rank_reduction"] != "max":
         raise ValueError("invalid timing or rank reduction")
     if not b["levels"] or set(b["levels"]) - set(LEVELS):

@@ -51,6 +51,7 @@ plan:
     - load_balance
     - dedup
     - quantized
+    - routing_imbalance
   # `dedupe` keeps the legacy L0 IDs (HW-007/HW-008/HW-009/HW-012) out of the
   # task list because their canonical case is already covered.  Use `run` to
   # execute them as their own task.
@@ -87,6 +88,7 @@ plan:
     load_balance: load_balance.yaml
     dedup: dedup.yaml
     quantized: quantized.yaml
+    routing_imbalance: routing_imbalance.yaml
 
   # Rank-to-server map used when an EP environment file does not carry one.
   # 8 ranks per server, 16 ranks per supernode: EP8 is one board, EP64 spans 8

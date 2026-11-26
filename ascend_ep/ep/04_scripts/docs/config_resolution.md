@@ -119,7 +119,7 @@ Current expansion (CPU, no hardware consulted):
 
 ```
 $ python -c "from common.plan import load_plan, expand; run = expand(load_plan('configs/benchmark_plan.yaml')); ..."
-tasks 33885   per ep {8: 6777, 16: 6777, 32: 6777, 64: 6777, 128: 6777}
+tasks 43930   per ep {8: 8786, 16: 8786, 32: 8786, 64: 8786, 128: 8786}
 config_audit ok True   (cores 480 tasks, quiet_modes 480 tasks, both swept)
 ```
 
@@ -129,11 +129,40 @@ are a *necessary* condition, not a sufficient one: `check_completeness` and
 every size, and an unsupported point stays in the manifest with its reason instead of
 shrinking the scope.
 
+## 5.5 Routing as a specified test condition
+
+`common/routing.py` gained the `target_distribution` strategy. It does not "generate
+randomly and then check": it allocates integer quotas for the requested metric, then
+generates Top-K ids that satisfy them exactly.
+
+| Target metric | Generated? | Bound |
+|---|---|---|
+| `rank_max_mean` | yes | `P * min(K, experts_per_rank) / K` |
+| `expert_max_mean` | yes (<= 1 is the uniform case) | `E / K` |
+| `local_route_ratio` | yes | `min(K, experts_per_rank) / K` |
+| `server_max_mean`, `rank_tx/rx_max_mean`, `cross_server_ratio` | **no** -- statistical only | -- |
+
+* The plan is a pure function of the seed, the token counts, the placement and the
+  target, so every rank derives the whole quota table itself and keeps its own row:
+  all operators therefore measure the same trace without a collective.
+* A target above the bound is reported `not_applicable` with the bound and the reason
+  (`topk_unique_expert_constraint`), never clamped. For example EP8 with three experts
+  per rank cannot reach an 8x rank target, because a token has only three experts to
+  send to on one rank; the bound is 4x.
+* The achieved value is checked against the target with a relative tolerance in
+  `summarize()` (`target_control.met`); a miss is a failed test point, not a silent pass.
+* `routing_control` is validated: an unimplemented metric is rejected at configuration
+  time instead of being "measured into existence".
+
+`configs/routing_imbalance.yaml` is the suite that exercises it (balanced control,
+rank 2x/4x, expert 2x, local 0/50%, and a decode-sized trace). It is registered in
+`configs/benchmark_plan.yaml`, so the five EP sizes plan the same routing matrix.
+
 ## 6. What is still open (tracked, not hidden)
 
 | Item | State |
 |---|---|
-| Routing target-distribution generation (`rank_max_mean` etc.) | not implemented yet: `common/routing.py` still generates a strategy and measures it; the spec's reverse generation with feasibility bounds is the next phase |
+| Routing target generation | **done for rank/expert/locality** (`target_distribution`, see 5.5); server-level and cross-server generation stay statistical until a server quota allocator exists |
 | Straggler controller | not implemented yet |
 | Profiling / report sections for routing, straggler, combined long tail | pending the two items above |
 | `blocked_topology` / `unverified` result statuses | the status vocabulary has `unsupported`, `not_implemented`, `not_applicable`; topology verification is recorded on the topology record, not yet as a task status |

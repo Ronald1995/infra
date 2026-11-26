@@ -1,0 +1,39 @@
+# Generated load imbalance: the topology of the test is a *target*, not a hope.
+#
+# Every matrix point asks the generator for a load distribution and the report
+# checks the achieved value against it (relative tolerance).  Unreachable targets
+# stay in the plan as `not_applicable` with the feasible upper bound -- EP8's
+# 8x rank target, for example, is impossible because a token cannot route twice to
+# the same expert.
+suite_id: routing_imbalance
+workload:
+  tokens_per_rank: 4096
+  routing: target_distribution
+  routing_control:
+    target_metric: rank_max_mean
+    target_value: 2.0
+    hotspot: {mode: fixed, ranks: [0]}
+    tolerance: {relative: 0.02}
+    on_infeasible: not_applicable
+    on_target_miss: failed
+  seed: 42
+benchmark:
+  warmup: 20
+  iterations: 50
+  levels: [L1, L2, L3, L4]
+  rank_reduction: max
+matrix:
+  # RT-01 balanced control: same cases, no generated imbalance.
+  - workload: {routing: balanced, routing_control: null}
+  # RT-04 rank Max/Mean targets (feasible at every size: the bound is >= 4).
+  - workload: {routing_control: {target_metric: rank_max_mean, target_value: 2.0}}
+  - workload: {routing_control: {target_metric: rank_max_mean, target_value: 4.0}}
+  # RT-03 expert Max/Mean targets.
+  - workload: {routing_control: {target_metric: expert_max_mean, target_value: 2.0,
+                                 hotspot: {expert: 0}}}
+  # RT-06 locality: all-local and half-local.
+  - workload: {routing_control: {target_metric: local_route_ratio, target_value: 0.0}}
+  - workload: {routing_control: {target_metric: local_route_ratio, target_value: 0.5}}
+  # Decode-sized tokens: the same target with a smaller trace.
+  - workload: {tokens_per_rank: 128,
+               routing_control: {target_metric: rank_max_mean, target_value: 2.0}}
