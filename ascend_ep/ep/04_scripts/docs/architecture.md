@@ -87,13 +87,13 @@ operator dimension is not expanded (`common/scheduler.py::make_plan`).
 | L0 request parameters | `common/cases.py::L0_PARAMETERS` | `common/case_spec.py::L0_PARAMETERS` (re-exported by `cases.py`) |
 | Which operation a case times | `if/elif` in `benchmarks/operator_cases.py` | `CaseSpec.handler` + `benchmarks/cases/__init__.py::HANDLERS` |
 
-One literal case-ID set remains in `common/scheduler.py::make_plan`: the `baselines`
-command restricts L2 to `FUSE-001`/`FUSE-003` (the serial compositions that do not need a
-fused adapter). It is a *selection* rule for one command, not a status rule. It is the only
-case-ID literal left in the scheduling layer (`common/scheduler.py`, `common/variants.py`);
-outside that layer, `benchmarks/l0_hardware.py` (family routing) and `common/runner.py`
-(record fields, weights allocation) still name a few L0 IDs, which is routing and record
-code, not case definition.
+The `baselines` command used to restrict L2 to `FUSE-001`/`FUSE-003` with a literal case-ID
+set in `common/scheduler.py`. That selection is now declared on the case:
+`CaseSpec.baseline_reference` is true for the two serial compositions, so the scheduler asks
+the catalog instead of naming identifiers. No case-ID literal is left in the scheduling
+layer (`common/scheduler.py`, `common/variants.py`); outside that layer,
+`benchmarks/l0_hardware.py` (family routing) and `common/runner.py` (record fields, weights
+allocation) still name a few L0 IDs, which is routing and record code, not case definition.
 
 ## 5. Invariants kept by the code
 

@@ -213,8 +213,10 @@ def make_plan(configs, operators=None, levels=None, cases=None, baselines=False,
         if baselines:
             selected = [case for case in selected if case.level in {"L0", "L1", "L2"}]
             if not cases:
+                # A baseline run measures the reference composition only; which
+                # cases those are is declared on the case, not decided here.
                 selected = [case for case in selected
-                            if case.level != "L2" or case.id in {"FUSE-001", "FUSE-003"}]
+                            if case.level != "L2" or case.baseline_reference]
         matrix = _l0_matrix(config, selected) if not baselines else None
         for case in selected:
             if case.alias_of and aliases != "run" and not (cases and case.id in cases):

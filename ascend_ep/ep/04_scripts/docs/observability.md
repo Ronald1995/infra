@@ -128,10 +128,17 @@ Not observable, and therefore recorded as such:
   profiler record yet (see `docs/blocked.md`).
 
 An L2-L4 handler builds its `PreparedCase` without a `completion` argument, so
-`result["completion"]["level"]` is `"none"` for those cases even though the adapter class
-declares a level (base `EPBackend` `local_complete`, `CollectiveBackend` `remote_visible`).
-Do not read `"none"` as a transfer guarantee; read the adapter's contract, and treat the
-missing field as a gap to be closed rather than as evidence.
+`benchmarks/cases/__init__.py::prepare` fills it from the adapter's own contract
+(`EPBackend.completion_semantics()`: base `EPBackend` `local_complete`, `CollectiveBackend`
+`remote_visible`). `result["completion"]["level"]` is therefore never `"none"` for a case
+that ran; if a handler ever states nothing and there is no adapter, `"none"` means exactly
+that — no completion guarantee was recorded — and must not be read as a transfer guarantee.
+
+L2-L4 rows also carry byte volume now: `common/runner.py` derives
+`logical_payload_bytes` and `remote_payload_bytes` from the routing trace even when the level
+does not model wire traffic (this is why an L2/L3 row is not blank), and still leaves
+`measured_wire_bytes` unavailable. `result["bandwidth"]` remains L1-only, so nothing invents a
+physical bandwidth for a level that does not model one.
 
 ## 6. L0 specifics
 
@@ -159,8 +166,8 @@ routing-trace hash, model, timing mode, dedup/load-balance state, level, operati
 parameters, so two adapters land in one group only when all of those agree.
 
 For L0, `baselines/l0/verification/path_verifier.py::status_allows_comparison` states that
-only `verified` records may be compared across mechanisms. That predicate has no call site:
-the comparison layer does not read `verification.status`. On this host nothing reaches
-`verified` anyway, so every cross-mechanism L0 comparison is a comparison of *requested*
-configurations; a report must say so instead of presenting it as a measured ranking, and must
-check `verification.status` itself.
+only `verified` records may be compared across mechanisms, and `comparable()` enforces it: an
+L0 row whose `verification.status` is not `verified` never enters a group. On this host
+nothing reaches `verified` (no bridge, no device), so no cross-mechanism L0 ranking is
+produced at all; a report must say that instead of presenting requested configurations as a
+measured ranking.

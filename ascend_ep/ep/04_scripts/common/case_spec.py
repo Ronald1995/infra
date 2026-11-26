@@ -106,6 +106,10 @@ class CaseSpec:
     transform: str | None = None
     #: Adapter that always owns this case, e.g. ``alltoall_hccl``.
     owner: str | None = None
+    #: True when the case belongs to the *baseline comparison* set: the reference
+    #: composition an adapter is compared against.  A baseline run selects these
+    #: cases instead of hard-coding their identifiers in the scheduler.
+    baseline_reference: bool = False
     #: Canonical case that superseded this legacy identifier, if any.
     alias_of: str | None = None
     #: Static per-case parameters, stored as items so the spec stays hashable.
@@ -507,6 +511,11 @@ _CASE_RULES = {
 _CASE_OWNER = {"LAYER-003": "alltoall_hccl", "LAYER-005": "alltoall_hccl",
                "LAYER-006": "alltoall_hccl"}
 
+#: Cases that make up the baseline comparison set: the serial compositions an
+#: adapter's fused entry point is compared against.  A baseline run selects these
+#: instead of the whole L2 level, because only they measure the same work.
+_BASELINE_REFERENCE = frozenset({"FUSE-001", "FUSE-003"})
+
 #: Workload transform a case needs so that it measures the code path it names.
 _CASE_TRANSFORM = {"MOE-005": "imbalanced_workload", "MOE-009": "dynamic_token_steps"}
 
@@ -633,6 +642,7 @@ def _operator_specs(rows, level, prefix):
             applicability=(*_CASE_RULES.get(case_id, ()), *GENERIC_RULES),
             transform=_CASE_TRANSFORM.get(case_id),
             owner=_CASE_OWNER.get(case_id),
+            baseline_reference=case_id in _BASELINE_REFERENCE,
         )
     return specs
 

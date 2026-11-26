@@ -1,10 +1,28 @@
 """Compare only compatible, validated measurements and matching scaling points."""
 from collections import defaultdict
 
+from baselines.l0.verification.path_verifier import status_allows_comparison
 from common.storage import fingerprint
 
 
+def _verification_status(record):
+    """The path-verification status a record carries, or ``None``."""
+    return ((record.get("verification") or {}).get("status")
+            or (record.get("observed") or {}).get("verification_status"))
+
+
 def comparable(record):
+    """True when a record may enter a cross-backend comparison.
+
+    An L0 hardware baseline is only comparable when its *path* was verified: a
+    number measured over an unverified transport is not a measurement of the
+    mechanism it names, so pairing it with another mechanism would compare two
+    different things.  Operator cases are gated on their own correctness instead,
+    because their transport is reported separately in `observation`.
+    """
+    if record["benchmark_level"] == "L0" and not status_allows_comparison(
+            _verification_status(record)):
+        return False
     return (record["status"] == "passed" and record.get("source") == "measured"
             and record["correctness"] and record["correctness"]["passed"]
             and record.get("latency") and record["latency"]["p50"] > 0)

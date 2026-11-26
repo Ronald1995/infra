@@ -139,6 +139,9 @@ def observe(ctx, task, backend, prepared, volume):
         observation = no_traffic(
             "this level does not model cross-card traffic; see compute and throughput",
             backend.actual_api() if backend is not None else None)
+    # The transport is observable for every case, not only for a level that models
+    # wire traffic: leaving it unknown would hide a gloo run behind an HCCL label.
+    observation.actual_transport = observation.actual_transport or _transport(ctx)
     if observation.fallback_reason is None:
         reason = _fallback_reason(ctx, task)
         if reason:
@@ -380,6 +383,12 @@ def run_task(ctx, task, record, output, profile):
                 record["bandwidth"] = bandwidth({"unit": "bytes", "scope": "EP group",
                                                   "payload_bytes": payload,
                                                   "source": "collective_payload_model"}, p50)
+        if volume is None and not is_hw and traces and backend is not None:
+            # A level that does not model wire traffic still has a derivable logical
+            # and remote-expanded byte volume.  Report it as a model so an L2/L3 row
+            # is not blank, and keep `measured_wire` unavailable rather than zero.
+            volume = traffic(traces[0], cfg, works[0].route.tokens,
+                             backend.spec.traffic_model)
         observation = observe(ctx, task, backend, prepared, volume)
         rank_avg = mean(timings["rank_mean"]) if timings.get("rank_mean") else None
         observation.with_latency(p50, rank_avg)

@@ -40,11 +40,11 @@ but **never** promotes a field to `verified` (`path_verifier.verify`, branch
 The aggregate status is the *worst* required field (`vocabulary.worst`, severity order
 `verified < unverified < fallback < unsupported/environment_unavailable < failed`).
 `status_allows_comparison(status)` states the rule that only a `verified` record may enter a
-cross-mechanism comparison. Note that it is currently a predicate without a call site: the
-analysis layer (`analysis/comparison.py::comparable`) filters on `passed` status, a passed
-correctness block and a positive p50, and does **not** read the verification status. The gate
-is therefore a documented rule plus a recorded field, not an enforced filter — a reader must
-check `verification.status` before comparing two mechanisms.
+cross-mechanism comparison, and the rule is now enforced: `analysis/comparison.py::comparable`
+rejects an L0 row whose `verification.status` (or `observed.verification_status`) is not
+`verified`, and `reporting/coverage.py::ep_size_comparison` applies the same gate to its
+groups. An L0 bandwidth is still a payload model over a measured latency, so the gate makes a
+comparison *permissible*, not the number physical.
 
 Every record therefore carries both blocks: `requested` (intent) and `observed` (what a
 runtime answer established). They are produced by different code paths and are never
