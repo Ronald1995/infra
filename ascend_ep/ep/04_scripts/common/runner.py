@@ -268,6 +268,14 @@ def run_task(ctx, task, record, output, profile):
             controller = straggler_module.StragglerController(ctx.config, ctx.rank, ctx.size)
             samples = measure(ctx, settings, prepared.setup, prepared.run, prepared.wait,
                               prepared.sample_metrics, controller)
+        from common import parameter_evidence
+
+        observed = (correctness.get("dimension_observed")
+                    if isinstance(correctness, dict) else None)
+        dimension_evidence = parameter_evidence.record(
+            record.get("case_parameters") or {}, observed)
+        if observed is not None:
+            record["dimension_evidence"] = dimension_evidence
         local = {"rank": ctx.rank, "samples": samples, "correctness": correctness,
                  "memory": memory.snapshot(ctx), "initialization_ns": initialization,
                  "straggler": (controller.summary() if controller is not None

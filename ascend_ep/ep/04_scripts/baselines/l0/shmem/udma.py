@@ -20,6 +20,7 @@ results claim URMA: the evidence records the SHMEM engine and the exact API.
 import ctypes
 
 from baselines.l0.contract import Prepared
+from common import parameter_evidence
 from baselines.l0.shmem import runtime as shmem_runtime
 from baselines.l0.verification.path_verifier import Evidence
 from baselines.l0.verification.vocabulary import requested
@@ -105,7 +106,13 @@ def prepare(ctx, case, size, params):
                 result["slots"] += 1
         result.update(submission=submission, outstanding=outstanding, cores=cores,
                       peers=peer_count, quiet_mode=quiet_mode,
-                      source_commit=shmem_runtime.SOURCE_COMMIT)
+                      source_commit=shmem_runtime.SOURCE_COMMIT,
+                      # These are the values handed to the runtime API on this rank,
+                      # not a copy of the configuration: the device path passes both
+                      # into ``ep_l0_udma_submit`` and the host path fixes them.
+                      dimension_observed=parameter_evidence.observed_from(
+                          params, cores=cores, quiet_mode=quiet_mode,
+                          outstanding=outstanding, message_bytes=slot))
         return result
 
     transport = MAX_REQUEST_BYTES

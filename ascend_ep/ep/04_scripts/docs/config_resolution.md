@@ -276,6 +276,24 @@ The report's long-tail section now also renders a chart
 1.0 reference line; when no pair has a baseline, no chart is produced and the section
 says so instead of showing an empty figure.
 
+## 5.10 Requested vs observed parameter evidence
+
+A configured dimension is a claim about the runtime until the handler records the value
+it actually used. `common/parameter_evidence.py` writes, per task,
+`dimension_evidence = {parameters: {name: {requested, observed, verification, reason}},
+verified, unverified}`:
+
+* `verified` -- the handler reported the value at the runtime boundary (the SHMEM UDMA
+  path records the QP count, quiet flag, outstanding count and slot size it handed to
+  `ep_l0_udma_submit` / `shmem.core.put`);
+* `unverified` -- no runtime record exists, so the configured value is an intention;
+  the record says which dimensions and why.
+
+The verdict flows into coverage: a `passed` row with an unverified dimension no longer
+counts towards *verified performance* coverage, even though its correctness passed.
+Copying the configuration into `observed` is never accepted as evidence, and a task
+that sweeps no audited dimension claims nothing (and is trivially consistent).
+
 ## 6. What is still open (tracked, not hidden)
 
 | Item | State |

@@ -50,6 +50,9 @@ def _verified(row):
     verification = row.get("verification")
     if isinstance(verification, dict) and verification.get("status") not in (None, "verified"):
         return False
+    evidence = row.get("dimension_evidence")
+    if isinstance(evidence, dict) and evidence.get("verified") is False:
+        return False
     correctness = row.get("correctness")
     if isinstance(correctness, dict) and correctness.get("verified") is False:
         return False
