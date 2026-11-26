@@ -81,6 +81,19 @@ def _plain(values):
     return [value for value in values if value is not None]
 
 
+def _barh(axis, labels, values, reference=None):
+    """Horizontal bars with an optional reference line (e.g. slowdown 1.0)."""
+    positions = range(len(labels))
+    axis.barh(list(positions), values)
+    axis.set_yticks(list(positions))
+    axis.set_yticklabels(labels)
+    if reference is not None:
+        axis.axvline(reference, color="black", linewidth=.8, linestyle="--")
+    axis.invert_yaxis()
+    for index, value in enumerate(values):
+        axis.text(value, index, f" {value:.2f}x", va="center")
+
+
 def create_charts(destination, rows, analysis):
     """Render every chart that has data, and describe the rest.
 
@@ -123,6 +136,19 @@ def create_charts(destination, rows, analysis):
         finally:
             plt.close(figure)
         return report.add(ChartResult(name=name, path=name + ".png"))
+
+    long_tail = (analysis or {}).get("long_tail") or {}
+    pairs = [item for item in (long_tail.get("pairs") or [])
+             if item.get("slowdown_ratio") is not None]
+    if pairs:
+        entries = pairs[:MAX_PER_KIND]
+        labels = [f"{item.get('case_id')} · {item.get('operator')} · EP{item.get('ep_size')}"
+                  for item in entries]
+        values = [item["slowdown_ratio"] for item in entries]
+        plot("long-tail-slowdown",
+             "Slowdown against the matching baseline (1.0 = no cost)",
+             lambda axis, labels=labels, values=values: _barh(axis, labels, values, 1.0),
+             xlabel="stressed latency / baseline latency")
 
     details = (analysis.get("comparison_details") or {}).get("groups") or []
     comparisons = [group for group in details if group.get("kind") == "actual_comparison"]

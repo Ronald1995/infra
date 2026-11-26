@@ -18,8 +18,10 @@ doctor reports the observed triple against it.
 
 ## What this changes in the repository
 
-* The catalog gains a CANN 9.0.0 compatibility row (`status: documented`) so the doctor
-  can name the container's release instead of reporting an unknown pairing.
+* The container's CANN 9.0.0 is recorded in the `cann-toolkit` entry's notes and in
+  this document, **not** as a compatibility row: a row needs concrete torch/torch_npu
+  versions, and the probe could not read them. The doctor therefore reports the pairing
+  as unlisted (`skip`, never `pass`) until an NPU run confirms it.
 * Nothing is re-pinned: the benchmark pins stay the validated ones and the doctor warns
   when the container differs. A mismatch is an image-tag problem.
 * Two open items are recorded rather than assumed away:

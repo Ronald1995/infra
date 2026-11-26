@@ -37,8 +37,7 @@ ROUTINGS = (
 )
 DTYPES = {"float32": 4, "float16": 2, "bfloat16": 2}
 TIMINGS = ("output_ready", "host_api", "device", "async", "throughput", "cold_start")
-L0_MECHANISMS = ("ub_memory", "urma", "ub_ctp", "ub_rtp", "roce", "hccs", "uboe",
-                 "shmem_mte", "shmem_udma")
+from common.transport import IDS as L0_MECHANISMS  # noqa: E402  (single registry)
 L0_ACCELERATORS = ("default", "host_ts", "aicpu_ts", "aiv", "aiv_only", "ccu_ms",
                    "ccu_sched", "aicpu", "ccu_ms_only", "ccu_sched_only")
 PEER_POLICIES = ("ring", "same_server", "cross_server")

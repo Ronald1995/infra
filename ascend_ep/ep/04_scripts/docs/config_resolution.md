@@ -252,6 +252,30 @@ Legacy strings (`environment`, `explicit`, `plan`, `unavailable`) are mapped ont
 five states, and an unrecognised value becomes `unknown` -- a claim of "verified" is
 never invented.
 
+## 5.9 One transport registry, and the long-tail chart
+
+`common/transport.py` is the only place a transport mechanism is declared. Each entry
+describes four independent axes (programming model, protocol, execution engine,
+physical link), its LINK/OVERLAP cases, its claim, and which dimensions it sweeps.
+`config.L0_MECHANISMS`, `variants.MECHANISM_DIMENSIONS` and the tests all read it, so
+adding a mechanism cannot leave one of the three tables behind:
+
+```python
+"shmem_udma": {
+    "programming_model": "shmem", "protocol": None, "physical_link": "ub",
+    "execution_engines": ("aiv",),
+    "dimensions": {"cores": "sweep", "quiet_mode": "sweep",
+                   "variants": {"device": "sweep", "host": "fixed"}},
+    "link_cases": ("LINK-013",), "overlap_cases": ("OVERLAP-007",),
+    "claim": "SHMEM UDMA submission with a measurable QP count and async-submit flag",
+}
+```
+
+The report's long-tail section now also renders a chart
+(`charts/long-tail-slowdown.png`) of the measured slowdown per stressed point, with a
+1.0 reference line; when no pair has a baseline, no chart is produced and the section
+says so instead of showing an empty figure.
+
 ## 6. What is still open (tracked, not hidden)
 
 | Item | State |

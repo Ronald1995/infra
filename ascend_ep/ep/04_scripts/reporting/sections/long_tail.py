@@ -34,13 +34,20 @@ def body(ctx):
                  _calibration(item.get("calibration"))]
                 for item in pairs]
         lines += ["### Measured cost per stressed point", "",
-                  table(["Case", "Operator", "EP", "Stress", "Baseline ms", "Stressed ms",
-                         "Slowdown", "Retention", "Amplification", "Calibration"], rows),
+                  *table(["Case", "Operator", "EP", "Stress", "Baseline ms", "Stressed ms",
+                          "Slowdown", "Retention", "Amplification", "Calibration"], rows),
                   "",
                   "Amplification is extra group latency divided by the injected delay: below 1 "
                   "means overlap hid part of it, above 1 means the slow rank dragged the group.",
                   ""]
         summary = result.get("summary") or {}
+        charts = getattr(ctx, "charts", None)
+        links = [item for item in (charts.links() if charts is not None and charts.available
+                                   else []) if item[0].startswith("long-tail")]
+        if links:
+            lines += ["### Chart", ""]
+            lines += [f"![{label}]({path})" for label, path in links]
+            lines += [""]
         lines += ["### Distribution", "",
                   f"- pairs: {summary.get('pairs')}; without a baseline: "
                   f"{summary.get('missing_baseline')}",
@@ -49,10 +56,10 @@ def body(ctx):
                   f"{_ratio(summary.get('slowdown_max'))}", ""]
     if missing:
         lines += ["### Points that cannot be compared", "",
-                  table(["Case", "Operator", "EP", "Stress", "Reason"],
-                        [[item.get("case_id"), item.get("operator"), item.get("ep_size"),
-                          (item.get("stress") or {}).get("kind"), item.get("reason")]
-                         for item in missing[:20]]),
+                  *table(["Case", "Operator", "EP", "Stress", "Reason"],
+                         [[item.get("case_id"), item.get("operator"), item.get("ep_size"),
+                           (item.get("stress") or {}).get("kind"), item.get("reason")]
+                          for item in missing[:20]]),
                   "", f"{len(missing)} point(s) reported `not_applicable`; no ratio was "
                   "invented for them.", ""]
     return lines

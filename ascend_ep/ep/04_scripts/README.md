@@ -238,7 +238,7 @@ and never reported as verified.
 | [docs/observability.md](docs/observability.md) | observation fields, byte kinds, per-rank metrics, what HCCL can and cannot reveal |
 | [docs/reporting.md](docs/reporting.md) | report artifacts, main-report layout, data contract, comparability rules, formatting, chart degradation |
 | [docs/reporting_refactor.md](docs/reporting_refactor.md) | why the report system was rebuilt, what changed, test results, open gaps |
-| [docs/config_resolution.md](docs/config_resolution.md) | **configuration layers, provenance, dimension expansion (cores/quiet modes), the config audit and the five-EP matrix** |
+| [docs/config_resolution.md](docs/config_resolution.md) | **configuration layers, provenance, dimension expansion (cores/quiet modes), the transport registry, the config audit and the five-EP matrix** |
 | [docs/workflow.md](docs/workflow.md) | the autonomous workflow: before/after, module map, state files, recorded runs |
 | [docs/installation.md](docs/installation.md) | **deploying on a fresh Ascend host**: host prerequisites, wheel sources, source cache, offline install, isolated environments, verification |
 | [references/](references/) | the policies the skill applies: request interpretation, gates, dependencies, execution, profiling, recovery, report acceptance |

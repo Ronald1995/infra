@@ -25,6 +25,7 @@ from collections import Counter
 
 from common.case_spec import SIZE_WINDOWS as _SPEC_WINDOWS
 from common.case_spec import L0_PARAMETERS, spec as case_spec
+from common import transport
 from common.config import PEER_POLICIES
 
 #: Marker carried by a parameter set that must not be executed because its
@@ -56,16 +57,13 @@ COMPUTE_SHAPE_MODES = ("fixed", "workload")
 #:   parameter the runtime never reads, so the dimension is ``not_applicable``
 #:   with that reason instead of silently running the last configured value.
 MECHANISM_DIMENSIONS = {
-    "shmem_udma": {"cores": "sweep", "quiet_mode": "sweep",
-                   "variants": {"device": "sweep", "host": "fixed"}},
-    "shmem_mte": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
-    "ub_memory": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
-    "urma": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
-    "ub_ctp": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
-    "ub_rtp": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
-    "hccs": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
-    "roce": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
-    "uboe": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+    identifier: {
+        "cores": item["dimensions"].get("cores", "not_applicable"),
+        "quiet_mode": item["dimensions"].get("quiet_mode", "not_applicable"),
+        **({"variants": dict(item["dimensions"]["variants"])}
+           if item["dimensions"].get("variants") else {}),
+    }
+    for identifier, item in transport.MECHANISMS.items()
 }
 
 #: Human labels for the reason strings.
