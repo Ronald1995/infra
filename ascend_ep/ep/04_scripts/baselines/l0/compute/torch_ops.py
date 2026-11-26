@@ -20,7 +20,6 @@ from types import SimpleNamespace
 import torch
 
 from baselines.l0.contract import Prepared
-from baselines.l0.verification.path_verifier import Evidence
 from baselines.l0.verification.vocabulary import requested
 from baselines.reference.collectives import CollectiveBackend
 from baselines.reference.experts import activate, gmm1, gmm2, grouped_linear_gradient
@@ -52,13 +51,10 @@ def prepare(ctx, case, work, size, variant, params=None):
         errors = [error(a, b, threshold) for a, b in zip(got_values, expected_values)]
         return {"relative_l2": errors, "shape_mode": shape_mode, "shape": shape}
 
-    evidence = [Evidence(source="native_descriptor",
-                         claim={"execution_resource": "AIV"},
-                         detail="torch_npu GMM/SwiGLU kernels on the AIV vector cores")]
+    # No profiler evidence here, so the execution resource stays unobserved.
     request = requested(backend="torch_memory", operation=operation,
-                        execution_resource="AIV", transport_protocol="auto")
-    return Prepared(run=run, validate=validate, request=request, evidence=evidence,
-                    payload=payload)
+                        transport_protocol="auto")
+    return Prepared(run=run, validate=validate, request=request, payload=payload)
 
 
 def _dispatched(ctx, work):
@@ -160,8 +156,7 @@ def _gmm(ctx, work, variant, shape_mode, params):
 
 
 def request_for(case, params):
-    return requested(backend="torch_memory", operation="compute",
-                     execution_resource="AIV", transport_protocol="auto")
+    return requested(backend="torch_memory", operation="compute", transport_protocol="auto")
 
 
 __all__ = ["VARIANTS", "prepare", "request_for"]

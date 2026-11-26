@@ -71,14 +71,19 @@ def _collective(ctx, operation, variant, size):
         run = lambda: dist.all_gather(buffers, value, group=ctx.ep_group)
         expected = [value.new_full(value.shape, peer % 127 + 1) for peer in range(n)]
         return run, buffers, expected, size * n * (n - 1)
-    inputs = value.repeat(n).view(n, -1)
-    result = torch.empty_like(value)
+    # HCCL reduce-scatter rejects at::kByte/at::kBool, so reduce over float32 with
+    # exactly representable small integers and the same byte count.
+    elements = max(1, size // 4)
+    reduced = torch.full((elements,), float(rank % 127 + 1), dtype=torch.float32,
+                         device=ctx.device)
+    inputs = reduced.repeat(n).view(n, -1)
+    result = torch.empty_like(reduced)
     if ctx.device.type == "npu":
         run = lambda: dist.reduce_scatter_tensor(result, inputs.flatten(), group=ctx.ep_group)
     else:
         run = lambda: result.copy_(scatter_sum(inputs, ctx))
-    expected = value.new_full(value.shape, sum(peer % 127 + 1 for peer in range(n)) % 256)
-    return run, result, expected, size * n * (n - 1)
+    expected = torch.full_like(reduced, float(sum(peer % 127 + 1 for peer in range(n))))
+    return run, result, expected, elements * 4 * n * (n - 1)
 
 
 def _p2p(ctx, operation, size):

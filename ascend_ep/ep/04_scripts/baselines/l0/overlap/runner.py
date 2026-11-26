@@ -104,9 +104,7 @@ def prepare(ctx, case, work, size, params):
             "samples": [],
         }
 
-    evidence = comm["evidence"] + [
-        Evidence(source="native_descriptor", claim={"execution_resource": "AIV"},
-                 detail=f"compute task {compute} on a dedicated NPU stream")]
+    evidence = list(comm["evidence"])
     return Prepared(run=run, validate=validate, request=requested(
         backend="torch_hccl", operation="concurrent",
         transport_protocol=comm["mechanism"]), evidence=evidence,
