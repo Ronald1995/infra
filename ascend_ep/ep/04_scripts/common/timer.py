@@ -4,7 +4,8 @@ from time import perf_counter_ns
 from common.backend import BenchmarkUnavailable
 
 
-def measure(ctx, settings, setup, operation, wait=lambda value: value, sample_metrics=lambda value: {}):
+def measure(ctx, settings, setup, operation, wait=lambda value: value, sample_metrics=lambda value: {},
+            straggler=None):
     mode = settings["timing"]
     if mode == "device" and ctx.device.type == "cpu":
         raise BenchmarkUnavailable("unsupported", "device event timing requires an NPU")
@@ -27,6 +28,11 @@ def measure(ctx, settings, setup, operation, wait=lambda value: value, sample_me
             last = ctx.torch.npu.Event(enable_timing=True)
             first.record()
         started = perf_counter_ns()
+        # The injection sits inside the timed region and *after* the barrier: a delay
+        # before the barrier would be absorbed by rank alignment, and one after the
+        # timer would not be measured at all.
+        if straggler is not None:
+            straggler.before_operation(i)
         results = [operation(arg) for arg in inputs]
         issued = perf_counter_ns()
         for result in results:

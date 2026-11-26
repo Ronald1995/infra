@@ -1,0 +1,38 @@
+# Slow-rank (straggler) scenario: the same workload, one rank (or a fraction) slower.
+#
+# The baseline point disables the injection so the slowdown ratio has a denominator
+# measured under the same configuration.  Every injection records the requested and
+# the measured delay; a calibration miss is reported, not retried away.
+suite_id: straggler
+workload:
+  tokens_per_rank: 4096
+  routing: balanced
+  hot_rank: 0
+  seed: 42
+benchmark:
+  warmup: 20
+  iterations: 50
+  levels: [L1, L2, L3, L4]
+  rank_reduction: max
+  straggler:
+    enabled: true
+    seed: 42
+    selection: {mode: fixed, ranks: [0]}
+    injection: {stage: before_operation, method: host_delay, delay_us: 500}
+    trigger: {probability: 1.0, every_n_iterations: 1}
+    calibration: {relative_tolerance: 0.10}
+matrix:
+  # ST-00 baseline: no injection, same workload and cases.
+  - benchmark: {straggler: {enabled: false}}
+  # ST-01/ST-09 single vs two fixed slow ranks.
+  - benchmark: {straggler: {selection: {mode: fixed, ranks: [0]}}}
+  - benchmark: {straggler: {selection: {mode: fixed, ranks: [0, 1]}}}
+  # ST-08/ST-11 random / rotating / server-wide.
+  - benchmark: {straggler: {selection: {mode: random, fraction: 0.125}}}
+  - benchmark: {straggler: {selection: {mode: rotating, ranks: [0]}}}
+  - benchmark: {straggler: {selection: {mode: server, ranks: [0]}}}
+  # ST-02/ST-03 stage vs host delay, small and large amplitude.
+  - benchmark: {straggler: {injection: {delay_us: 50}}}
+  - benchmark: {straggler: {injection: {delay_us: 5000}}}
+  # ST-12 combined: hotspot rank is the slow one.
+  - benchmark: {straggler: {selection: {mode: hotspot, ranks: [0]}}}

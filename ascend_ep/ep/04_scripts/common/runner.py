@@ -249,6 +249,7 @@ def run_task(ctx, task, record, output, profile):
             return
 
         direct_metrics = None
+        controller = None
         memory.reset(ctx)
         if prepared.direct is not None:
             # The backend measured internally: run it once, keep its numbers.
@@ -262,12 +263,28 @@ def run_task(ctx, task, record, output, profile):
             samples = [{"iteration": 0, "latency_ns": initialization, "host_issue_ns": initialization,
                         "host_wait_ns": 0, "output_ready_ns": initialization, "operations": 1}]
         else:
+            from common import straggler as straggler_module
+
+            controller = straggler_module.StragglerController(ctx.config, ctx.rank, ctx.size)
             samples = measure(ctx, settings, prepared.setup, prepared.run, prepared.wait,
-                              prepared.sample_metrics)
+                              prepared.sample_metrics, controller)
         local = {"rank": ctx.rank, "samples": samples, "correctness": correctness,
-                 "memory": memory.snapshot(ctx), "initialization_ns": initialization}
+                 "memory": memory.snapshot(ctx), "initialization_ns": initialization,
+                 "straggler": (controller.summary() if controller is not None
+                               else {"enabled": False})}
         write_json(output / f"rank-{ctx.rank}-samples.json", local)
         ranks = sorted(ctx.gather(local), key=lambda item: item["rank"])
+        injected = [dict(item.get("straggler") or {}, rank=item["rank"]) for item in ranks
+                    if (item.get("straggler") or {}).get("enabled")]
+        if injected:
+            record["straggler"] = {
+                "requested_delay_us": injected[0].get("requested_delay_us"),
+                "method": injected[0].get("method"), "stage": injected[0].get("stage"),
+                "ranks": injected,
+                "injections": sum(item.get("injections") or 0 for item in injected),
+                "calibration_failures": sum(item.get("calibration_failures") or 0
+                                            for item in injected),
+            }
         timings = latency(ranks)
         timing_is_performance = settings["timing"] not in {"host_api", "cold_start"}
         p50 = timings["p50"] if timing_is_performance else None

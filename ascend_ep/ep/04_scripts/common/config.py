@@ -97,11 +97,13 @@ OPTIONAL_FIELDS = {
         "compute": {"fixed_shape"},
         # Optional switches inside a section the default already declares.
         "transport": {"peer_policies", "library"},
+        "straggler": True,
         "execution": {"modes"},
     },
     "distributed": {"hierarchical_inner_size": True},
     "workload": {"expert_placement": True, "router_bias": True, "trace_path": True,
-                 "preferred_route_ratio": True, "routing_control": True},
+                 "preferred_route_ratio": True, "routing_control": True,
+                 "hot_rank": True, "hot_expert": True},
     "profiling": {"enabled": True},
     "load_balance": {"redundant_experts": True},
     "topology": {"server_ids": True, "supernode_ids": True, "source": True,
@@ -213,6 +215,9 @@ def validate(config):
         raise ValueError("remote-rank router logit bias requires at least two server domains")
     if w["routing"] == "real_trace_replay" and not w.get("trace_path"):
         raise ValueError("real_trace_replay requires workload.trace_path")
+    from common import straggler as straggler_module
+
+    straggler_module.validate(config)
     if w["routing"] == "target_distribution":
         from common.routing import STATISTICAL_METRICS, TARGET_METRICS
 

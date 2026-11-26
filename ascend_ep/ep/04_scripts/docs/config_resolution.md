@@ -119,7 +119,7 @@ Current expansion (CPU, no hardware consulted):
 
 ```
 $ python -c "from common.plan import load_plan, expand; run = expand(load_plan('configs/benchmark_plan.yaml')); ..."
-tasks 43930   per ep {8: 8786, 16: 8786, 32: 8786, 64: 8786, 128: 8786}
+tasks 53650   per ep {8: 10730, 16: 10730, 32: 10730, 64: 10730, 128: 10730}
 config_audit ok True   (cores 480 tasks, quiet_modes 480 tasks, both swept)
 ```
 
@@ -158,12 +158,44 @@ generates Top-K ids that satisfy them exactly.
 rank 2x/4x, expert 2x, local 0/50%, and a decode-sized trace). It is registered in
 `configs/benchmark_plan.yaml`, so the five EP sizes plan the same routing matrix.
 
+## 5.6 Slow-rank injection
+
+`common/straggler.py` separates "a rank has more work" (routing imbalance) from "a rank
+is slower" (straggler). A request declares `benchmark.straggler`:
+
+```yaml
+straggler:
+  enabled: true
+  seed: 42
+  selection: {mode: fixed, ranks: [0]}      # fixed|random|rotating|fraction|server|hotspot|non_hotspot
+  injection: {stage: before_operation, method: host_delay, delay_us: 500}
+  trigger: {probability: 1.0, every_n_iterations: 1}
+  calibration: {relative_tolerance: 0.10}
+```
+
+* The selection is a pure function of the seed and the iteration, so every rank agrees
+  on who is slow without a collective; `server` needs `topology.server_ids` and
+  `hotspot`/`non_hotspot` need `workload.hot_rank`, and without them the test point is
+  `not_applicable` instead of running as if it had been injected.
+* `host_delay` and `stage_delay` are implemented. `device_delay`,
+  `compute_contention`, `memory_contention` and `communication_contention` raise
+  `BenchmarkUnavailable("not_implemented", ...)`: a device-side straggler is not
+  approximated with a host sleep.
+* The delay is injected **inside the timed region and after the barrier**
+  (`common/timer.py`): before the barrier it would be absorbed by rank alignment,
+  after the timer it would not be measured. The stage variant is called by an adapter
+  at a boundary it really exposes; a fused path is never split just to inject.
+* Every injection records requested vs measured delay and whether calibration passed;
+  the per-rank summary lands in the task result (`record["straggler"]`) and the
+  baseline point of `configs/straggler.yaml` disables the injection so the slowdown
+  ratio has a denominator measured under the same configuration.
+
 ## 6. What is still open (tracked, not hidden)
 
 | Item | State |
 |---|---|
 | Routing target generation | **done for rank/expert/locality** (`target_distribution`, see 5.5); server-level and cross-server generation stay statistical until a server quota allocator exists |
-| Straggler controller | not implemented yet |
+| Straggler controller | **done for host/stage delay** (section 5.6); device delay and resource contention are declared `not_implemented` |
 | Profiling / report sections for routing, straggler, combined long tail | pending the two items above |
 | `blocked_topology` / `unverified` result statuses | the status vocabulary has `unsupported`, `not_implemented`, `not_applicable`; topology verification is recorded on the topology record, not yet as a task status |
 | Transport registry as a single declaration | mechanisms are declared in `config.py::L0_MECHANISMS` and `variants.py::MECHANISM_DIMENSIONS`; they agree, but the merge into one registry is pending |
