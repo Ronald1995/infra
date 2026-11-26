@@ -12,3 +12,12 @@ Native API: `deep_gemm.fp8_fp4_mega_moe`. Source commit `3a35326271b069b8b5bf1a7
 ```sh
 python -m operators.megamoe_deepgemm_ascend.benchmark --config operators/megamoe_deepgemm_ascend/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012; FUSE-001..009; LAYER-001..006, LAYER-008, LAYER-009; MOE-002/003/004 (`moe_backward`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Correctness contract**: `validate_moe` over the forward output; the registry records `numeric_contract: mxfp8_activations_mxfp4_weights_no_shared_expert`, so the reference dequantises both operands and no shared expert is modelled.
+- **Timing contract**: `moe_case`; one `deep_gemm.fp8_fp4_mega_moe` call inside the timed block, quantisation of the static weights outside it.
+- **Registry constraints**: `ep_sizes=[8]` (EP8 only), `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `min_tokens=1`.
+- **Source**: DeepGEMM-Ascend at commit `3a35326271b069b8b5bf1a754435acd6cc91575b`; not ascendep-vendored.

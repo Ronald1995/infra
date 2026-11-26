@@ -23,6 +23,6 @@ def collect(ctx, prepared, directory):
             inputs = prepared.setup(i)
             ctx.barrier()
             ctx.synchronize()
-            prepared.wait(prepared.call(inputs))
+            prepared.wait(prepared.run(inputs))
             ctx.synchronize()
             profile.step()

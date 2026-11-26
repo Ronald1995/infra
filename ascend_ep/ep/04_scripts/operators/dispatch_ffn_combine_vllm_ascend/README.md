@@ -12,3 +12,12 @@ Native API: `torch.ops._C_ascend.dispatch_ffn_combine`. Source commit `0f63cfa1a
 ```sh
 python -m operators.dispatch_ffn_combine_vllm_ascend.benchmark --config operators/dispatch_ffn_combine_vllm_ascend/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001..009; LAYER-001..006, LAYER-008, LAYER-009; MOE-002/003/004/007/009 (`moe_backward`, `recompute`, `concurrent`, `dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Correctness contract**: `validate_moe` over the forward output; the registry constrains `hardware=[Atlas A3 (ascend910_93)]`, so on any other SoC the point is `unsupported` and no correctness claim is made.
+- **Timing contract**: `moe_case`; the fused custom op runs inside one timed call and the sample closes after `ctx.synchronize()`.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `min_tokens=1`.
+- **Source**: upstream vllm-ascend at commit `0f63cfa1a52225f301ffd4a335b8daa3028c283f`; not ascendep-vendored, so the torch extension must come from `dependencies/manifest.yaml`.

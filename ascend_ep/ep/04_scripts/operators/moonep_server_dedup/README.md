@@ -13,3 +13,12 @@ Native API: `MoonEP dev_server_dedup dispatch / combine`. Source commit `d8495c4
 ```sh
 python -m operators.moonep_server_dedup.benchmark --config operators/moonep_server_dedup/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L4 LAYER-005 (`rank_dedup` + `dedup_training`), LAYER-006 (`server_dedup` + `dedup_training`).
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001..009; L3/L4 cases needing `moe_forward`/`moe_backward`/`router_layer`/`dynamic_planner`. They stay in the manifest as `unsupported`.
+- **Correctness contract**: LAYER-005/006 validate the full training step with `validate_moe(use_router=True)` (input gradient, expert weight gradients) and add the planner/dedup fields; COMM-010 checks the native dispatch/combine round trip.
+- **Timing contract**: `fresh_plan` re-plans every step, `cached_plan` reuses a plan built outside the timer; replica weight prefetch and gradient reduction are reported as `stage_ns` (`benchmarks/cases/l4_router_planner.py::_planned`).
+- **Registry constraints**: `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `min_tokens=1`; `dedup.mode` must be `rank` or `server` (the case rule `layer_dedup_mode` reports the other mode `not_applicable`), and server mode needs an explicit rank-to-server map.
+- **Source**: MoonEP `dev_server_dedup` at commit `d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d`; not ascendep-vendored.

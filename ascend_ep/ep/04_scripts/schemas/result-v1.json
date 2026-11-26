@@ -68,6 +68,27 @@
         "null"
       ]
     },
+    "observation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "What actually ran: actual_api, actual_algorithm, actual_transport, fallback state, the four byte kinds (logical/remote/measured_wire/local_copy), per-rank latency, source and confidence. See common/observation.py."
+    },
+    "completion": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The completion guarantee the measurement has: level (submitted/fenced/local_complete/remote_visible), detail, proves_transfer. A fenced sample must not be reported as a completed transfer."
+    },
+    "handler": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The CaseSpec handler that executed this task."
+    },
     "profiling_artifacts": {
       "type": "array"
     }

@@ -1,11 +1,32 @@
-"""Execute a single plan item in an isolated rank worker."""
+"""Execute a single plan item in an isolated rank worker.
+
+One execution path serves every level.  The worker:
+
+1. builds the untimed inputs (workload, routing trace and -- for a training
+   backward case -- the forward graph),
+2. builds a :class:`~common.prepared.PreparedCase` through
+   ``benchmarks.cases.prepare`` and validates it *before* timing,
+3. times ``run`` -> ``wait`` with :func:`common.timer.measure`, so the sample
+   covers real completion rather than submission,
+4. derives latency, bandwidth, compute and throughput from the measurement and the
+   routing-trace model, keeping the two kinds of number apart,
+5. records what actually happened (API, algorithm, transport, fallback, bytes and
+   the completion guarantee) in an
+   :class:`~common.observation.ExecutionObservation`.
+
+The timing boundary is unchanged from the pre-refactor implementation: setup,
+barrier, synchronisation and validation all happen outside the measured interval,
+and ``wait`` is inside it.
+"""
 from dataclasses import replace
+from statistics import mean
 from time import perf_counter_ns
 import traceback
 
 from common.backend import BenchmarkUnavailable
 from common.distributed import open_context
 from common.environment import capture
+from common.observation import from_traffic, unavailable as no_traffic
 from common.registry import registry
 from common.storage import fingerprint, load_json, write_json
 from schemas import result
@@ -50,9 +71,91 @@ def execute_worker(manifest_path, task_id, output, profile=False):
     return 0
 
 
+# --------------------------------------------------------------- attribution --
+
+def _attribute(backend, name):
+    """Read an optional attribution hook from a backend, or return ``None``."""
+    getter = getattr(backend, name, None)
+    if getter is None:
+        return None
+    try:
+        return getter() if callable(getter) else getter
+    except (RuntimeError, AttributeError, TypeError):
+        return None
+
+
+def _transport(ctx):
+    """The process-group backend actually in use, or ``None`` when unknown."""
+    try:
+        name = ctx.dist.get_backend(ctx.ep_group)
+    except (RuntimeError, AttributeError, ValueError):
+        return None
+    return str(name) if name is not None else None
+
+
+def _fallback_reason(ctx, task):
+    """Detect a transport fallback the adapter did not intend.
+
+    An adapter named for HCCL whose process group is not HCCL is running on a
+    different transport; an operator case on a CPU process group is a functional
+    stand-in.  Both are recorded instead of being reported as an Ascend transfer.
+    """
+    transport = _transport(ctx)
+    if transport is None:
+        return None
+    if ctx.device.type == "npu" and transport != "hccl":
+        return f"the process group backend is {transport}, not HCCL"
+    if ctx.device.type == "cpu" and task["benchmark_level" if "benchmark_level" in task else "level"] != "L0":
+        return f"CPU process group ({transport}) is a functional stand-in, not an Ascend transport"
+    return None
+
+
+def observe(ctx, task, backend, prepared, volume):
+    """Build the execution observation for one case.
+
+    A backend that reports its own traffic wins; otherwise the routing-trace model
+    is used and labelled as a model.  A level that does not model cross-card
+    traffic gets an explicit ``unavailable`` observation instead of a zero, and a
+    wire-derived physical bandwidth is never invented.
+    """
+    supplied = prepared.observation
+    if supplied is not None:
+        observation = supplied
+    elif volume is not None:
+        operation = task["operation"]
+        observation = from_traffic(
+            volume,
+            backend.actual_api() if backend is not None else task["backend_id"],
+            algorithm=_attribute(backend, "actual_algorithm"),
+            transport=_transport(ctx),
+            dispatch=("dispatch",) if operation in {
+                "dispatch", "cached_dispatch", "dispatch_combine", "training_tail_dispatch",
+                "high_throughput_dispatch", "deduplicated_dispatch", "planned_dispatch",
+                "quantized_dispatch"} else (),
+            combine=("combine",) if operation in {
+                "combine", "dispatch_combine", "async_combine", "combine_add_rmsnorm"} else (),
+        )
+    else:
+        observation = no_traffic(
+            "this level does not model cross-card traffic; see compute and throughput",
+            backend.actual_api() if backend is not None else None)
+    if observation.fallback_reason is None:
+        reason = _fallback_reason(ctx, task)
+        if reason:
+            observation.fallback_used = True
+            observation.fallback_reason = reason
+    observation.evidence.append({
+        "source": "completion", "claim": {},
+        "detail": f"{prepared.completion or 'none'}: {prepared.completion_detail or 'unknown'}",
+    })
+    return observation
+
+
+# ----------------------------------------------------------------- execution --
+
 def run_task(ctx, task, record, output, profile):
-    from benchmarks.l0_hardware import l0_case
-    from benchmarks.operator_cases import Operation, operator_case, uses_planner
+    from benchmarks.cases import CaseRequest, prepare as prepare_case
+    from benchmarks.cases.common import uses_planner
     from common import memory
     from common.cases import catalog
     from common.routing import Routing, summarize, summarize_local
@@ -63,6 +166,10 @@ def run_task(ctx, task, record, output, profile):
     cfg = ctx.config
     operation = task["operation"]
     backend = None
+    prepared = None
+    planner_used = False
+    rank_avg = None
+    volume = None
     mapping = ctx.gather(ctx.mapping())
     record["environment"] = {**capture(), "device": cfg["device"]}
     if ctx.device.type == "npu":
@@ -101,40 +208,33 @@ def run_task(ctx, task, record, output, profile):
                 "topk_ids": route.ids.tolist(), "topk_weights": route.weights.tolist(),
                 "placement": route.placement, "seed": route.seed, "tokens_per_rank": route.tokens,
             })
-    cleanup = lambda: None
-    payload = None
     try:
         ctx.barrier()
         ctx.synchronize()
         initialization_start = perf_counter_ns()
-        l0_prepared = None
-        direct_metrics = None
         if is_hw:
-            params = task["parameters"]
+            # L0 baselines read the workload through the context.
             setattr(ctx, "workload", works[0] if works else None)
-            l0_prepared = l0_case(ctx, case, params, output)
-            cleanup = l0_prepared.cleanup
-            payload = l0_prepared.payload
-            status_evidence = list(l0_prepared.evidence)
-            # The timer calls operation(setup_output) and wait(result); the L0
-            # baselines are zero-argument closures, so adapt them here instead of
-            # forcing every baseline to accept an unused argument.
-            prepared = Operation(lambda _: None, lambda _: l0_prepared.run(),
-                                 l0_prepared.validate, lambda _: l0_prepared.wait(None))
+            request = CaseRequest(ctx=ctx, case=case, backend=None, works=works, traces=traces,
+                                  parameters=task["parameters"], output=output)
         else:
             spec = registry()[task["backend_id"]]
             backend = spec.create()
-            cleanup = backend.finalize
             backend.initialize(ctx)
-            if uses_planner(operation, task["parameters"]):
+            request = CaseRequest(ctx=ctx, case=case, backend=backend, works=works,
+                                  traces=traces, parameters=task["parameters"], output=output)
+            if uses_planner(request):
                 if any(work.route.tokens != works[0].route.tokens for work in works):
-                    raise BenchmarkUnavailable("unsupported", "MoonEP native planner buffer needs the same per-rank shape between steps")
+                    raise BenchmarkUnavailable(
+                        "unsupported",
+                        "MoonEP native planner buffer needs the same per-rank shape between steps")
                 backend.prepare_training(works[0])
             else:
                 backend.prepare(works[0])
             if case.level == "L1" or operation in {"serial_dispatch_gmm", "serial_gmm_combine"}:
                 backend.prepare_communication(works[0])
-            prepared = operator_case(ctx, case, backend, works, traces, task["parameters"])
+        prepared = prepare_case(request, output)
+        planner_used = (not is_hw) and uses_planner(request)
         ctx.synchronize()
         initialization = perf_counter_ns() - initialization_start
         correctness = prepared.validate()
@@ -145,11 +245,12 @@ def run_task(ctx, task, record, output, profile):
             record["source"] = "profile_only"
             return
 
+        direct_metrics = None
         memory.reset(ctx)
-        if is_hw and l0_prepared is not None and l0_prepared.direct:
+        if prepared.direct is not None:
             # The backend measured internally: run it once, keep its numbers.
-            prepared.call(None)
-            direct_metrics = l0_prepared.direct["extract"]()
+            prepared.run(None)
+            direct_metrics = prepared.direct["extract"]()
             if direct_metrics is None:
                 raise BenchmarkUnavailable("runtime_failed",
                                            "the backend produced no measurement")
@@ -158,7 +259,8 @@ def run_task(ctx, task, record, output, profile):
             samples = [{"iteration": 0, "latency_ns": initialization, "host_issue_ns": initialization,
                         "host_wait_ns": 0, "output_ready_ns": initialization, "operations": 1}]
         else:
-            samples = measure(ctx, settings, prepared.setup, prepared.call, prepared.wait, prepared.sample_metrics)
+            samples = measure(ctx, settings, prepared.setup, prepared.run, prepared.wait,
+                              prepared.sample_metrics)
         local = {"rank": ctx.rank, "samples": samples, "correctness": correctness,
                  "memory": memory.snapshot(ctx), "initialization_ns": initialization}
         write_json(output / f"rank-{ctx.rank}-samples.json", local)
@@ -185,7 +287,7 @@ def run_task(ctx, task, record, output, profile):
                                       "planner_net_speedup": None}
             if ctx.rank == 0:
                 write_json(output / "routing_trace.json", traces)
-            if uses_planner(operation, task["parameters"]):
+            if planner_used:
                 from metrics.summary import stage_latency
                 check = ranks[0]["correctness"]["steps"]
                 for name in ("planned_receive_rows", "planned_rank_max_mean", "planned_expert_copies",
@@ -205,9 +307,7 @@ def run_task(ctx, task, record, output, profile):
                         sum(sum(work.route.tokens) for work in works), ctx.size, p50
                     )
             if operation in {"rank_dedup_layer", "server_dedup_layer"}:
-                traffic_config = cfg if uses_planner(operation, task["parameters"]) else {
-                    **cfg, "dedup": {"mode": "none"},
-                }
+                traffic_config = cfg if planner_used else {**cfg, "dedup": {"mode": "none"}}
                 record["load_balance"]["dedup_dispatch_traffic"] = traffic(
                     traces[0], traffic_config, tokens, backend.spec.traffic_model
                 )
@@ -265,11 +365,12 @@ def run_task(ctx, task, record, output, profile):
                 record["compute_shape"] = direct_metrics["compute_shape"]
             if direct_metrics.get("overlap") is not None:
                 record["overlap"] = direct_metrics["overlap"]
-        if payload is not None and not direct_metrics:
+        if prepared.payload is not None and not direct_metrics:
+            payload = prepared.payload
             if isinstance(payload, dict) and "per_rank_bytes" in payload:
-                volume = {**payload, "payload_bytes": payload["per_rank_bytes"],
-                          "source": "declared_payload_model"}
-                record["bandwidth"] = bandwidth(volume, p50)
+                described = {**payload, "payload_bytes": payload["per_rank_bytes"],
+                             "source": "declared_payload_model"}
+                record["bandwidth"] = bandwidth(described, p50)
                 record["bandwidth"]["global_payload_bytes"] = payload.get("global_bytes")
                 record["bandwidth"]["bandwidth_unit"] = "GB/s"
                 record["bandwidth"]["scope"] = "per_rank"
@@ -279,21 +380,41 @@ def run_task(ctx, task, record, output, profile):
                 record["bandwidth"] = bandwidth({"unit": "bytes", "scope": "EP group",
                                                   "payload_bytes": payload,
                                                   "source": "collective_payload_model"}, p50)
-        if is_hw and l0_prepared is not None:
+        observation = observe(ctx, task, backend, prepared, volume)
+        rank_avg = mean(timings["rank_mean"]) if timings.get("rank_mean") else None
+        observation.with_latency(p50, rank_avg)
+        if observation.actual_api is None and backend is not None:
+            observation.actual_api = backend.actual_api()
+        record["observation"] = observation.as_dict()
+        record["completion"] = {"level": prepared.completion,
+                                "detail": prepared.completion_detail,
+                                "proves_transfer": prepared.transfers_distinct_from_submission()}
+        record["handler"] = task.get("handler")
+        if prepared.metadata:
+            record["handler_metadata"] = {key: value
+                                          for key, value in prepared.metadata.items()
+                                          if key != "topology"}
+        if is_hw:
             from baselines.l0.topology import rank_graph
             from baselines.l0.verification import hccl_log, path_verifier
-            request = l0_prepared.request or {}
-            evidence = list(l0_prepared.evidence)
+            request_block = prepared.request or {}
+            evidence = list(prepared.evidence)
             verification = ((cfg.get("benchmark") or {}).get("verification") or {})
             if verification.get("enabled", True):
                 logs, inspected = hccl_log.collect(hccl_log.configured_paths(cfg),
                                                    [str(output)])
                 evidence.extend(logs)
                 record["verification_logs"] = {"inspected": inspected, "claims": len(logs)}
-            path_verifier.annotate(record, request, evidence)
+            path_verifier.annotate(record, request_block, evidence)
+            levels = (prepared.metadata or {}).get("levels")
+            if levels:
+                from baselines.l0.verification.evidence import strongest_level
+                record["verification_levels"] = dict(levels)
+                record["verification_level"] = strongest_level(levels)
             record["category"] = case.category
             record["parameters"] = dict(task["parameters"])
             record["topology_graph"] = rank_graph.build(cfg, mapping)
     finally:
         ctx.synchronize()
-        cleanup()
+        if prepared is not None:
+            prepared.cleanup()

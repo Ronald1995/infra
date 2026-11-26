@@ -10,3 +10,12 @@
 ```sh
 python -m operators.megamoe_cann.benchmark --config operators/megamoe_cann/config.yaml --cases MOE-001
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001..009; LAYER-001..006, LAYER-008, LAYER-009; MOE-002/003/004 (`moe_backward`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Correctness contract**: `validate_moe` over the forward output; the registry declares only `moe_forward`, so no gradient case is claimed for this adapter.
+- **Timing contract**: `moe_case`; one fused forward inside the timed block, the stacked `[E_local,2I,H]` / `[E_local,H,I]` weight preparation stays outside it.
+- **Registry constraints**: `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `min_tokens=1`; no `ep_sizes`/`top_k` pin, and `dynamic_shapes` is recorded as unadapted.
+- **Source**: CANN ops-transformer at commit `68a67e130417593f37ea3cece1ebfb4be366b95f`; not ascendep-vendored, and no device execution record exists.

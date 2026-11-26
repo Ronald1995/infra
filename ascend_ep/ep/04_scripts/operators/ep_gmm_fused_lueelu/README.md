@@ -12,3 +12,12 @@
 ```sh
 python -m operators.ep_gmm_fused_lueelu.benchmark --config operators/ep_gmm_fused_lueelu/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L2 FUSE-002 `dispatch_gmm`, FUSE-004 `gmm_combine`, FUSE-006 `tile_schedule`, FUSE-007 `comm_resources`, FUSE-009 `fused_backward`; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001/003/005/008 (`dispatch`/`chunk_pipeline`/`quantized_fusion`); LAYER-001..006, LAYER-008, LAYER-009; MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Correctness contract**: FUSE-006/FUSE-007 compare the tuned dispatch+GMM against the reference GMM-1 (relative L2); FUSE-002/004 use the fused GMM pair, FUSE-009 the fused backward; L3 uses `validate_moe`. A tiling the native `validate_tiling` rejects becomes `unsupported`, not a silent fallback.
+- **Timing contract**: FUSE-006/FUSE-007 build the tiling outside the timer and run one dispatch inside it (`benchmarks/cases/l2_fusion.py::_tuned`); the tiling variant is the measurement, so the variants are not repeats.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `equal_tokens`, `contiguous_placement`, `swiglu_limit=10`.
+- **Source**: vendored `operators/vendor/ascendep/ep/ep_gmm_fused_lueelu/demo.py` at commit `24ff84d3ab8c01e1e2071802465173e624e1f89d`; `deep_ep_experimental` (including `_tiling`) is a native dependency.

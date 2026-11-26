@@ -1,0 +1,175 @@
+# CANN, the NPU driver boundary and the PyTorch device bridge.
+#
+# Why this file exists next to manifest.yaml: the manifest says *what* must be
+# present and *who* needs it; this file says *how the host gets it* and *what the
+# container may and may not do about it*.  The boundary is the whole point --
+# inside a container you may install wheels and compile extensions, but the
+# driver, the firmware and /dev/davinci* belong to the host, and no amount of
+# pip install changes that.
+schema_version: 1
+id: cann
+manifest_ids:
+  - npu-driver
+  - cann-toolkit
+  - torch-npu
+  - cann-ops-transformer
+  - hccl
+  - hcomm
+  - npu-smi
+  - ascendc-toolchain
+
+# ---------------------------------------------------------------------------
+# Detection: what the doctor actually reads.  Nothing here is inferred from a
+# PyPI name, because CANN is not distributed through PyPI.
+# ---------------------------------------------------------------------------
+detect:
+  env:
+    - ASCEND_HOME_PATH      # set by /usr/local/Ascend/ascend-toolkit/set_env.sh
+    - ASCEND_TOOLKIT_HOME   # older spelling, accepted as a fallback
+    - ASCEND_OPP_PATH       # operator package root, used for custom-op lookups
+    - ASCEND_TOOLKIT_VERSION  # sometimes exported by site images; never trusted alone
+  version_files:
+    - $ASCEND_HOME_PATH/version.cfg
+    - /usr/local/Ascend/ascend-toolkit/latest/version.cfg
+    - $ASCEND_HOME_PATH/ascend_toolkit_install.info
+  libraries:
+    - libhccl.so
+    - libhcomm.so
+    - libascendcl.so
+    - libacl_op_compiler.so
+  binaries:
+    - npu-smi                      # /usr/local/Ascend/driver/tools/npu-smi
+    - ccec                         # $ASCEND_HOME_PATH/compiler/ccec_compiler/bin
+    - atc                          # model compiler, not needed by this benchmark
+  device_nodes:
+    - /dev/davinci0 .. /dev/davinciN
+    - /dev/davinci_manager
+    - /dev/devmm_svm
+  commands:
+    - "npu-smi info"               # SoC name and chip count; parsed, never assumed
+    - "npu-smi info -t board -i 0"
+  doctor_api:
+    - "scripts.doctor.probe_cann_home()"
+    - "scripts.doctor.probe_shared_library()"
+    - "scripts.doctor.probe_driver()"
+    - "scripts.doctor.probe_binary()"
+    - "scripts.doctor.probe_device_node()"
+    - "scripts.doctor.compatibility()"   # CANN/torch/torch_npu triple match, also printed by scripts/check_cann.py
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+install:
+  host_driver:
+    ownership: host
+    installable_in_container: false
+    reason: >-
+      Kernel module, firmware and device nodes.  A container cannot install or
+      reload them; it can only be granted access to them.
+    steps:
+      - "download Ascend-hdk-<soc>-npu-driver_<ver>_linux-<arch>.run for the target SoC"
+      - "verify sha256 against the vendor manifest"
+      - "./Ascend-hdk-<soc>-npu-driver_<ver>_linux-<arch>.run --full"
+      - "./Ascend-hdk-<soc>-npu-firmware_<ver>_linux-<arch>.run --full"
+      - "reboot or 'npu-smi set -t reset -i <id>' for every card"
+      - "npu-smi info   # must list every chip before continuing"
+    verify:
+      - "ls -l /dev/davinci* /dev/davinci_manager /dev/devmm_svm"
+
+  host_toolkit:
+    ownership: host
+    installable_in_container: false
+    reason: >-
+      The .run installer writes /usr/local/Ascend and links against the host
+      driver.  The supported container pattern is a bind mount, not a second
+      installation.
+    steps:
+      - "verify sha256 of Ascend-cann-toolkit_<ver>_linux-<arch>.run"
+      - "./Ascend-cann-toolkit_<ver>_linux-<arch>.run --install"
+      - "./Ascend-cann-kernels-<soc>_<ver>_linux-<arch>.run --install"
+      - "source /usr/local/Ascend/ascend-toolkit/set_env.sh"
+    verify:
+      - "cat $ASCEND_HOME_PATH/version.cfg"
+      - "ccec --version"
+
+  container_wheels:
+    ownership: container
+    installable_in_container: true
+    requirements: [dependencies/python/npu.txt]
+    steps:
+      - "pip install --no-index --find-links \"$WHEELHOUSE\" -r dependencies/python/base.txt"
+      - "pip install --no-index --find-links \"$WHEELHOUSE\" -r dependencies/python/npu.txt"
+    reason: >-
+      torch_npu is a wheel and may be installed in the container, but only the
+      wheel matching the host CANN release (see manifest.compatibility).
+
+  source_builds:
+    ownership: container
+    installable_in_container: true
+    needs: [cann-toolkit, ascendc-toolchain, torch-npu]
+    items:
+      - id: cann-ops-transformer
+        commit: 68a67e130417593f37ea3cece1ebfb4be366b95f
+        steps:
+          - "git clone https://gitcode.com/cann/ops-transformer.git"
+          - "git -C ops-transformer checkout 68a67e130417593f37ea3cece1ebfb4be366b95f"
+          - "pip install --no-build-isolation ./ops-transformer"
+        blocker_if_missing: "ccec not found -> the context Torch extension cannot compile; doctor reports ascendc-toolchain=FAIL"
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+env:
+  required:
+    - ASCEND_HOME_PATH
+  recommended:
+    - ASCEND_TOOLKIT_HOME
+    - ASCEND_OPP_PATH
+    - ASCEND_RT_VISIBLE_DEVICES
+    - ASCEND_WORK_PATH
+  path_entries:
+    - $ASCEND_HOME_PATH/lib64
+    - $ASCEND_HOME_PATH/runtime/lib64
+    - /usr/local/Ascend/driver/lib64
+    - /usr/local/Ascend/driver/lib64/common
+  notes: >-
+    LD_LIBRARY_PATH is the only mechanism that makes libhccl.so and libhcomm.so
+    visible to ctypes and to torch; ctypes.util.find_library does not consult it
+    on every platform, which is why the doctor scans the directories explicitly.
+
+# ---------------------------------------------------------------------------
+# Evidence: the raw values the doctor puts into a Check record.  "Exact" means
+# it is quoted, not summarised, so a report can be diffed between hosts.
+# ---------------------------------------------------------------------------
+evidence:
+  - id: cann.home
+    probe: env + candidate directories
+    exact: ["ASCEND_HOME_PATH value", "first existing candidate directory"]
+    absent_when: "no environment variable and no /usr/local/Ascend/ascend-toolkit/latest"
+  - id: cann.version
+    probe: version.cfg (regex 'version\s*=\s*(\S+)')
+    exact: ["file path", "matched version string", "first 5 lines of the file"]
+    absent_when: "file missing or no version key"
+  - id: cann.soc
+    probe: "npu-smi info"
+    exact: ["command", "sorted SoC candidates", "first 40 lines of output"]
+    absent_when: "npu-smi missing or non-zero exit"
+  - id: cann.libraries
+    probe: ctypes.util.find_library + explicit LD_LIBRARY_PATH scan
+    exact: ["find_library result per name", "resolved absolute path", "directories scanned"]
+  - id: cann.devices
+    probe: glob /dev/davinci*
+    exact: ["matched paths", "os.access(R_OK|W_OK) per path"]
+  - id: cann.driver
+    probe: /usr/local/Ascend/driver/version.info + device nodes
+    exact: ["version.info contents", "device node presence"]
+
+# ---------------------------------------------------------------------------
+# Failure routing: which capability groups a CANN failure blocks, so the matrix
+# and the report agree with the runner's ``dependency_missing`` decisions.
+# ---------------------------------------------------------------------------
+blocks:
+  driver_missing: [l0_transport, l0_collectives, l0_hardware, l0_compute, l0_overlap, l0_topology, profiling, multinode]
+  toolkit_missing: [l0_transport, l0_collectives, l0_hardware, l0_compute, l0_overlap, l0_topology, profiling, multinode]
+  torch_npu_missing: [l0_transport, l0_collectives, l0_hardware, l0_compute, l0_overlap, l0_topology, profiling, multinode]
+  hccl_missing: [l0_transport, l0_collectives, l0_hardware, l0_overlap]

@@ -12,3 +12,12 @@
 ```sh
 python -m operators.alltoall_hccl.benchmark --config operators/alltoall_hccl/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run**: L1 COMM-001..COMM-008, COMM-010; L2 FUSE-001, FUSE-003; L3 LAYER-007, MOE-001..MOE-009; L4 LAYER-001, LAYER-002, LAYER-009.
+- **Cases it cannot run**: COMM-009 (`quantized_dispatch`), COMM-011 (`combine_add_rmsnorm`), COMM-012 (`planned_dispatch`); FUSE-002/004/005/006/007/008/009 (`dispatch_gmm`/`gmm_combine`/`chunk_pipeline`/`tile_schedule`/`comm_resources`/`quantized_fusion`/`fused_backward`); LAYER-003/004/008 (`dynamic_planner`), LAYER-005 (`rank_dedup`+`dedup_training`), LAYER-006 (`server_dedup`+`dedup_training`). They remain in the manifest as `unsupported` with the missing token as the reason.
+- **Fixed owner**: `LAYER-003`, `LAYER-005` and `LAYER-006` name this adapter as their owner (`common/case_spec.py::_CASE_OWNER`). Those points run with a single `fixed_owner` parameter set here instead of the case's own variants, measured against the relaxed plain-MoE contract (`common/scheduler.py::_contract`).
+- **Correctness contract**: dispatch layout via `validate_dispatch`; combine and MoE output/gradients via relative L2 (`common/validation.py`).
+- **Timing contract**: L1 handlers submit and wait inside the timed block; `result["completion"]["level"]` is `remote_visible` from `CollectiveBackend.COMPLETION` ("the collective returns after the operation completed on this rank"). Traffic model `collective_alltoallv`; L1 bandwidth is a routing-trace model.
+- **Registry constraints**: `devices=[npu,cpu]` only; the CPU/Gloo path is a functional stand-in recorded by `common/runner.py::_fallback_reason`.

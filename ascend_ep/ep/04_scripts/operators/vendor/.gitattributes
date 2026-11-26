@@ -1,0 +1,5 @@
+# Vendored third-party sources keep the exact bytes they were copied with.
+# operators/vendor/ascendep/VENDOR.json records one sha256 per file; any end-of-line
+# normalisation on checkout would change those bytes and make
+# `python scripts/vendor_ascendep.py --check` fail. Do not add text/eol rules here.
+* -text

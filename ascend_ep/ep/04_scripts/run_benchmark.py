@@ -50,10 +50,19 @@ def build_parser():
     commands = parser.add_subparsers(dest="command", required=True)
     listing = commands.add_parser("list")
     listing.add_argument("--capabilities", action="store_true")
-    commands.add_parser("doctor")
+    doctor_command = commands.add_parser("doctor", help="check every third-party dependency")
+    doctor_command.add_argument("--profile", default="all",
+                                choices=("cpu", "npu", "communication", "profiling",
+                                         "multinode", "all"))
+    doctor_command.add_argument("--json", action="store_true",
+                               help="machine-readable report on stdout")
+    doctor_command.add_argument("--wheelhouse", type=Path,
+                               help="check that an offline wheelhouse satisfies the pins")
     capability = commands.add_parser("capabilities", help="print the benchmark capability matrix")
     add_scope(capability)
     capability.add_argument("--matrix", type=Path, help="use a recorded L0 matrix instead of probing")
+    capability.add_argument("--runtime", action="store_true",
+                            help="also run the staged runtime capability probe")
     capability.add_argument("--json", action="store_true")
     for name in ("plan", "run", "baseline", "pipeline"):
         command = commands.add_parser(name)
@@ -87,37 +96,22 @@ def build_parser():
     return parser
 
 
-def doctor():
-    import importlib.util
-    import os
-    from common.environment import capture
-    from operators.ascendep import source_checkout
-    from common.backend import BenchmarkUnavailable
+def doctor(args=None):
+    """Environment doctor: installed dependency and device availability.
 
-    env = capture(probe_npu=True)
-    env["dependencies"] = {name: importlib.util.find_spec(name) is not None
-                           for name in ("torch", "torch_npu", "shmem", "deep_ep", "npu_patch", "moonep",
-                                        "cann_ops_transformer", "megatron", "mindspeed", "fsdp_turbo")}
-    try:
-        import torch
-        env["gloo_available"] = torch.distributed.is_gloo_available()
-        if env["dependencies"]["torch_npu"]:
-            import torch_npu  # noqa: F401
-            env["npu_devices"] = torch.npu.device_count()
-            env["npu_models"] = [torch.npu.get_device_name(i) for i in range(env["npu_devices"])]
-            env["hccl_backend"] = torch.distributed.is_backend_available("hccl")
-            if hasattr(torch.npu, "get_device_properties"):
-                env["npu_total_hbm_bytes"] = [
-                    getattr(torch.npu.get_device_properties(i), "total_memory", None)
-                    for i in range(env["npu_devices"])
-                ]
-    except (ImportError, OSError, RuntimeError) as exc:
-        env["torch_runtime_error"] = str(exc)
-    try:
-        env["ascendep_checkout"] = str(source_checkout(os.getenv("EP_ASCENDEP_ROOT")))
-    except BenchmarkUnavailable as exc:
-        env["ascendep_checkout"] = {"status": exc.status, "reason": str(exc)}
-    print(json.dumps(env, indent=2))
+    Delegates to :mod:`scripts.doctor`, which probes the real system and answers per
+    benchmark family rather than with one global PASS/FAIL.  A missing dependency is
+    reported as a failure with an action, never as a silent skip.
+    """
+    from scripts.doctor import render, run_doctor
+
+    report = run_doctor(profile=getattr(args, "profile", "all"),
+                        wheelhouse=getattr(args, "wheelhouse", None))
+    if getattr(args, "json", False):
+        print(report.as_json())
+    else:
+        print(render(report))
+    return report.exit_code
 
 
 def _require_source(args):
@@ -251,8 +245,7 @@ def run_command(args):
             print(json.dumps(entry, ensure_ascii=False))
         return 0
     if args.command == "doctor":
-        doctor()
-        return 0
+        return doctor(args)
     if args.command == "capabilities":
         if args.plan:
             tasks, _ = build_tasks(args)
@@ -261,6 +254,16 @@ def run_command(args):
         from baselines.l0.topology import discovery
         cfg = load_configs(args.config)[0] if args.config else None
         matrix = discovery.load(cfg, override_path=args.matrix)
+        if getattr(args, "runtime", False):
+            # The staged probe answers "is this channel usable *now*", which a
+            # compiled-in channel does not.  It is opt-in because it opens a bridge
+            # session and can be slow on a busy machine.
+            from baselines.l0.topology import runtime_probe
+            descriptor = next((probe.get("detail") for probe in matrix.get("probes", ())
+                               if probe.get("name") == "transport_bridge" and probe.get("ok")), {})
+            matrix = {**matrix, "runtime": runtime_probe.as_dict(
+                runtime_probe.probe(cfg or {}, descriptor=descriptor or {},
+                                    device=matrix.get("device")))}
         print(discovery.dump(matrix) if args.json else discovery.describe(matrix))
         return 0
     if args.command == "_worker":

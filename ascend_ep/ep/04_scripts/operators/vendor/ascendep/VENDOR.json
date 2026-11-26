@@ -1,0 +1,464 @@
+{
+  "schema_version": 1,
+  "generator": "scripts/vendor_ascendep.py",
+  "upstream": {
+    "url": "https://github.com/penn513/ascendep",
+    "commit": "24ff84d3ab8c01e1e2071802465173e624e1f89d",
+    "subdirectory": "ep",
+    "commit_author": "gp513 <gp513@outlook.com>",
+    "commit_date": "2026-11-24T20:04:21+08:00",
+    "commit_subject": "Add Ascend expert-parallel benchmarks and profiling tools"
+  },
+  "layout": "Files keep their upstream paths, so adding this directory to sys.path makes `import ep.<name>.demo` resolve exactly as it does in a full checkout. operators/vendor/.gitattributes marks the tree -text so git stores these bytes verbatim and the digests above stay valid on every platform.",
+  "license": {
+    "status": "absent",
+    "file": null,
+    "note": "Upstream publishes no LICENSE, COPYING or NOTICE file at this commit and no copyright or license header in any source file. Do not redistribute this copy until the owner signs off; see operators/vendor/THIRD_PARTY_NOTICES.md."
+  },
+  "vendored_at": "2026-11-26",
+  "files": [
+    {
+      "path": "ep/allgather_fsdpturbo/demo.py",
+      "upstream_path": "ep/allgather_fsdpturbo/demo.py",
+      "bytes": 592,
+      "sha256": "985e53efbb6976e0ab652fc222f743181448c222fce067164d816019f173564c",
+      "reason": "operator allgather_fsdpturbo (AscendEPBackend)"
+    },
+    {
+      "path": "ep/allgather_hccl/demo.py",
+      "upstream_path": "ep/allgather_hccl/demo.py",
+      "bytes": 1485,
+      "sha256": "1b5ddcb2bc477bb0d540b9c6b44cbcaeee1701898f4e70d7d6f4671959e24c8c",
+      "reason": "not an ascendep-backed operator: imported by ep.deepep_sglang.demo and ep.mc2_dispatch_cann.demo for its `Gather` autograd function"
+    },
+    {
+      "path": "ep/allgather_megatron/demo.py",
+      "upstream_path": "ep/allgather_megatron/demo.py",
+      "bytes": 384,
+      "sha256": "2f285b6108aa3e49335ae6f6ec19660efeea96019750b1abcd68e6bded8dc2a7",
+      "reason": "operator allgather_megatron (AscendEPBackend)"
+    },
+    {
+      "path": "ep/allgather_overlap_mindspeed/demo.py",
+      "upstream_path": "ep/allgather_overlap_mindspeed/demo.py",
+      "bytes": 3024,
+      "sha256": "52fe36a849411428551d3c3ad637801718876aaf4a7f5c92f9d308a389a40290",
+      "reason": "operator allgather_overlap_mindspeed (AscendEPBackend)"
+    },
+    {
+      "path": "ep/alltoall_fsdpturbo/demo.py",
+      "upstream_path": "ep/alltoall_fsdpturbo/demo.py",
+      "bytes": 921,
+      "sha256": "5b55d209d518ceb6e85c3875755e3ca4b465ec94637b7ef6be0da4af87e3e1ea",
+      "reason": "operator alltoall_fsdpturbo (AscendEPBackend)"
+    },
+    {
+      "path": "ep/alltoall_megatron/demo.py",
+      "upstream_path": "ep/alltoall_megatron/demo.py",
+      "bytes": 381,
+      "sha256": "513bf1097d8b89a4436ae9f61e4c619db4760923ed44253daab5f6b89c369047",
+      "reason": "operator alltoall_megatron (AscendEPBackend)"
+    },
+    {
+      "path": "ep/alltoallv_gmm_cann/demo.py",
+      "upstream_path": "ep/alltoallv_gmm_cann/demo.py",
+      "bytes": 2687,
+      "sha256": "398f521d4a9c83b7a9d8ae161082a8ff1715b982827f7e7d802356bd04ef0d83",
+      "reason": "operator alltoallv_gmm_cann (FusedGMMBackend); also supplies `weight_grad` to ep/ep_gmm_fused_lueelu/demo.py"
+    },
+    {
+      "path": "ep/chunkmoe_fsdpturbo/demo.py",
+      "upstream_path": "ep/chunkmoe_fsdpturbo/demo.py",
+      "bytes": 648,
+      "sha256": "75a1a8f65d2ee94ecd0f2716ef48d0e7004acb5e17b8ad289a27f4cebc80275a",
+      "reason": "operator chunkmoe_fsdpturbo (AscendEPBackend)"
+    },
+    {
+      "path": "ep/deepep_ascend/demo.py",
+      "upstream_path": "ep/deepep_ascend/demo.py",
+      "bytes": 2476,
+      "sha256": "fc7ef37e53e22b9112c7843b5ec1a3303efc8def513af838704b0a74a8ae35b9",
+      "reason": "operator deepep_ascend (ExpandedDeepEPBackend); also the registry `upstream:` target of deepep_direct_lueelu and the source of `expanded_forward` for deepep_lueelu"
+    },
+    {
+      "path": "ep/deepep_cann/demo.py",
+      "upstream_path": "ep/deepep_cann/demo.py",
+      "bytes": 2426,
+      "sha256": "4e429fe5dda77b557687987d7142b2c520c5b0199fcbc53bbfa3d55506055996",
+      "reason": "operator deepep_cann (AscendEPBackend)"
+    },
+    {
+      "path": "ep/deepep_lueelu/demo.py",
+      "upstream_path": "ep/deepep_lueelu/demo.py",
+      "bytes": 385,
+      "sha256": "cce75d5b7db3267f635ae26b2c1fd99179c8a08f0f6b93204a60f1122f0bcee9",
+      "reason": "operator deepep_lueelu (ExpandedDeepEPBackend)"
+    },
+    {
+      "path": "ep/deepep_sglang/demo.py",
+      "upstream_path": "ep/deepep_sglang/demo.py",
+      "bytes": 2878,
+      "sha256": "2273c31498c680f8500a69090033a4758781f66d57c64640b978e3a1073518f8",
+      "reason": "operator deepep_sglang (AscendEPBackend)"
+    },
+    {
+      "path": "ep/domino_fsdpturbo/demo.py",
+      "upstream_path": "ep/domino_fsdpturbo/demo.py",
+      "bytes": 527,
+      "sha256": "eb2c997df0732e897b52267eee17289ca2f92881a8e6c52a8badbb522c4ac25e",
+      "reason": "operator domino_fsdpturbo (AscendEPBackend)"
+    },
+    {
+      "path": "ep/ep_gmm_fused_lueelu/demo.py",
+      "upstream_path": "ep/ep_gmm_fused_lueelu/demo.py",
+      "bytes": 3097,
+      "sha256": "cac88949d01695487e558806e5f55069c0efaf6293967afe4bd108bca41d2113",
+      "reason": "operator ep_gmm_fused_lueelu (FusedGMMBackend)"
+    },
+    {
+      "path": "ep/fused_fsdpturbo/demo.py",
+      "upstream_path": "ep/fused_fsdpturbo/demo.py",
+      "bytes": 916,
+      "sha256": "9ab632d532a9136d14cfd8abc38f5af4f9fae0a101cc8904aee9a215e6f730fe",
+      "reason": "operator fused_fsdpturbo (AscendEPBackend)"
+    },
+    {
+      "path": "ep/mc2_dispatch_cann/demo.py",
+      "upstream_path": "ep/mc2_dispatch_cann/demo.py",
+      "bytes": 4191,
+      "sha256": "002c4c6bd6d1596db0cfe4ab9dc7158ac4bcacab376af43c412b77dcea170c30",
+      "reason": "operator mc2_dispatch_cann (MC2V2Backend)"
+    },
+    {
+      "path": "ep/mc2_fsdpturbo/demo.py",
+      "upstream_path": "ep/mc2_fsdpturbo/demo.py",
+      "bytes": 885,
+      "sha256": "1d2d2065f156ca132fef3ee3dd8dcd4677f257860b1d3c1865b5758f04efa9de",
+      "reason": "operator mc2_fsdpturbo (AscendEPBackend)"
+    },
+    {
+      "path": "ep/megamoe_fsdpturbo/demo.py",
+      "upstream_path": "ep/megamoe_fsdpturbo/demo.py",
+      "bytes": 1087,
+      "sha256": "9e3fe31d0d4066c1f0cfe48c89467bde8a0ab5153e9d378a6a2b55beb48afceb",
+      "reason": "operator megamoe_fsdpturbo (AscendEPBackend)"
+    },
+    {
+      "path": "ep/megamoe_lueelu/demo.py",
+      "upstream_path": "ep/megamoe_lueelu/demo.py",
+      "bytes": 950,
+      "sha256": "cff3ad5079350649b788bc83f2961ccbe63bd47c8ebb0c53cebed4518f3c9ffa",
+      "reason": "operator megamoe_lueelu (AscendEPBackend)"
+    },
+    {
+      "path": "ep/megamoe_td/demo.py",
+      "upstream_path": "ep/megamoe_td/demo.py",
+      "bytes": 2819,
+      "sha256": "00d8d6d490ee44ca13ee4ce9c5bb070e0af95c71a5c79a40813da1fabce2a2d7",
+      "reason": "operator megamoe_td (AscendEPBackend)"
+    },
+    {
+      "path": "ep/megatron.py",
+      "upstream_path": "ep/megatron.py",
+      "bytes": 1590,
+      "sha256": "14203dbc55c7e8f4fe11a4173c57d93e0854c424cb9439daf62da0d40b0a401e",
+      "reason": "`from ep.megatron import dispatch` in ep/allgather_megatron/demo.py and ep/alltoall_megatron/demo.py"
+    },
+    {
+      "path": "ep/moonep/demo.py",
+      "upstream_path": "ep/moonep/demo.py",
+      "bytes": 4434,
+      "sha256": "97e8dc7d3dc3f5c2fd2a2a5ab4ad612c3d31746cbb862d696fefd864773d9539",
+      "reason": "operator moonep (AscendEPBackend)"
+    },
+    {
+      "path": "ep/runner.py",
+      "upstream_path": "ep/runner.py",
+      "bytes": 8593,
+      "sha256": "5eebfa2fbeb8c8bf93d01fc265a8988204269a78cdf23cb04df3a7edafde3a35",
+      "reason": "every vendored adapter does `from ep.runner import run` at module level"
+    }
+  ],
+  "excluded": [
+    {
+      "path": ".gitignore",
+      "reason": "upstream repository housekeeping"
+    },
+    {
+      "path": "AGENTS.md",
+      "reason": "upstream authoring instructions for AI agents"
+    },
+    {
+      "path": "README.md",
+      "reason": "upstream project README"
+    },
+    {
+      "path": "ascendep/__init__.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/__main__.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/benchmark.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/cli.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/distributed.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/launch.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/model.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/registry.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/report.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/routing.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "ascendep/validation.py",
+      "reason": "upstream's own `python -m ascendep` CLI/benchmark harness. No module under ep/ imports it and infra replaces it with common/ plus run_benchmark.py"
+    },
+    {
+      "path": "configs/cpu-small.json",
+      "reason": "upstream benchmark configuration data used only by its CLI"
+    },
+    {
+      "path": "configs/cpu-tested-constraints.txt",
+      "reason": "upstream benchmark configuration data used only by its CLI"
+    },
+    {
+      "path": "configs/device-matrix.json",
+      "reason": "upstream benchmark configuration data used only by its CLI"
+    },
+    {
+      "path": "docs/ascendep-open-source-survey.md",
+      "reason": "upstream design and survey documents"
+    },
+    {
+      "path": "docs/ascendep-v0.1-plan.md",
+      "reason": "upstream design and survey documents"
+    },
+    {
+      "path": "docs/cpu-review.md",
+      "reason": "upstream design and survey documents"
+    },
+    {
+      "path": "docs/project-handoff.md",
+      "reason": "upstream design and survey documents"
+    },
+    {
+      "path": "ep/README.md",
+      "reason": "adapter catalogue documentation"
+    },
+    {
+      "path": "ep/allgather_fsdpturbo/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/allgather_hccl/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/allgather_megatron/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/allgather_overlap_mindspeed/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/alltoall_fsdpturbo/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/alltoall_hccl/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/alltoall_hccl/demo.py",
+      "reason": "reachable only through the lazy `from ep.alltoall_hccl.demo import forward as baseline` inside ep.runner.run(), i.e. upstream's own torchrun CLI. operators/ascendep.py imports the adapter modules directly and never calls run(); infra's alltoall_hccl operator is a CollectiveBackend that does not use ascendep at all"
+    },
+    {
+      "path": "ep/alltoall_megatron/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/alltoallv_gmm_cann/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/archive_profile.py",
+      "reason": "imported only by ep/report_profile.py, which is itself a CLI report"
+    },
+    {
+      "path": "ep/backends.json",
+      "reason": "backend inventory read only by ep/suite.py and the report scripts"
+    },
+    {
+      "path": "ep/chunkmoe_fsdpturbo/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/deepep_ascend/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/deepep_cann/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/deepep_lueelu/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/deepep_sglang/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/domino_fsdpturbo/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/ep_gmm_fused_lueelu/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/fused_fsdpturbo/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/hierarchical_alltoallv_mindspeed/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/hierarchical_alltoallv_mindspeed/demo.py",
+      "reason": "infra implements hierarchical_alltoallv_mindspeed directly on MindSpeed/Megatron (MindSpeedHierarchicalBackend), so this adapter is never imported"
+    },
+    {
+      "path": "ep/mc2_dispatch_cann/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/mc2_fsdpturbo/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/megamoe_cann/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/megamoe_cann/demo.py",
+      "reason": "infra implements megamoe_cann directly on cann_ops_transformer (CANNMegaMoEBackend), so this adapter is never imported"
+    },
+    {
+      "path": "ep/megamoe_fsdpturbo/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/megamoe_lueelu/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/megamoe_td/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/megamoe_td/build_shmem_templates.sh",
+      "reason": "native build helper for the SHMEM templates. Native libraries are not vendored; they are tracked by dependencies/manifest.yaml"
+    },
+    {
+      "path": "ep/moonep/README.md",
+      "reason": "per-module documentation"
+    },
+    {
+      "path": "ep/report_ep2.py",
+      "reason": "upstream report generator, run only by hand from the CLI"
+    },
+    {
+      "path": "ep/report_profile.py",
+      "reason": "upstream profiling report generator, run only by hand from the CLI"
+    },
+    {
+      "path": "ep/suite.py",
+      "reason": "upstream's torchrun suite orchestrator; infra plans and schedules cases through common/scheduler.py and run_benchmark.py"
+    },
+    {
+      "path": "examples/train.py",
+      "reason": "upstream training example, not imported by any adapter"
+    },
+    {
+      "path": "lb_planner/moonep/README.md",
+      "reason": "upstream load-balancer planning notes, not imported by any adapter"
+    },
+    {
+      "path": "lb_planner/ultraep/README.md",
+      "reason": "upstream load-balancer planning notes, not imported by any adapter"
+    },
+    {
+      "path": "pyproject.toml",
+      "reason": "builds the upstream `ascendep` distribution; infra has its own pyproject.toml"
+    },
+    {
+      "path": "reports/ep8-profile/benchmark.md",
+      "reason": "upstream measurement reports"
+    },
+    {
+      "path": "scripts/ep8-container.sh",
+      "reason": "upstream cluster bootstrap and probe scripts; not importable modules"
+    },
+    {
+      "path": "scripts/ep8-probe.py",
+      "reason": "upstream cluster bootstrap and probe scripts; not importable modules"
+    },
+    {
+      "path": "scripts/npu-env.sh",
+      "reason": "upstream cluster bootstrap and probe scripts; not importable modules"
+    },
+    {
+      "path": "tests/conftest.py",
+      "reason": "upstream's own pytest suite; the vendored copy is covered by tests/operators_vendor/"
+    },
+    {
+      "path": "tests/distributed_worker.py",
+      "reason": "upstream's own pytest suite; the vendored copy is covered by tests/operators_vendor/"
+    },
+    {
+      "path": "tests/test_distributed.py",
+      "reason": "upstream's own pytest suite; the vendored copy is covered by tests/operators_vendor/"
+    },
+    {
+      "path": "tests/test_profile_trace.py",
+      "reason": "upstream's own pytest suite; the vendored copy is covered by tests/operators_vendor/"
+    },
+    {
+      "path": "tests/test_reference.py",
+      "reason": "upstream's own pytest suite; the vendored copy is covered by tests/operators_vendor/"
+    },
+    {
+      "path": "tests/test_report.py",
+      "reason": "upstream's own pytest suite; the vendored copy is covered by tests/operators_vendor/"
+    },
+    {
+      "path": "tests/test_routing.py",
+      "reason": "upstream's own pytest suite; the vendored copy is covered by tests/operators_vendor/"
+    }
+  ]
+}

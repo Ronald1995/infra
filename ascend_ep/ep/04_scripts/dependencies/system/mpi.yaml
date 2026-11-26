@@ -1,0 +1,93 @@
+# MPI runtime -- the launcher for the multi-node families.
+#
+# Why a descriptor and not just a requirement line: "mpirun exists" is the most
+# expensive false positive in this benchmark.  Open MPI, MPICH/Hydra and Intel MPI
+# disagree on hostfile syntax, on --map-by/--bind-to, and on how a process inherits
+# the environment; a run started with the wrong implementation produces numbers
+# that look plausible and are not comparable.
+schema_version: 1
+id: mpi
+manifest_ids: [mpi]
+
+detect:
+  binaries: [mpirun, mpiexec, mpicc]
+  commands:
+    - "mpirun --version"          # implementation + version; never just `command -v`
+    - "mpirun --help | head -40"  # option surface, recorded as evidence only
+  parse:
+    openmpi:
+      pattern: "Open MPI|open-mpi|OpenRTE"
+      version_line: "mpirun (Open MPI) 4.1.x"
+    hydra:
+      pattern: "HYDRA|MPICH|Microsoft MPI"
+      version_line: "HYDRA build details: ... Version: 3.4.x"
+    intel:
+      pattern: "Intel\\(R\\) MPI"
+      version_line: "Intel(R) MPI Library for Linux* OS, Version 2021.x"
+  doctor_api:
+    - "scripts.doctor.probe_binary()  # parse: mpi"
+    - "scripts.doctor.probe_mpi()"
+  failure_modes:
+    - id: absent
+      meaning: "no mpirun on PATH; the multinode group is blocked"
+    - id: unknown_implementation
+      meaning: "binary exists but matched none of the patterns -> warn, because the launch flags cannot be chosen"
+    - id: version_too_old
+      meaning: "version below the floor in manifest.yaml -> warn; the launch script may still work"
+
+install:
+  debian_ubuntu:
+    ownership: container
+    installable_in_container: true
+    needs_root: true
+    steps:
+      - "apt-get update"
+      - "apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev"
+      - "mpirun --version"
+    alternative:
+      - "apt-get install -y --no-install-recommends mpich   # Hydra-based sites only"
+    notes: >-
+      Pick exactly one implementation per image.  Installing both leaves two
+      /usr/bin/mpirun candidates and the alternatives system decides which one
+      the launcher gets.
+  source_build:
+    ownership: container
+    installable_in_container: true
+    applicable_when: "the site pins an MPI build for its interconnect (UCX/OFI)"
+    steps:
+      - "download the pinned Open MPI tarball, verify sha256"
+      - "./configure --prefix=<prefix> --with-ucx=<ucx-prefix>"
+      - "make -j && make install"
+      - "export PATH=<prefix>/bin:$PATH LD_LIBRARY_PATH=<prefix>/lib:$LD_LIBRARY_PATH"
+  host_provided:
+    ownership: host
+    applicable_when: "the fabric stack (UCX/OFI provider) is installed on the host"
+    note: >-
+      A container may use the host's MPI through a bind mount, but then the
+      container's libc and the host's MPI ABI must match; check `mpirun --version`
+      inside the container, not on the host.
+
+env:
+  required: []           # MPI itself needs no variable; the deployment does (see multinode-env)
+  recommended:
+    - OMPI_MCA_btl        # transport selection on an Ethernet management network
+    - OMPI_MCA_pml
+    - UCX_TLS             # when the site uses UCX for the data path
+    - PATH                # must contain the mpirun directory of the chosen implementation
+  notes: >-
+    HCCL is the data path; MPI is only the process launcher.  Benchmark results
+    never attribute throughput to MPI, so MPI tuning is out of scope here.
+
+evidence:
+  - id: mpi.binary
+    probe: shutil.which("mpirun") + candidate directories
+    exact: ["resolved path"]
+  - id: mpi.implementation
+    probe: "mpirun --version"
+    exact: ["raw stdout", "matched pattern name", "parsed version"]
+  - id: mpi.options
+    probe: "mpirun --help"
+    exact: ["first 40 lines"]      # recorded, never used to decide availability
+
+blocks:
+  mpi_missing: [multinode, l0_transport]

@@ -12,3 +12,12 @@
 ```sh
 python -m operators.megamoe_lueelu.benchmark --config operators/megamoe_lueelu/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-006, MOE-008 — MOE-005 only while the workload keeps `routing=balanced`.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012; FUSE-001..009; LAYER-001..006, LAYER-008, LAYER-009; MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). MOE-005 selects `routing=expert_hotspot` through its transform, which the registry's `routing=[balanced]` constraint rejects, so that point is `unsupported` too.
+- **Correctness contract**: `validate_moe` over the forward output and gradients; `deep_ep_experimental` is imported at module level, so a missing native module is a `dependency_missing` before any measurement.
+- **Timing contract**: `moe_case`; one timed call, `wait` is the identity, the sample closes after `ctx.synchronize()`.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `routing=[balanced]`, `equal_tokens`, `contiguous_placement`.
+- **Source**: vendored `operators/vendor/ascendep/ep/megamoe_lueelu/demo.py` at commit `24ff84d3ab8c01e1e2071802465173e624e1f89d`; `deep_ep_experimental` is a native dependency.

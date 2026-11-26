@@ -14,3 +14,12 @@
 python run_benchmark.py run --config configs/load_balance.yaml \
   --cases COMM-012,LAYER-003,LAYER-004,LAYER-008
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010, COMM-012; L4 LAYER-003, LAYER-004, LAYER-008.
+- **Cases it cannot run**: all L1 dispatch/combine cases except COMM-010/012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`); FUSE-001..009; L3 `moe_forward`/`moe_backward` cases (no `moe_forward`/`moe_backward`); LAYER-001/002/009 (`router_layer`), LAYER-005/006 (`rank`/`server_dedup`). They stay in the manifest as `unsupported`.
+- **Correctness contract**: the planner cases run `operators/moonep_dynamic_planner/training.py::run_training_step` and are checked by `validate_moe(use_router=True)` plus planner-specific fields (`planned_receive_rows`, `planned_rank_max_mean`, `planned_expert_copies`, `planned_redundant_weight_bytes`).
+- **Timing contract**: `fresh_plan` runs the planner every step; `cached_plan` plans once outside the timer and reuses it (`benchmarks/cases/l4_router_planner.py::_planned`). LAYER-008 executes `benchmark.planner_steps` (default 4) router/top-k cycles per sample. `stage_ns` feeds `metrics/summary.py::stage_latency`.
+- **Registry constraints**: `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `min_tokens=1`; no `ep_sizes` pin. `common/scheduler.py` marks the fixed-owner variant of LAYER-003 separately (owner `alltoall_hccl`).
+- **Source**: MoonEP `dev_npu` at commit `b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f`; not ascendep-vendored, and no device performance has been collected.

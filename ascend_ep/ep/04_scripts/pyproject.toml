@@ -20,12 +20,23 @@ ep-benchmark = "run_benchmark:main"
 py-modules = ["run_benchmark"]
 
 [tool.setuptools.packages.find]
-include = ["analysis*", "baselines*", "benchmarks*", "common*", "metrics*", "operators*", "profiling*", "reporting*", "schemas*"]
+include = ["analysis*", "baselines*", "benchmarks*", "common*", "metrics*", "operators*", "profiling*", "reporting*", "schemas*", "scripts*"]
 exclude = ["*.tests"]
 
 [tool.setuptools.package-data]
 operators = ["registry.yaml", "*/config.yaml"]
 schemas = ["*.json"]
+# The vendored ascendep adapters are a PEP 420 namespace package (`ep/` without
+# `__init__.py`), so setuptools does not discover them: list the files explicitly or
+# a wheel install would drop the tree and every ascendep-backed operator would
+# report `source_unavailable`.
+"operators.vendor.ascendep" = [
+    "VENDOR.json",
+    "README.md",
+    "ep/*.py",
+    "ep/*/demo.py",
+]
+dependencies = ["*.yaml", "python/*.txt", "system/*.yaml"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

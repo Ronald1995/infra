@@ -8,28 +8,50 @@ Expansion model (see ``docs/benchmark_matrix.md``):
 ``L1-L4`` ``EP size x case x operator x parameter variant`` -- capability checked
           per case, not per level.
 
+Three invariants make the manifest comparable across EP sizes:
+
+* **Case identity** comes from :mod:`common.case_spec` and nowhere else.
+* **Parameter expansion never consults a capability verdict.**  A task's
+  parameters are a property of the plan; the capability verdict is attached to
+  the task afterwards.  Collapsing an unsupported point to a single parameter set
+  used to make EP8 produce more tasks than EP64 for the same case, which silently
+  changed the test scope with the EP size.
+* **Every point stays in the manifest**, whatever its status.  An unsupported,
+  not-applicable or not-implemented point is a recorded outcome with a reason,
+  never a missing task.
+
 Every task carries its EP size, suite membership, effective configuration
 fingerprint and resolved status, so the manifest itself is the coverage record.
 """
 from copy import deepcopy
 
-from common.cases import L0_PARAMETERS, canonical_cases, catalog, l0_family
+from common.case_spec import (APPLICABILITY_RULES, ApplicabilityContext, FIXED_OWNER,
+                              TRANSFORMS, canonical_specs, catalog, l0_family,
+                              owned_by, spec as case_spec)
 from common.registry import check_constraints, registry
 from common.suites import select as select_suite_cases, suite as suite_of
 from common.storage import fingerprint
-from common.variants import (TRANSPORT_DISABLED, message_sizes, policy_problem,
-                             structural_problem, task_parameters, transport_gate,
-                             transport_mechanism, variants_for)
+from common.variants import (TRANSPORT_DISABLED, policy_problem, structural_problem,
+                             task_parameters, transport_gate)
 
-FIXED_OWNER = "fixed_owner"
-FIXED_OWNER_CASES = {"LAYER-003", "LAYER-005", "LAYER-006"}
+#: Cases measured on exactly one adapter; the scheduler relaxes the scenario
+#: contract for them because the adapter implements only the router path.
+FIXED_OWNER_CASES = frozenset(case_id for case_id, case in catalog().items()
+                              if case.owner is not None)
+#: Capabilities the fixed-owner contract requires regardless of the row's own
+#: requirement (the measurement is the router + backward path).
+FIXED_OWNER_CAPABILITIES = ("router_layer", "moe_backward")
 
 ALIAS_MODES = ("dedupe", "run")
+
+#: Adapter statuses that may execute a case.
+EXECUTABLE_STATUSES = ("integrated", "historical_verified")
 
 
 def _l0_matrix(cfg, cases):
     """Load the capability matrix once when an L0 family needs it."""
-    if not any(case.level == "L0" and case.category in ("transport", "execution") for case in cases):
+    if not any(case.level == "L0" and case.category in ("transport", "execution")
+               for case in cases):
         return None
     try:
         from baselines.l0.topology import discovery
@@ -50,7 +72,7 @@ def _l0_status(case, params, matrix):
     from baselines.l0.topology import capabilities as capability_table
     lookup = case.alias_of or case.id
     if case.category == "transport":
-        settings = L0_PARAMETERS.get(lookup, {})
+        settings = case_spec(lookup).requested()
         mechanism = settings.get("mechanism")
         resource = params.get("execution_resource") or settings.get("execution_resource")
         supported, reason = capability_table.support(matrix, case_id=lookup,
@@ -67,55 +89,46 @@ def _l0_status(case, params, matrix):
     return "not_run", None
 
 
+def required_capabilities(case, operator_id=None):
+    """Capability names an adapter must expose to run ``case`` for ``operator_id``."""
+    if case.owner is not None and case.owner == operator_id:
+        return FIXED_OWNER_CAPABILITIES
+    return case.requires
+
+
+def _contract(spec, case, cfg, baseline):
+    """The configuration an adapter constraint is evaluated against.
+
+    A baseline run and the fixed-owner contract both measure the plain path, so
+    the planner/dedup scenario state is neutralised for them instead of being
+    reported as an adapter limitation.
+    """
+    fixed_owner = case.owner is not None and case.owner == spec.id
+    if not (baseline or fixed_owner):
+        return cfg
+    return {**cfg, "dedup": {"mode": "none"}, "load_balance": {"enabled": False}}
+
+
 def status_for(spec, case, cfg, baseline=False):
     """Return ``(status, reason)`` for one (operator, case, configuration).
 
     The decision is made per *case*: an adapter capability is only accepted when
     the case's own requirement is present, so a README that claims a level does
-    not make every case of that level runnable.
+    not make every case of that level runnable.  All case-specific conditions are
+    named applicability rules declared on the ``CaseSpec``; this function only
+    applies them in order and then evaluates the generic adapter contract.
     """
-    if spec.status not in ("integrated", "historical_verified"):
+    if spec.status not in EXECUTABLE_STATUSES:
         return spec.status, spec.reason
-    if case.id == "MOE-007" and (cfg["device"] != "npu" or cfg["distributed"]["ep_size"] < 2):
-        return "unsupported", "concurrent MoE requires at least two HCCL ranks"
-    if case.id == "COMM-010":
-        mode = cfg["dedup"]["mode"]
-        if mode == "none":
-            return ("not_applicable",
-                    "deduplicated dispatch has no dedup path; the None control for this suite is "
-                    "COMM-001 with dedup.mode=none")
-        if f"{mode}_dedup" not in spec.capabilities:
-            return "unsupported", f"no {mode} dedup path"
-    layer_dedup = {"LAYER-005": "rank", "LAYER-006": "server"}.get(case.id)
-    if layer_dedup is not None and layer_dedup != cfg["dedup"]["mode"]:
-        return "not_applicable", f"this case measures {layer_dedup} dedup; the plan selects dedup.mode={cfg['dedup']['mode']}"
-    if case.id == "LAYER-007" and cfg["workload"]["routing"] != "real_trace_replay":
-        # The case measures replay of a real trace.  A configuration without a
-        # trace does not select the test condition, so it is not a gap in the
-        # execution: it is `not_applicable` and the reason says why.
-        return "not_applicable", ("L3 replay needs a real_trace_replay workload; this "
-                                  "configuration does not select one")
-    if case.id in {"COMM-012", "LAYER-003", "LAYER-004", "LAYER-008"} and not cfg["load_balance"]["enabled"]:
-        return "not_applicable", ("the planner is disabled in this configuration; the "
-                                  "load_balance suite measures this case with "
-                                  "load_balance.enabled=true")
-    if case.level == "L4" and cfg["workload"]["routing"] == "real_trace_replay":
-        return "not_applicable", "replay is measured in LAYER-007 with the L3 boundary"
-    if cfg["benchmark"].get("phase") == "forward" and case.training:
-        return "not_applicable", "forward-only configuration selects a training case"
-    if case.level == "L1" and spec.id == "mc2_dispatch_cann":
-        tokens = cfg["workload"]["tokens_per_rank"]
-        if max(tokens if isinstance(tokens, list) else [tokens]) > 512:
-            return "unsupported", "a single 950DT V2 invocation supports at most 512 tokens per rank"
-    fixed_owner = case.id in FIXED_OWNER_CASES and spec.id == "alltoall_hccl"
-    contract = cfg if not (baseline or fixed_owner) else {
-        **cfg, "dedup": {"mode": "none"}, "load_balance": {"enabled": False},
-    }
-    bounds = check_constraints(spec, contract)
+    context = ApplicabilityContext(spec=spec, config=cfg, baseline=baseline)
+    for name in case.applicability:
+        verdict = APPLICABILITY_RULES[name](case, context)
+        if verdict:
+            return verdict
+    bounds = check_constraints(spec, _contract(spec, case, cfg, baseline))
     if bounds:
         return "unsupported", bounds
-    required = ("router_layer", "moe_backward") if fixed_owner else case.requires
-    missing = sorted(set(required) - set(spec.capabilities))
+    missing = sorted(set(required_capabilities(case, spec.id)) - set(spec.capabilities))
     if missing:
         gaps = spec.constraints.get("unadapted", {})
         known = [gaps[name] for name in missing if name in gaps]
@@ -126,15 +139,10 @@ def status_for(spec, case, cfg, baseline=False):
 
 
 def prepare_case(config, case):
-    cfg = deepcopy(config)
-    work = cfg["workload"]
-    if case.id == "MOE-005" and work["routing"] in {"balanced", "uniform_random"}:
-        work["routing"] = "expert_hotspot"
-    if case.id == "MOE-009":
-        tokens = work["tokens_per_rank"]
-        work.setdefault("token_steps", [tokens, [n // 2 for n in tokens] if isinstance(tokens, list)
-                                        else max(1, tokens // 2)])
-    return cfg
+    """Apply the case's declared workload transform to one configuration."""
+    if case.transform is None:
+        return deepcopy(config)
+    return TRANSFORMS[case.transform](deepcopy(config), case)
 
 
 def _operator_ids(config, operators, specs):
@@ -157,7 +165,7 @@ def _selected_cases(config, levels, cases, suites):
     suite selection is always filtered by the configured levels.
     """
     all_cases = catalog()
-    canonical = canonical_cases()
+    canonical = canonical_specs()
     explicit = list(cases or ())
     unknown = set(explicit) - set(all_cases)
     if unknown:
@@ -226,8 +234,10 @@ def make_plan(configs, operators=None, levels=None, cases=None, baselines=False,
                     gate = transport_gate(case, settings)
                     if gate:
                         status, reason = gate
-                parameter_sets = _parameters_for(case, cfg, ep_size, op_id, status, reason)
-                for params in parameter_sets:
+                # Parameters are capability independent: a point with an
+                # unsupported adapter keeps the *same* variant expansion, so the
+                # test scope never shrinks with the EP size.
+                for params in task_parameters(case, op_id, settings, ep_size):
                     case_status, case_reason = status, reason
                     if params.get(TRANSPORT_DISABLED):
                         case_status, case_reason = "not_applicable", params.get("reason")
@@ -265,36 +275,15 @@ def make_plan(configs, operators=None, levels=None, cases=None, baselines=False,
                         "suite_ids": list(suite_ids),
                         "case_category": case.category,
                         "case_family": l0_family(case) or "operator",
+                        "case_tags": list(case.tags),
+                        "case_phase": case.phase,
+                        "handler": case.handler,
+                        "correctness_requirements": list(case.correctness),
                         "alias_of": case.alias_of,
                         "config_fingerprint": fingerprint(
                             {key: value for key, value in cfg.items() if key != "suite_id"}),
                     }
     return list(tasks.values())
-
-
-def _parameters_for(case, cfg, ep_size, op_id, status, reason):
-    """Parameter sets for one (case, operator) point.
-
-    A runnable point expands into its case-specific variants; an unrunnable one
-    keeps a single default parameter set so the manifest can record the explicit
-    status and reason for that exact case.
-    """
-    settings = cfg["benchmark"]
-    fixed_owner = case.id in FIXED_OWNER_CASES and op_id == "alltoall_hccl"
-    if status not in (None, "not_run") or reason is not None:
-        if case.level != "L0":
-            return [{"variant": "default", "message_bytes": None}]
-        params = {"variant": "default", "message_bytes": message_sizes(case, settings)[0]}
-        mechanism = transport_mechanism(case)
-        if mechanism:
-            # Keep the mechanism on the record so a `not_applicable` L0 task
-            # still names the transport path it would have exercised.
-            params["mechanism"] = mechanism
-        return [params]
-    if case.level == "L0":
-        return task_parameters(case, "hardware", settings, ep_size)
-    variants = (FIXED_OWNER,) if fixed_owner else variants_for(case)
-    return [{"variant": variant, "message_bytes": None} for variant in variants]
 
 
 def merge_tasks(store, tasks):
@@ -352,6 +341,51 @@ def coverage_by_ep_size(tasks):
     return {ep: sorted(cases) for ep, cases in sorted(coverage.items())}
 
 
+def _variant_signature(task):
+    """The (case, level, operator, variant) point a task represents."""
+    return (task["case_id"], task["level"], task["backend_id"],
+            task["parameters"].get("variant"))
+
+
+def check_parity(tasks, ep_sizes=None):
+    """Raise when two EP sizes disagree about the parameter matrix.
+
+    Case presence is checked by :func:`check_completeness`; this check is about
+    the *variants*: EP8, EP64 and EP128 must produce the same multiset of
+    ``(case, level, operator, variant)`` points.  A case that is runnable at one
+    size and unsupported at another is legitimate; a case that produces three
+    parameter variants at one size and one at another is a scope change and is
+    rejected here.
+    """
+    counts = {}
+    for task in tasks:
+        signature = _variant_signature(task)
+        entry = counts.setdefault(task["ep_size"], {})
+        entry[signature] = entry.get(signature, 0) + 1
+    sizes = sorted(ep_sizes or counts)
+    if len(sizes) < 2:
+        return {size: len(counts.get(size, {})) for size in sizes}
+    problems = []
+    reference = sizes[0]
+    for size in sizes[1:]:
+        left, right = counts.get(reference, {}), counts.get(size, {})
+        missing = sorted(set(left) - set(right))
+        extra = sorted(set(right) - set(left))
+        if missing:
+            problems.append(f"EP{size} is missing {len(missing)} variant point(s) that "
+                            f"EP{reference} has: {missing[:5]}")
+        if extra:
+            problems.append(f"EP{size} has {len(extra)} variant point(s) EP{reference} does "
+                            f"not: {extra[:5]}")
+        changed = sorted(key for key in set(left) & set(right) if left[key] != right[key])
+        if changed:
+            problems.append(f"EP{size} expands {len(changed)} point(s) a different number of "
+                            f"times than EP{reference}: {[(key, left[key], right[key]) for key in changed[:5]]}")
+    if problems:
+        raise ValueError("benchmark matrix is not EP-size invariant: " + "; ".join(problems))
+    return {size: len(counts[size]) for size in sizes}
+
+
 def check_completeness(tasks, ep_sizes=None, expected=None):
     """Raise when an EP size is missing a case another EP size has.
 
@@ -381,4 +415,5 @@ def check_completeness(tasks, ep_sizes=None, expected=None):
             problems.append(f"EP{size} differs from EP{sizes[0]}: missing={missing} extra={extra}")
     if problems:
         raise ValueError("benchmark plan is incomplete: " + "; ".join(problems))
+    check_parity(tasks, sizes)
     return coverage

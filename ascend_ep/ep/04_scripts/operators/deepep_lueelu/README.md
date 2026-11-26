@@ -12,3 +12,12 @@ Native API: `deep_ep.ElasticBuffer (Mesh+Clos)`. Source commit `24ff84d3ab8c01e1
 ```sh
 python -m operators.deepep_lueelu.benchmark --config operators/deepep_lueelu/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-001..COMM-008, COMM-010; L2 FUSE-001, FUSE-003; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-009 (`quantized_dispatch`), COMM-011 (`combine_add_rmsnorm`), COMM-012 (`planned_dispatch`); FUSE-002/004/005/006/007/008/009; LAYER-001..006, LAYER-008, LAYER-009 (`router_layer`/`dynamic_planner`/dedup); MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported` with the missing token as the reason.
+- **Correctness contract**: dispatch layout via `validate_dispatch`; combine and L3 via relative L2 / `validate_moe`.
+- **Timing contract**: L1 handlers submit and wait inside the timed block, recording `local_complete`; the `cached_dispatch` variant reuses a routing handle produced outside the timer.
+- **Registry constraints**: `ep_sizes=[2,4,8,16,32,64,128,256,512]`, `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `max_tokens=16384`, `swiglu_limit=10` (no `top_k`/`num_experts` pin).
+- **Source**: vendored `operators/vendor/ascendep/ep/deepep_lueelu/demo.py` at commit `24ff84d3ab8c01e1e2071802465173e624e1f89d`; `deep_ep` is a native build, `EP_ASCENDEP_ROOT` is only an optional override.

@@ -1,0 +1,30 @@
+# CPU base stack -- category A of dependencies/manifest.yaml.
+#
+# This is the only file that must install on a machine with no NPU, no CANN and
+# no network.  Keep it minimal: every wheel here is one more thing an offline
+# wheelhouse has to contain, and none of the NPU machinery belongs in this layer.
+#
+# Offline CPU install (no index, no network):
+#   pip install --no-index --find-links "$WHEELHOUSE" -r dependencies/python/base.txt
+#
+# Online CPU install (the CPU wheel index is what makes "+cpu" available):
+#   pip install --index-url https://download.pytorch.org/whl/cpu -r dependencies/python/base.txt
+#
+# `python` itself is not a wheel: it is host_provided in the manifest
+# (requires-python >=3.10,<3.13).  Provision CPython 3.10-3.12 first.
+
+# torch 2.6.0 is the base version shared with the NPU path (torch_npu 2.6.0.post3
+# in npu.txt pairs with exactly this).  The CPU venv has 2.6.0+cpu: PEP 440
+# treats a local version segment as satisfying "==2.6.0", so this single pin
+# covers both wheels.
+torch==2.6.0
+numpy==2.2.6
+PyYAML==6.0.4
+jsonschema==4.26.0
+
+# Optional reporting extras (manifest optional: true).  A missing pandas degrades
+# the `reporting` capability group to degraded; it does not fail a benchmark run.
+# Split them out with `pip install -r base.txt --no-deps` plus explicit names if
+# the wheelhouse is tiny.
+pandas==2.2.3
+matplotlib==3.10.9

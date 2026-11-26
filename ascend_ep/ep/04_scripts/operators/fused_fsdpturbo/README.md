@@ -12,3 +12,12 @@
 ```sh
 python -m operators.fused_fsdpturbo.benchmark --config operators/fused_fsdpturbo/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012; FUSE-001..009; LAYER-001..006, LAYER-008, LAYER-009; MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). Each stays in the manifest as `unsupported` with the missing capability as the reason.
+- **Correctness contract**: `validate_moe` over the forward output and gradients; the fused entry point (`fused=True`) is compared with the same reference as the non-fused `alltoall_fsdpturbo`, which is what makes the two comparable.
+- **Timing contract**: `moe_case`; one timed call, `wait` is the identity, the sample closes after `ctx.synchronize()`.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `equal_tokens`, `contiguous_placement`, `swiglu_limit=10`.
+- **Source**: vendored `operators/vendor/ascendep/ep/fused_fsdpturbo/demo.py` at commit `24ff84d3ab8c01e1e2071802465173e624e1f89d`; no external checkout, `EP_ASCENDEP_ROOT` is an optional override.

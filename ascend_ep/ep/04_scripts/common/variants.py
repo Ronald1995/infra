@@ -1,7 +1,10 @@
 """Case-specific parameter variants.
 
 Parameter Variant is its own layer so ``scheduler.py`` never grows a table of
-magic numbers.  Three rules keep the matrix honest and small:
+magic numbers.  The case *definition* (which variants exist, which dimensions it
+sweeps, which message-size window applies) lives on the ``CaseSpec``; this module
+only turns that declaration into parameter dictionaries.  Three rules keep the
+matrix honest:
 
 1. A variant is *case specific*.  Message size, peer count and shape mode are
    selected per case from a shared candidate pool instead of taking a Cartesian
@@ -13,38 +16,22 @@ magic numbers.  Three rules keep the matrix honest and small:
 3. A mechanism that the configuration disables
    (``benchmark.transport.enabled``) never produces an executable variant: the
    case stays in the manifest as ``not_applicable`` instead of disappearing.
+
+Expansion never consults a capability verdict.  A task's *parameters* are a
+property of the plan, not of the hardware, which is what makes EP8, EP64 and
+EP128 produce the same parameter matrix and therefore comparable task counts.
 """
 from collections import Counter
 
-from common.cases import L0_PARAMETERS, catalog, l0_family
+from common.case_spec import SIZE_WINDOWS as _SPEC_WINDOWS
+from common.case_spec import L0_PARAMETERS, spec as case_spec
 from common.config import PEER_POLICIES
 
 #: Marker carried by a parameter set that must not be executed because its
 #: transport mechanism is disabled by the configuration.
 TRANSPORT_DISABLED = "transport_disabled"
 
-#: Named variants for cases whose operation has several distinct kernels/stages.
-CASE_VARIANTS = {
-    # L0
-    "HW-006": ("allgather", "reduce_scatter"),
-    "HW-007": ("mte",),
-    "HW-008": ("urma", "udma"),
-    "HW-010": ("gmm1", "gmm2", "gmm1_dgrad", "gmm1_wgrad", "gmm2_dgrad", "gmm2_wgrad"),
-    "HW-011": ("forward", "backward"),
-    # L2/L4
-    "LAYER-003": ("fresh_plan", "cached_plan"),
-    "FUSE-005": ("chunks_2", "chunks_4", "chunks_8"),
-    "FUSE-006": ("tile_128_256_256", "tile_256_128_256", "tile_256_256_256"),
-    "FUSE-007": ("copy_cores_1", "copy_cores_2", "copy_cores_4", "copy_cores_8"),
-}
-
-#: Backwards-compatible name used by older call sites.
-L0_VARIANTS = {key: value for key, value in CASE_VARIANTS.items() if key.startswith(("HW-", "LINK-"))}
-
-#: Message-size *window* per L0 family.  The candidate pool comes from
-#: ``benchmark.message_bytes``; a case keeps the candidates inside its window, so
-#: latency cases are not swept over 1 GiB and throughput cases are not swept over
-#: 4 KiB.  The union of all windows still covers the 4 KiB .. 1 GiB range.
+#: Backwards-compatible name for the windows, now declared per case.
 SIZE_WINDOWS = {
     "latency": (0, 1 << 20),
     "throughput": (1 << 20, 1 << 30),
@@ -53,24 +40,18 @@ SIZE_WINDOWS = {
     "overlap": (0, 1 << 24),
 }
 
-LINK_THROUGHPUT = frozenset({"LINK-009", "LINK-010", "LINK-011"})
-LINK_LATENCY = frozenset({"LINK-001", "LINK-002", "LINK-003", "LINK-004",
-                          "LINK-005", "LINK-006", "LINK-007", "LINK-008"})
-LINK_SHMEM = frozenset({"LINK-012", "LINK-013"})
-
-#: Framework collective cases that split one message across the EP group.
-ALLTOALL_CASES = frozenset({"HW-004", "EXEC-001"})
-
 COMPUTE_SHAPE_MODES = ("fixed", "workload")
 
 
 def variants_for(case):
     """Named variants for ``case``; ``("default",)`` when it has none."""
-    return CASE_VARIANTS.get(case.id, ("default",))
+    return case_spec(case.id).variants
 
 
 def transport_mechanism(case):
     """The transport mechanism a ``LINK-*`` case drives, or ``None`` off-transport."""
+    from common.case_spec import l0_family
+
     if l0_family(case) != "transport":
         return None
     return L0_PARAMETERS.get(case.alias_of or case.id, {}).get("mechanism")
@@ -128,31 +109,25 @@ def topology_domains(config):
     return server_ids if size is None or len(server_ids) == size else None
 
 
-def _window(family, case_id):
-    if family == "transport":
-        if case_id in LINK_THROUGHPUT:
-            return SIZE_WINDOWS["throughput"]
-        if case_id in LINK_SHMEM:
-            return SIZE_WINDOWS["memory"]
-        return SIZE_WINDOWS["latency"]
-    if family == "execution":
-        return SIZE_WINDOWS["throughput"]
-    if family == "memory":
-        return SIZE_WINDOWS["memory"]
-    if family == "overlap":
-        return SIZE_WINDOWS["overlap"]
-    if family == "compute":
-        return SIZE_WINDOWS["compute"]
-    return SIZE_WINDOWS["latency"]
+def _window(case):
+    """``(lower, upper)`` byte window for ``case``."""
+    from common.case_spec import l0_family
+
+    window = case.size_window
+    if window is None:
+        window = {"transport": "latency", "execution": "throughput", "memory": "memory",
+                  "overlap": "overlap", "compute": "compute"}.get(l0_family(case), "latency")
+    return SIZE_WINDOWS[window]
 
 
 def message_sizes(case, settings):
     """Select the message-size candidates that apply to ``case``."""
-    family = l0_family(case)
-    candidates = [int(size) for size in settings.get("message_bytes") or [4096]]
-    if family == "compute":
+    from common.case_spec import l0_family
+
+    if l0_family(case) == "compute":
         return [None]
-    lower, upper = _window(family, case.id)
+    candidates = [int(size) for size in settings.get("message_bytes") or [4096]]
+    lower, upper = _window(case)
     selected = [size for size in candidates if lower <= size <= upper]
     # Never return an empty sweep: fall back to the closest candidate and let the
     # capability/parameter checks decide whether it is runnable.
@@ -166,7 +141,9 @@ def peer_counts(case, settings, ep_size):
     this EP group stays in the matrix as ``not_applicable`` instead of silently
     disappearing, which is what makes EP8 and EP128 comparable.
     """
-    if l0_family(case) != "transport" or case.id in ("HW-007", "HW-008", "LINK-012", "LINK-013"):
+    from common.case_spec import l0_family
+
+    if l0_family(case) != "transport" or not case.sweeps("peer_count"):
         return [(0, None)]
     available = ep_size - 1
     result = []
@@ -195,33 +172,31 @@ def _transport_sets(case, settings, size, variant, ep_size):
         # one explicit parameter set, so no caller can turn it into variants.
         return [{TRANSPORT_DISABLED: True, "variant": variant, "message_bytes": size,
                  "mechanism": mechanism, "reason": reason}]
-    static = dict(L0_PARAMETERS.get(case.id, {}))
-    outstanding = [int(value) for value in settings.get("outstanding") or [1]]
+    static = case.requested()
     transport = settings.get("transport") or {}
-    policies = transport.get("peer_policies") or [transport.get("peer_policy") or select_peers_rotation()]
-    if case.id == "HW-008":
-        return [{"variant": engine, "message_bytes": size} for engine in ("mte", "udma", "urma")]
     base = {"variant": variant, "message_bytes": size}
-    if case.id in ("LINK-012", "LINK-013"):
-        # The SHMEM engines exchange with the whole group; peer policy does not
+    mode = settings.get("transport_mode", "write")
+    outstanding = [int(value) for value in settings.get("outstanding") or [1]]
+    if static.get("backend") == "shmem":
+        # The SHMEM engines exchange with the whole group; peer selection does not
         # change what they submit, so it is not multiplied into more tasks.
-        variants = ("default",) if case.id == "LINK-012" else ("device", "host")
-        return [{**base, **static, "outstanding": count, "peer_count": peers,
-                 "peer_policy": "group", "variant": item,
+        return [{**base, **static, "outstanding": count, "peer_count": 0,
+                 "peer_policy": "group",
                  "cores": (settings.get("cores") or [1])[-1],
                  "quiet_mode": (settings.get("quiet_modes") or [0])[-1],
-                 "mode": settings.get("transport_mode", "write")}
-                for item in variants for count in outstanding
-                for peers, _ in peer_counts(case, settings, ep_size)]
+                 "mode": mode}
+                for count in outstanding]
+    policies = transport.get("peer_policies") or [
+        transport.get("peer_policy") or select_peers_rotation()]
     return [{**base, **static, "outstanding": count, "peer_count": peers,
-             "peer_policy": policy, "mode": settings.get("transport_mode", "write")}
+             "peer_policy": policy, "mode": mode}
             for policy in policies
             for count in outstanding
             for peers, _ in peer_counts(case, settings, ep_size)]
 
 
 def _execution_sets(case, settings, size, variant):
-    static = dict(L0_PARAMETERS.get(case.id, {}))
+    static = case.requested()
     modes = (settings.get("execution") or {}).get("modes") or ["default"]
     return [{**{"variant": variant, "message_bytes": size}, **static, "accelerator": mode,
              "operation": static.get("operation", case.operation)} for mode in modes]
@@ -232,7 +207,7 @@ def _memory_sets(size, variant):
 
 
 def _overlap_sets(case, size, variant):
-    static = dict(L0_PARAMETERS.get(case.id, {}))
+    static = case.requested()
     return [{"variant": variant, "message_bytes": size,
              "transport": static.get("mechanism", "auto"),
              "compute": static.get("compute", "gmm")}]
@@ -257,6 +232,8 @@ def l0_parameter_sets(case, settings, size, variant, ep_size, matrix=None):
     compatibility with the capability probe; parameter expansion itself stays
     hardware independent so a manifest can be generated on a CPU host.
     """
+    from common.case_spec import l0_family
+
     family = l0_family(case)
     if family == "transport":
         return _transport_sets(case, settings, size, variant, ep_size)
@@ -280,7 +257,7 @@ def structural_problem(case, params, ep_size):
     group is impossible regardless of hardware, so it is reported as
     ``unsupported`` before any capability is consulted.
     """
-    if isinstance(params.get("message_bytes"), int) and case.id in ALLTOALL_CASES:
+    if isinstance(params.get("message_bytes"), int) and case.operation == "alltoall":
         size = params["message_bytes"]
         if size % ep_size:
             return "unsupported", f"AllToAll message_bytes={size} must divide EP{ep_size}"
@@ -329,6 +306,29 @@ def parameter_problems(case, params, ep_size, config=None):
     return problem[1] if problem else None
 
 
+def expand_variants(l0, settings, ep_size):
+    """All parameter dictionaries for one L0 case (capability independent)."""
+    result = []
+    for size in message_sizes(l0, settings):
+        for variant in variants_for(l0):
+            result.extend(l0_parameter_sets(l0, settings, size, variant, ep_size))
+    return result
+
+
+def operator_variants(case, operator_id=None):
+    """All parameter dictionaries for one L1-L4 case.
+
+    A fixed-owner case is measured on exactly one adapter, so *that* adapter's
+    parameter set names the owner instead of an adapter sweep; every other adapter
+    keeps the case's own variants.
+    """
+    from common.case_spec import FIXED_OWNER
+
+    if case.owner is not None and case.owner == operator_id:
+        return [{"variant": FIXED_OWNER, "message_bytes": None}]
+    return [{"variant": variant, "message_bytes": None} for variant in variants_for(case)]
+
+
 def task_parameters(case, backend_id, settings, ep_size):
     """All parameter dictionaries for one (case, operator) pair.
 
@@ -337,16 +337,23 @@ def task_parameters(case, backend_id, settings, ep_size):
     mechanism collapses to a single explicit parameter set: the case must stay in
     the manifest, but it may not fan out into executable variants.
     """
-    entry = catalog()[case.id]
-    if entry.level != "L0":
-        return [{"variant": variant, "message_bytes": None} for variant in variants_for(entry)]
-    if l0_family(entry) == "transport":
-        allowed, mechanism, reason = transport_availability(entry, settings)
+    from common.case_spec import l0_family
+
+    l0 = case_spec(case.id)
+    if l0.level != "L0":
+        return operator_variants(l0, backend_id)
+    if l0_family(l0) == "transport":
+        allowed, mechanism, reason = transport_availability(l0, settings)
         if not allowed:
+            # One explicit record: the case stays in the manifest, the mechanism is
+            # named, and the message size is the case's first swept point so the
+            # record keeps the same shape as a runnable-but-unsupported point.
             return [{TRANSPORT_DISABLED: True, "variant": "default",
-                     "message_bytes": None, "mechanism": mechanism, "reason": reason}]
-    result = []
-    for size in message_sizes(entry, settings):
-        for variant in variants_for(entry):
-            result.extend(l0_parameter_sets(entry, settings, size, variant, ep_size))
-    return result
+                     "message_bytes": message_sizes(l0, settings)[0],
+                     "mechanism": mechanism, "reason": reason}]
+    return expand_variants(l0, settings, ep_size)
+
+
+def size_window_names():
+    """The declared window names, for documentation and schema checks."""
+    return tuple(_SPEC_WINDOWS)

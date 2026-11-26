@@ -34,4 +34,7 @@ def result(manifest, task, status="not_run", reason=None):
         "compute": None, "overlap": None, "memory": None, "load_balance": None,
         "profiling_artifacts": [], "logs": [], "error_reason": reason,
         "case_parameters": task["parameters"],
+        # What actually ran and what it may claim: API, algorithm, transport,
+        # fallback state, byte accounting and the completion guarantee.
+        "observation": None, "completion": None, "handler": None,
     }

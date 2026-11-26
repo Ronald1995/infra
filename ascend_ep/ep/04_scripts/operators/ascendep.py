@@ -1,6 +1,22 @@
-"""Bridge to pinned ascendep native forward adapters without vendoring upstream code."""
+"""Pinned ascendep native forward adapters, vendored under ``operators/vendor/ascendep``.
+
+The adapter modules themselves live in ``operators/vendor/ascendep/ep/`` as a byte-exact
+copy of ``https://github.com/penn513/ascendep`` at :data:`UPSTREAM_COMMIT`, so a benchmark
+run needs no external checkout. ``operators/vendor/ascendep/VENDOR.json`` records that
+provenance and ``scripts/vendor_ascendep.py --check`` verifies it.
+
+``EP_ASCENDEP_ROOT`` is still honoured as a development override. It is validated the same
+way (``ep/runner.py`` present, clean git checkout at the pinned commit) and reported
+separately, so a result can never confuse a vendored adapter with an external one:
+:func:`source_info` returns ``{"origin": "vendored" | "override", ...}``.
+
+Importing this module stays CPU-only: the adapter modules, ``torch_npu`` and every native
+library are imported lazily from :meth:`AscendEPBackend.initialize`, never at import time.
+"""
+from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -9,16 +25,41 @@ from types import SimpleNamespace
 
 from common.backend import BenchmarkUnavailable, CombineResult, DispatchResult, EPBackend
 
+UPSTREAM_URL = "https://github.com/penn513/ascendep"
 UPSTREAM_COMMIT = "24ff84d3ab8c01e1e2071802465173e624e1f89d"
+OVERRIDE_ENV = "EP_ASCENDEP_ROOT"
+
+OPERATORS = Path(__file__).resolve().parent
+VENDORED_ROOT = OPERATORS / "vendor" / "ascendep"
+VENDORED_MANIFEST = VENDORED_ROOT / "VENDOR.json"
+ENTRYPOINT = Path("ep") / "runner.py"
 
 
-@lru_cache
-def source_checkout(value):
-    if not value:
-        raise BenchmarkUnavailable("dependency_missing", "set EP_ASCENDEP_ROOT to the pinned ascendep checkout")
-    root = Path(value).resolve()
-    if not (root / "ep" / "runner.py").is_file():
-        raise BenchmarkUnavailable("source_unavailable", f"ascendep source not found at {root}")
+@dataclass(frozen=True)
+class SourceInfo:
+    """Which ascendep adapter tree a backend imports, and where that tree came from."""
+
+    origin: str
+    commit: str
+    path: str
+    upstream: str = UPSTREAM_URL
+    pinned: str = UPSTREAM_COMMIT
+    manifest: str | None = None
+
+    def as_dict(self):
+        """JSON friendly form, suitable as a field of a benchmark result."""
+        return {
+            "origin": self.origin,
+            "commit": self.commit,
+            "pinned": self.pinned,
+            "path": self.path,
+            "upstream": self.upstream,
+            "manifest": self.manifest,
+        }
+
+
+def git_revision(root):
+    """Commit of a git checkout, refusing one with local changes under ``ep/``."""
     try:
         revision = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
                                            encoding="ascii", timeout=10).strip()
@@ -26,21 +67,135 @@ def source_checkout(value):
                                          "--untracked-files=no", "--", "ep"],
                                         encoding="utf-8", timeout=10).strip()
     except (OSError, subprocess.SubprocessError) as exc:
-        raise BenchmarkUnavailable("source_unavailable", f"cannot identify ascendep checkout: {exc}") from exc
-    if revision != UPSTREAM_COMMIT or dirty:
-        raise BenchmarkUnavailable("source_unavailable", f"expected an unchanged ascendep {UPSTREAM_COMMIT}, found {revision}")
-    return root
+        raise BenchmarkUnavailable(
+            "source_unavailable",
+            f"cannot identify the ascendep checkout selected by {OVERRIDE_ENV} at {root}: {exc}") from exc
+    if dirty:
+        raise BenchmarkUnavailable(
+            "source_unavailable",
+            f"{OVERRIDE_ENV}={root} has uncommitted changes under ep/: {dirty.splitlines()[0]}") from None
+    return revision
+
+
+def _vendored_commit(root):
+    """Commit recorded by the vendored manifest, after checking that it describes the tree."""
+    manifest = root / VENDORED_MANIFEST.name
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise BenchmarkUnavailable(
+            "source_unavailable",
+            f"cannot read the vendored ascendep provenance {manifest}: {exc}; "
+            "run `python scripts/vendor_ascendep.py --check`") from exc
+    commit = payload.get("upstream", {}).get("commit")
+    if not commit:
+        raise BenchmarkUnavailable("source_unavailable",
+                                   f"{manifest} records no upstream commit for the vendored adapters")
+    absent = [entry.get("path") for entry in payload.get("files", [])
+              if not (root / str(entry.get("path"))).is_file()]
+    if absent:
+        raise BenchmarkUnavailable(
+            "source_unavailable",
+            f"the vendored ascendep copy is incomplete, {len(absent)} file(s) missing "
+            f"({', '.join(str(path) for path in absent[:4])}); run "
+            "`python scripts/vendor_ascendep.py --check`") from None
+    return commit
+
+
+@lru_cache(maxsize=None)
+def _resolve(override):
+    """Locate the adapter tree once: vendored by default, an explicit override when given."""
+    if override:
+        root = Path(override).expanduser().resolve()
+        if not (root / ENTRYPOINT).is_file():
+            raise BenchmarkUnavailable(
+                "source_unavailable",
+                f"{OVERRIDE_ENV}={root} has no {ENTRYPOINT.as_posix()}; point it at a pinned "
+                "ascendep checkout or unset it to use the vendored copy") from None
+        commit = git_revision(root)
+        if commit != UPSTREAM_COMMIT:
+            raise BenchmarkUnavailable(
+                "source_unavailable",
+                f"{OVERRIDE_ENV}={root} is at commit {commit}, not the pinned {UPSTREAM_COMMIT}")
+        return SourceInfo("override", commit, str(root))
+    if not (VENDORED_ROOT / ENTRYPOINT).is_file():
+        raise BenchmarkUnavailable(
+            "source_unavailable",
+            f"the vendored ascendep adapter tree is missing at {VENDORED_ROOT}; reinstall the "
+            "package or run `python scripts/vendor_ascendep.py --check`") from None
+    commit = _vendored_commit(VENDORED_ROOT)
+    if commit != UPSTREAM_COMMIT:
+        raise BenchmarkUnavailable(
+            "source_unavailable",
+            f"{VENDORED_MANIFEST} pins {commit}, but this module expects {UPSTREAM_COMMIT}; "
+            "refresh the vendored copy with `python scripts/vendor_ascendep.py --refresh`") from None
+    return SourceInfo("vendored", commit, str(VENDORED_ROOT), manifest=str(VENDORED_MANIFEST))
+
+
+def _override(value):
+    if value is None:
+        value = os.getenv(OVERRIDE_ENV, "")
+    return str(value).strip() or None
+
+
+def reset_source_cache():
+    """Forget the memoised resolution so the next call re-reads ``EP_ASCENDEP_ROOT``."""
+    _resolve.cache_clear()
+
+
+def source_info(value=None):
+    """Report the adapter source as a dict: ``origin``, ``commit``, ``path`` and provenance.
+
+    ``origin`` is ``"vendored"`` for the in-tree copy and ``"override"`` when
+    ``EP_ASCENDEP_ROOT`` selects a checkout. Raises :class:`BenchmarkUnavailable` with
+    status ``source_unavailable`` when the tree is missing, incomplete or off-commit.
+    """
+    return _resolve(_override(value)).as_dict()
+
+
+def source_checkout(value=None):
+    """Absolute path of the ascendep tree whose ``ep.<name>.demo`` modules are imported."""
+    return Path(_resolve(_override(value)).path)
+
+
+def adapter_module(spec):
+    """Dotted module the registry selects for one operator, e.g. ``ep.deepep_ascend.demo``."""
+    return f"ep.{spec.upstream or spec.id}.demo"
+
+
+def _import_demo(name, source):
+    """Import one vendored adapter, naming the real blocker when it cannot be imported."""
+    try:
+        return import_module(name)
+    except ImportError as exc:
+        missing = getattr(exc, "name", None) or ""
+        if missing == "ep" or missing.startswith("ep."):
+            raise BenchmarkUnavailable(
+                "source_unavailable",
+                f"the {source['origin']} ascendep tree {source['path']} does not provide {name} "
+                f"({exc}); run `python scripts/vendor_ascendep.py --check`") from exc
+        raise BenchmarkUnavailable(
+            "dependency_missing",
+            f"ascendep adapter {name} needs the native module {missing or exc!r}, which is not "
+            f"installed: {exc}. Native libraries are listed in dependencies/manifest.yaml") from exc
 
 
 class AscendEPBackend(EPBackend):
     def initialize(self, context):
         super().initialize(context)
         self.layer = None
-        root = source_checkout(os.getenv("EP_ASCENDEP_ROOT"))
-        sys.path.insert(0, str(root))
-        self.demo = import_module(f"ep.{self.spec.upstream or self.spec.id}.demo")
-        if not Path(self.demo.__file__).resolve().is_relative_to(root):
-            raise BenchmarkUnavailable("source_unavailable", "another ep package shadows the pinned ascendep checkout")
+        self.source = source_info()
+        root = Path(self.source["path"])
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        name = adapter_module(self.spec)
+        self.demo = _import_demo(name, self.source)
+        located = Path(self.demo.__file__).resolve()
+        if not located.is_relative_to(root):
+            raise BenchmarkUnavailable(
+                "source_unavailable",
+                f"{name} resolved to {located}, outside the {self.source['origin']} ascendep tree "
+                f"{root}; another ep package shadows it") from None
 
     def prepare(self, work):
         torch = self.context.torch

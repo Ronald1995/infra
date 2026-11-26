@@ -10,3 +10,12 @@
 ```sh
 python -m operators.dispatch_ffn_combine_sglang.benchmark --config configs/decode.yaml --cases MOE-001
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001..009; LAYER-001..006, LAYER-008, LAYER-009; MOE-002/003/004/007/009 (`moe_backward`, `recompute`, `concurrent`, `dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Correctness contract**: `validate_moe` over the forward output only; the registry records `numeric_contract: w8a8_integer`, so the result is not comparable with a BF16 case.
+- **Timing contract**: `moe_case`; the fused `FuseMode.DISPATCH_FFN_COMBINE` call is one timed block, weight quantisation stays outside it.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `hardware=[Atlas A3]`.
+- **Source**: upstream sgl-kernel-npu at commit `458e72caf6cdfb5b9c06711e6f84d134d15e3f97`; not ascendep-vendored.

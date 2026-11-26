@@ -27,12 +27,32 @@ class CombineResult:
 
 
 class EPBackend:
+    """Contract every EP operator adapter implements.
+
+    ``completion_semantics`` is part of the contract, not documentation: the
+    runner records the guarantee a measurement actually has, so a submit-only
+    adapter can never be reported as a completed transfer.
+    """
+
+    #: Strongest completion guarantee this adapter provides after ``wait``.
+    COMPLETION = ("local_complete", "the adapter's completion handle is waited")
+    #: Native API names this adapter calls; recorded as the result's `actual_api`.
+    ACTUAL_API = None
+
     def __init__(self, spec):
         self.spec = spec
         self.context = None
 
     def capabilities(self):
         return self.spec.capabilities
+
+    def completion_semantics(self):
+        """``(level, detail)`` describing what ``wait_until_ready`` proves."""
+        return self.COMPLETION
+
+    def actual_api(self):
+        """The API identity a result may report, or ``None`` when it is unknown."""
+        return self.ACTUAL_API or self.spec.api
 
     def initialize(self, context):
         self.context = context
@@ -41,6 +61,9 @@ class EPBackend:
         return None
 
     def prepare_communication(self, workload):
+        return None
+
+    def prepare_training(self, workload):
         return None
 
     def wait_until_ready(self, result):

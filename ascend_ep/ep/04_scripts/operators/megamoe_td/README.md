@@ -12,3 +12,12 @@
 ```sh
 python -m operators.megamoe_td.benchmark --config operators/megamoe_td/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-006, MOE-008 — MOE-005 only while the workload keeps `routing=balanced`.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012; FUSE-001..009; LAYER-001..006, LAYER-008, LAYER-009; MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`); MOE-005 is rejected by the `routing=[balanced]` constraint. They stay in the manifest as `unsupported`.
+- **Correctness contract**: `validate_moe` over the forward output and gradients; `MegaMoEFunction.apply` is the single native entry point, so no partial layout check is claimed.
+- **Timing contract**: `moe_case`; one timed call, `wait` is the identity, the sample closes after `ctx.synchronize()`.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `routing=[balanced]`, `equal_tokens`, `contiguous_placement`; `mma_moe` and SHMEM come from the dependency manifest.
+- **Source**: vendored `operators/vendor/ascendep/ep/megamoe_td/demo.py` at commit `24ff84d3ab8c01e1e2071802465173e624e1f89d`; no external checkout, `EP_ASCENDEP_ROOT` is an optional override.

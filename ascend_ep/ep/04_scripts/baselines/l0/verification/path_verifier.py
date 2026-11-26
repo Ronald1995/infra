@@ -19,11 +19,20 @@ from baselines.l0.verification.vocabulary import (
 )
 
 STRONG_SOURCES = ("native_descriptor", "shmem_query", "runtime_api", "hccl_runtime_log",
-                  "hcomm_log", "rank_graph")
+                  "hcomm_log", "rank_graph",
+                  # Runtime answers from the endpoint/channel/kernel/executor probes.
+                  # Each is an observation the running system produced, not a
+                  # configuration value: see baselines/l0/verification/evidence.py.
+                  "endpoint", "channel_kind", "kernel", "msprof_kernel",
+                  "runtime_execution")
 HEURISTIC_SOURCES = ("hccl_log_keyword", "hcomm_log_keyword", "profiler_kernel_name",
                      "soc_name_heuristic")
 
 FIELDS = ("execution_resource", "transport_protocol", "channel", "physical_link")
+
+#: Claim keys that may accompany the four observed fields.
+CLAIM_EXTRAS = ("mechanism", "accelerator", "net_layer", "endpoint", "channel_kind",
+                "kernel_name", "payload_validated")
 
 #: Fields a case must be able to observe before its numbers may be compared
 #: against another mechanism's numbers.
@@ -45,7 +54,7 @@ class Evidence:
             raise ValueError(f"{self.source!r} is not a strong evidence source")
         if self.confidence == "heuristic" and self.source not in HEURISTIC_SOURCES:
             raise ValueError(f"{self.source!r} is not a heuristic evidence source")
-        unknown = set(self.claim) - set(FIELDS) - {"mechanism", "accelerator", "net_layer"}
+        unknown = set(self.claim) - set(FIELDS) - set(CLAIM_EXTRAS)
         if unknown:
             raise ValueError(f"unsupported evidence claim fields {sorted(unknown)}")
 

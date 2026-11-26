@@ -39,6 +39,14 @@ def latency(rank_records):
             result[key].append(value)
     for p in (50, 95, 99):
         result[f"p{p}"] = percentile(maxima, p / 100) / 1e6
+    # Rank Max is the headline number; the rank-average percentile is reported next
+    # to it so an imbalance is visible instead of being averaged away.
+    result["rank_avg_p50_ms"] = percentile(
+        [mean([v["latency_ns"] for v in group]) for group in groups], .5) / 1e6
+    result["rank_min_p50_ms"] = percentile(
+        [min(v["latency_ns"] for v in group) for group in groups], .5) / 1e6
+    result["imbalance_ratio"] = (result["rank_max"][0] / mean(result["rank_max"])
+                                 if mean(result["rank_max"]) else None)
     result["stddev"] = pstdev(maxima) / 1e6
     result["cv"] = result["stddev"] / mean(result["rank_max"]) if mean(maxima) else None
     result["p95_p50_ratio"] = result["p95"] / result["p50"] if result["p50"] else None

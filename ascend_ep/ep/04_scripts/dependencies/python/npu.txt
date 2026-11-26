@@ -1,0 +1,21 @@
+# NPU bridge layer -- category B of dependencies/manifest.yaml.
+#
+# Install base.txt FIRST, then this file.  Nothing here belongs on a CPU-only
+# host: torch_npu imports libascendcl, so on a machine without CANN the install
+# succeeds and the first `import torch_npu` fails far from the cause.
+#
+#   pip install --no-index --find-links "$WHEELHOUSE" -r dependencies/python/base.txt
+#   pip install --no-index --find-links "$WHEELHOUSE" -r dependencies/python/npu.txt
+#
+# The wheel comes from the site's Ascend mirror or from the CANN release package
+# (Ascend-cann-torch_npu_*.run unpacks the same wheel).  It is deliberately not
+# fetched from PyPI: the public index has no Ascend build.
+#
+# Do not run `pip install --upgrade torch_npu`: pip would resolve torch to the
+# newest CPU wheel and break the pairing that manifest.yaml `compatibility`
+# records (cann 8.2.RC1 / torch 2.6.0 / torch_npu 2.6.0.post3).
+torch_npu==2.6.0.post3
+
+# Deliberately absent:
+#   cann-ops-transformer  -> source build (needs CANN + ccec), see dependencies/system/cann.yaml
+#   hccl / hcomm / npu-smi / ccec / msprof / hccl_test -> host components, not wheels

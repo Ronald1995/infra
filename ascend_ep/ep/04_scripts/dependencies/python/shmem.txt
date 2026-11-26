@@ -1,0 +1,29 @@
+# CANN SHMEM -- category C of dependencies/manifest.yaml.
+#
+# There is intentionally NO `name==version` line in this file.
+#
+# SHMEM releases are versioned with the CANN toolkit, not on PyPI, and the wheel
+# is produced by the source build.  Pinning a wheel name here would be a
+# fiction; the pin is the release tag that matches the installed CANN row
+# (manifest `compatibility`).
+#
+# Pin:
+#   shmem          commit: null   gitcode.com/cann/shmem
+#                  checkout the release tag that matches the CANN version
+#                  reported by `python scripts/check_cann.py --json`
+#
+# Build steps (documentation, executed by install_deps.sh only after the
+# toolchain probe passes):
+#   git clone https://gitcode.com/cann/shmem.git
+#   git -C shmem checkout <release tag matching the CANN row>
+#   cd shmem && bash build.sh
+#   pip install --no-build-isolation ./build/*.whl
+#
+# Runtime prerequisites the build cannot check:
+#   * libshmem.so must be on LD_LIBRARY_PATH (the CANN set_env.sh usually does it)
+#   * the SHMEM bootstrap/rendezvous values are read from the benchmark config by
+#     baselines/l0/shmem/runtime.py; a missing value is reported as
+#     dependency_missing with the config key, not as an import error.
+#
+# Verification without importing (importing shmem joins a rendezvous):
+#   python scripts/doctor.py --profile communication

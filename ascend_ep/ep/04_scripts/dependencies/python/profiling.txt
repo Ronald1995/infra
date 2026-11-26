@@ -1,0 +1,22 @@
+# Profiling and toolchain -- category E of dependencies/manifest.yaml.
+#
+# There is intentionally NO `name==version` line in this file.
+#
+# Everything the profiling stage needs is a host binary that ships inside a CANN
+# release, so it cannot be pinned as a wheel:
+#
+#   msprof      $ASCEND_HOME_PATH/tools/profiler/bin/msprof             (CANN toolkit)
+#   hccl_test   $ASCEND_HOME_PATH/tools/hccl_test/bin/alltoall_test     (CANN oam-tools)
+#   ccec        $ASCEND_HOME_PATH/compiler/ccec_compiler/bin/ccec       (CANN toolkit)
+#
+# Pin: the CANN release row.  `python scripts/check_cann.py` prints the observed
+# CANN/torch/torch_npu triple next to the manifest compatibility table; the
+# binaries must come from that same release, because a profiler or test tool from
+# another release reports options the toolkit does not implement.
+#
+# Parsing the profiler output needs nothing beyond the standard library: the
+# profiling/ code reads JSON/CSV with json and csv, and reporting/charts.py is the
+# only place that imports matplotlib (pinned in base.txt).
+#
+# Verification:
+#   python scripts/doctor.py --profile profiling

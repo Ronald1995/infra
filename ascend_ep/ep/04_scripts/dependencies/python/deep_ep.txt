@@ -1,0 +1,30 @@
+# DeepEP -- category C of dependencies/manifest.yaml.
+#
+# There is intentionally NO `name==version` line in this file.
+#
+# DeepEP is a C++/Ascend C extension compiled against the local CANN toolkit and
+# torch_npu.  A `deep_ep @ git+https://...@<commit>` direct reference would make
+# pip start that build with no compiler checks, and on a CPU-only host it would
+# fail inside CMake with a message that names none of the real missing pieces.
+# The build is therefore owned by scripts/install_deps.sh (--profile communication)
+# and by dependencies/system/cann.yaml, which can check the toolchain first.
+#
+# Pins (short hash == manifest `version`, full hash == manifest `commit`):
+#   deep_ep        83252a5   github.com/lueelu/DeepEP
+#                            build for operator:deepep_ascend / deepep_lueelu /
+#                            deepep_sglang / deepep_direct_lueelu
+#   deep_ep        69090a1   gitcode.com/lishaoxun/DeepEP_9283
+#                            build for operator:deepep_v2_ascend
+#
+# The two forks both install the module name `deep_ep`; install one per
+# environment.  Two checkouts cannot coexist on sys.path.
+#
+# Build steps (documentation, executed by install_deps.sh only after the
+# toolchain probe passes):
+#   git clone https://github.com/lueelu/DeepEP.git && git -C DeepEP checkout 83252a54d2363734a706a7dd8368bebc3094af5a
+#   cd DeepEP && bash build.sh          # fork build script, read the checkout README
+#   pip install --no-build-isolation .
+#
+# Verification without importing (importing deep_ep opens a device):
+#   python -c "import importlib.metadata as m; print(m.version('deep_ep'))"
+#   python scripts/doctor.py --profile communication

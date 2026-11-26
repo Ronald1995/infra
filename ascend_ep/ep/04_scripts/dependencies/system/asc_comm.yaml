@@ -1,0 +1,119 @@
+# ASC-COMM kernels -- status: BLOCKED.
+#
+# Why this file exists: the ASC-COMM kernel project (kernels/asc_comm/) is the only
+# dependency in the catalog whose build cannot run on any host available here, and an
+# unpublished blocker is indistinguishable from "the adapter is not implemented".
+# Recording it as a first-class, machine-readable blocker lets the doctor say
+# "l0_transport is blocked because the ASC-COMM toolchain is missing" instead of
+# letting the case fail later with an unrelated symbol error.
+#
+# Current state:
+#   * kernels/asc_comm/ exists (host/ is complete C++, aiv/ and ccu/ contain the
+#     build wiring and the specification).
+#   * The device programs are NOT written: aiv/write_nbi/kernel.cpp and
+#     ccu/dsl/kernel.cpp do not exist, so no engine can be built.
+#   * The CANN ASC-COMM toolchain (toolkit headers plus the CCU DSL frontend) is not
+#     installed on any host reachable from this workstream.
+#   * Nothing in this repository pretends otherwise: build.sh exits non-zero with
+#     that blocker, install_deps.sh exits non-zero with the same text, and doctor
+#     reports the entry as fail.
+#
+# The project owns its own artifact contract; this descriptor only reads it:
+#   build/manifest.json          {"schema_version": 1, "engines": {"AIV": {...}, "CCU": {...}}}
+#   build/libasc_comm_kernels.so the library the manifest names per built engine
+#   baselines/l0/transport/kernel_artifacts.py resolves the ABI symbols from common/abi.h
+schema_version: 1
+id: asc_comm
+status: blocked
+manifest_ids: [asc-comm-kernels, asc-comm-build-toolchain]
+
+blocks:
+  - l0_transport
+  - l0_overlap
+
+blockers:
+  - id: device_sources_absent
+    severity: blocking
+    detail: >-
+      aiv/write_nbi/kernel.cpp and ccu/dsl/kernel.cpp are not written, so the AIV
+      and CCU data planes cannot be compiled.  build.sh prints a warning and the
+      manifest records the engine as built=false; with --strict it fails outright.
+    clears_when: "both device sources exist and compile against the installed toolkit headers"
+    doctor_reports: "kernel_artifact -> fail, evidence.engines shows no built engine"
+  - id: cann_asc_comm_toolchain
+    severity: blocking
+    detail: >-
+      The build needs ASCEND_HOME_PATH, cmake, a C++17 compiler and the ASC-COMM
+      part of the CANN toolkit (toolkit headers and the CCU DSL frontend).  Those
+      are host components of a CANN release that is not available here.
+    clears_when: "ASCEND_HOME_PATH resolves, cmake and g++ exist, and the CCU DSL frontend is installed"
+    doctor_reports: "toolchain -> fail, evidence lists every missing binary separately (cmake / g++ / ccec)"
+
+detect:
+  paths:
+    - kernels/asc_comm/                        # source tree
+    - kernels/asc_comm/build.sh                # build entry point (documented, not guessed)
+    - kernels/asc_comm/cmake/write_manifest.cmake
+    - kernels/asc_comm/build/manifest.json     # written only after the link step
+    - kernels/asc_comm/build/libasc_comm_kernels.so
+  device_sources:
+    - kernels/asc_comm/aiv/write_nbi/kernel.cpp
+    - kernels/asc_comm/ccu/dsl/kernel.cpp
+  toolchain:
+    - cmake >= 3.16
+    - g++ (C++17)
+    - ASCEND_HOME_PATH (toolkit headers)
+    - the CCU DSL frontend from the CANN ASC-COMM toolchain
+  doctor_api:
+    - "scripts.doctor.probe_kernel_artifact()"
+
+install:
+  source_build:
+    ownership: container
+    installable_in_container: false
+    blocked: true
+    steps:
+      - "install cmake and g++ from the image's package manager (needs root; --yes)"
+      - "install the CANN release component that provides the ASC-COMM toolchain on the host"
+      - "write the device sources against the installed headers (aiv/README.md, ccu/README.md)"
+      - "source /usr/local/Ascend/ascend-toolkit/set_env.sh"
+      - "bash kernels/asc_comm/build.sh --soc <soc>"
+    expected_artifacts:
+      - kernels/asc_comm/build/manifest.json
+      - kernels/asc_comm/build/libasc_comm_kernels.so
+    on_failure: >-
+      Exits non-zero with the blocker id from `blockers:` -- never "built with
+      warnings" and never a silent skip.  A manifest that records built=false is not
+      a successful build.
+
+env:
+  required:
+    - ASCEND_HOME_PATH
+  recommended:
+    - LD_LIBRARY_PATH   # must include kernels/asc_comm/build for the runtime probe
+  notes: >-
+    The build output directory is not added to LD_LIBRARY_PATH automatically; the
+    L0 launcher exports it when the artifacts exist, so a stale .so from a previous
+    build cannot be picked up silently.
+
+evidence:
+  - id: asc_comm.source
+    probe: filesystem
+    exact: ["source root", "source_present", "build.sh path", "build.sh executable bit"]
+  - id: asc_comm.artifacts
+    probe: build root listing + build/manifest.json
+    exact: ["build root", "manifest.json present", "engines with built=true",
+            "library path per engine", "sorted *.so names", "manifest contents (first 40 lines)"]
+  - id: asc_comm.toolchain
+    probe: toolchain probe (cmake / g++ / ccec / ASCEND_HOME_PATH)
+    exact: ["resolved path per binary", "missing binaries list", "ccec --version output when present"]
+  - id: asc_comm.symbols
+    probe: baselines/l0/transport/kernel_artifacts.py (the case-level authority)
+    exact: ["required ABI symbols per engine", "symbols actually exported"]
+
+# The L0 transport cases that depend on this project, so a reader can see the
+# blast radius without cross-referencing the manifest.
+affected_cases:
+  - LINK-001..LINK-011   # native transport through the ASC-COMM channel family
+  - LINK-013             # device-side UDMA variant
+  - OVERLAP-005..009     # overlap cases that use the ASC-COMM path

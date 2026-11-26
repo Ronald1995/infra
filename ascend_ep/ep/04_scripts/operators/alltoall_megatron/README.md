@@ -12,3 +12,12 @@
 ```sh
 python -m operators.alltoall_megatron.benchmark --config operators/alltoall_megatron/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (no `dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001..009 (no `dispatch_gmm`/`gmm_combine`/`chunk_pipeline`/`tile_schedule`/`comm_resources`/`quantized_fusion`/`fused_backward`); LAYER-001..006, LAYER-008, LAYER-009 (no `router_layer`/`dynamic_planner`/`rank_dedup`/`server_dedup`/`dedup_training`); MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Correctness contract**: `validate_moe` over the forward output and gradients; the native dispatcher's layout is checked against the reference collective for the MoE path.
+- **Timing contract**: `moe_case`; one timed call, `wait` is the identity, the sample closes after `ctx.synchronize()`.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `equal_tokens`, `contiguous_placement`, `swiglu_limit=10`; EP64/EP128 points are `unsupported`.
+- **Source**: vendored `operators/vendor/ascendep/ep/alltoall_megatron/demo.py` at commit `24ff84d3ab8c01e1e2071802465173e624e1f89d`; `torch_npu.contrib.transfer_to_npu` is still a native dependency.

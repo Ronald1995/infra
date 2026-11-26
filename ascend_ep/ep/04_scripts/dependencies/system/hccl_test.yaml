@@ -1,0 +1,83 @@
+# The native HCCL test tool (CANN oam-tools ``hccl_test``).
+#
+# Why it is its own descriptor: the L0 execution family (EXEC-001..006) measures
+# HCCL accelerator modes through this tool, and the runner selects a mode from the
+# tool's own ``--help`` output.  "hccl_test is installed" therefore has to mean
+# "this binary exists AND its --help lists the mode I am about to request";
+# anything weaker turns an unsupported mode into a fabricated measurement.
+schema_version: 1
+id: hccl_test
+manifest_ids: [hccl-test]
+
+detect:
+  binaries:
+    - alltoall_test           # the sentinel the repository probes first
+    - allreduce_test
+    - allgather_test
+    - reducescatter_test
+  search:
+    - "$ASCEND_HOME_PATH/tools/hccl_test/bin"
+    - "$ASCEND_HOME_PATH/tool/hccl_test/bin"
+    - "dirname(shutil.which('alltoall_test'))"
+    - "$EP_HCCL_TEST_BINARY"                      # explicit file, wins over everything
+    - "benchmark.native_hccl.binary (run configuration, wins over the defaults)"
+  commands:
+    - "alltoall_test --help"                      # option surface, including accelerator modes
+  doctor_api:
+    - "scripts.doctor.probe_binary()  # parse: none, extra_paths from the manifest"
+  cross_reference: baselines/l0/collectives/accelerator.py   # same directories, same parsing
+
+install:
+  source_build:
+    ownership: host
+    installable_in_container: false
+    reason: >-
+      hccl_test is built from CANN oam-tools against the installed toolkit and the
+      host driver.  A prebuilt binary from another CANN release reports option
+      names the local toolkit does not implement.
+    steps:
+      - "install the CANN toolkit on the host (see system/cann.yaml)"
+      - "source /usr/local/Ascend/ascend-toolkit/set_env.sh"
+      - "build the oam-tools hccl_test tree for the installed release"
+      - "put <oam-tools>/tools/hccl_test/bin on PATH, or set EP_HCCL_TEST_BINARY"
+    verify:
+      - "alltoall_test --help | head -40"
+      - "python scripts/doctor.py --profile profiling"
+  container:
+    ownership: container
+    installable_in_container: false
+    applicable_when: "the built binary directory is bind-mounted read-only into the container"
+    steps:
+      - "docker run -v <oam-tools>/tools/hccl_test/bin:/opt/hccl_test/bin:ro ..."
+      - "export EP_HCCL_TEST_BINARY=/opt/hccl_test/bin/alltoall_test"
+
+env:
+  required: []
+  recommended:
+    - ASCEND_HOME_PATH        # the default search root
+    - EP_HCCL_TEST_BINARY     # explicit override, read by accelerator.configured_binary()
+  runtime_notes: >-
+    HCCL_OP_EXPANSION_MODE and the accelerator flags select an *execution
+    resource*, never a transport protocol.  The doctor records the modes the tool
+    advertises; the L0 planner compares them with what each case requests and
+    reports unsupported instead of running a mode the tool does not have.
+
+evidence:
+  - id: hccl_test.binary
+    probe: manifest extra_paths + shutil.which
+    exact: ["resolved absolute path", "name of the sentinel binary that matched"]
+  - id: hccl_test.suite
+    probe: directory listing next to the sentinel
+    exact: ["sorted file names of the *_test binaries found"]
+  - id: hccl_test.modes
+    probe: "alltoall_test --help"
+    exact: ["matched accelerator option lines", "first 40 lines of --help"]
+  - id: hccl_test.run
+    probe: the actual invocation from baselines/l0/collectives/native_hccl.py
+    exact: ["command line", "exit status", "first 20 lines of stdout", "log path"]
+    note: >-
+      A run that produced no accelerator field is recorded with
+      overlap_verified=false / verified=unverified; it is never promoted.
+
+blocks:
+  hccl_test_missing: [l0_collectives]

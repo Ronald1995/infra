@@ -81,10 +81,24 @@ class AllToAllHandle:
 
 
 class CollectiveBackend(EPBackend):
+    #: A torch.distributed collective returns only after the operation completed on
+    #: this rank, so the local buffer holds the peer's data.  ``issue_*`` returns a
+    #: deferred wait that calls ``Work.wait()``, which is the same guarantee.
+    COMPLETION = ("remote_visible",
+                  "the collective returns after the operation completed on this rank")
+    #: The algorithm and transport HCCL selected are not exposed by torch.distributed,
+    #: so they stay unknown unless a log or profiler record names them.  Guessing one
+    #: from the backend name is exactly what the evidence rules forbid.
+    ACTUAL_ALGORITHM = None
+
     def __init__(self, spec, mode):
         super().__init__(spec)
         self.mode = mode
         self.concurrent_group = None
+
+    def actual_algorithm(self):
+        """HCCL does not expose its algorithm; ``None`` means "unknown", not "none"."""
+        return self.ACTUAL_ALGORITHM
 
     def prepare_concurrent(self):
         ctx = self.context

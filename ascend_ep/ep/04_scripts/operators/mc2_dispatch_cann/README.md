@@ -12,3 +12,12 @@ Native API: `npu_moe_distribute_dispatch_v2 / npu_moe_distribute_combine_v2`. So
 ```sh
 python -m operators.mc2_dispatch_cann.benchmark --config operators/mc2_dispatch_cann/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-001, COMM-003, COMM-004, COMM-007, COMM-008, COMM-009, COMM-010; L2 FUSE-001, FUSE-003; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-002 (`cached_dispatch`), COMM-005/006 (`async_*`), COMM-011 (`combine_add_rmsnorm`), COMM-012 (`planned_dispatch`); FUSE-002/004/005/006/007/008/009; LAYER-001..006, LAYER-008, LAYER-009; MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Correctness contract**: dispatch layout via `validate_dispatch`; COMM-009 uses `MC2V2Backend.validate_quantized_dispatch` (INT8 rows + one scale per route, dequantised before comparison, tolerance 0.015); L3 uses `validate_moe`.
+- **Timing contract**: L1 handlers submit and wait inside the timed block and record `local_complete`. A single native invocation is limited to 512 tokens per rank: `MC2V2Backend.exchange` raises `unsupported` above that, and `adapter_token_limit` marks the L1 points `unsupported` from the configuration alone.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `equal_tokens`, `contiguous_placement`, `swiglu_limit=10`.
+- **Source**: vendored `operators/vendor/ascendep/ep/mc2_dispatch_cann/demo.py` at commit `24ff84d3ab8c01e1e2071802465173e624e1f89d`; `torch_npu` V2 bindings are native.

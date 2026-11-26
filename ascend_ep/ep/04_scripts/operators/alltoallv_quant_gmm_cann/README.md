@@ -12,3 +12,12 @@ Native API: `npu_alltoallv_quant_gmm`. Source commit `c83e36b808c4e053c9245f95c7
 ```sh
 python -m operators.alltoallv_quant_gmm_cann.benchmark --config operators/alltoallv_quant_gmm_cann/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L2 FUSE-008 (`quantized_fusion`).
+- **Cases it cannot run**: every other L1 case (no `dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`planned_dispatch`/`combine_add_rmsnorm`); FUSE-001..007 and FUSE-009 (`dispatch`/`dispatch_gmm`/`gmm_combine`/`chunk_pipeline`/`tile_schedule`/`comm_resources`/`fused_backward`); all L3 `moe_forward`/`moe_backward` cases; all L4 `router_layer`/`dynamic_planner`/dedup cases. They stay in the manifest as `unsupported` with the missing token as the reason.
+- **Correctness contract**: `validate_quantized_fusion` compares the dequantised result with the reference FP32 GMM path; the registry records `numeric_contract: mxfp8_activations_and_weights`, so this result is not comparable with a BF16 fused case.
+- **Timing contract**: `benchmarks/cases/l2_fusion.py::_quantized_fusion`; one native call inside the timed block, weight packing/static quantisation outside it.
+- **Registry constraints**: `ep_sizes=[2,4,8,16,32,64,128,256]`, `dtypes=[bfloat16,float16]`, `contiguous_placement`, `min_tokens=1`; no `top_k`/`num_experts` pin.
+- **Source**: native op-plugin binding at commit `c83e36b808c4e053c9245f95c7bc45cfaae0000d`; the operator is not ascendep-vendored and needs `torch_npu` plus the matching `cann_ops_transformer` build.

@@ -19,8 +19,9 @@ falls back to another engine or protocol.
 import base64
 
 from baselines.l0.contract import Prepared
-from baselines.l0.transport import bridge, peers
+from baselines.l0.transport import bridge, dataplane, peers
 from baselines.l0.transport.common import profiles
+from baselines.l0.verification import evidence as evidence_collector
 from baselines.l0.verification.path_verifier import Evidence
 from baselines.l0.verification.vocabulary import requested
 from common.backend import BenchmarkUnavailable
@@ -37,12 +38,37 @@ def payload(ctx, size, peers):
                            "global_bytes sums every rank's fan-out")}
 
 
+def _data_plane(profile, ctx):
+    """Resolve the data plane that must serve this case's execution resource.
+
+    An ``AIV``/``CCU`` case is only runnable with the compiled ASC-COMM kernel.  If
+    it is missing the case is blocked; if it is present but the benchmark buffer
+    registration has never been executed on hardware, the case is
+    ``not_implemented``.  Neither may fall back to the host NBI path, because a
+    host-submitted transfer is not an AIV or CCU data plane.
+    """
+    plane = dataplane.for_resource(profile.execution_resource, ctx.config)
+    if plane.kind == "host":
+        return plane
+    blocker = plane.blocker()
+    if blocker is not None:
+        raise BenchmarkUnavailable(*blocker)
+    plane.initialize(ctx)
+    raise BenchmarkUnavailable(
+        "not_implemented",
+        f"the {plane.engine} ASC-COMM kernel is built but this benchmark's buffer "
+        f"registration for the device ABI has never run on hardware; see "
+        f"kernels/asc_comm/README.md for the verification plan")
+
+
 def prepare(ctx, case, size, params):
     profile = profiles.profile(case.id)
     if ctx.device.type == "cpu":
         raise BenchmarkUnavailable("unsupported", "native transport baselines require Ascend devices")
     if ctx.size < 2:
         raise BenchmarkUnavailable("unsupported", "native transport baseline needs at least two ranks")
+
+    plane = _data_plane(profile, ctx)
 
     descriptor = bridge.describe(ctx.config)  # raises dependency_missing when not built
     compiled = {item["channel"] for item in descriptor.get("channels", ()) if item.get("compiled")}
@@ -109,6 +135,29 @@ def prepare(ctx, case, size, params):
         raise
 
     evidence = _evidence(profile, links, observed_protocols, acquired)
+    evidence.append(Evidence(
+        source="native_descriptor",
+        claim={"execution_resource": profile.execution_resource},
+        detail=(f"data plane {plane.kind} serves {profile.execution_resource}; "
+                f"completion is {plane.completion.name} ({plane.completion.level})"),
+    ))
+    # The completion contract is recorded with the result, so a fenced host drain is
+    # never presented as a completed device transfer.
+    host_completion = plane.completion
+
+    # The verification ladder is derived from evidence only.  `configured` is where a
+    # case always starts; an acquired channel and a rank-graph protocol are what can
+    # move it, and a profiler record is required before `kernel_verified`.
+    protocols = {value for value in observed_protocols.values() if value}
+    collector = evidence_collector.EvidenceCollector(
+        requested=request_for(case, params),
+        endpoint_created=bool(initialized.get("ok")),
+        channel_kind=next(iter([entry.get("channel") for entry in acquired.get("peers", ())
+                                if entry.get("channel")]), None),
+        engine=profile.execution_resource,
+        protocol=next(iter(protocols)) if len(protocols) == 1 else None,
+    )
+    levels = collector.levels()
 
     def issue():
         for peer_index, peer_rank in peers:
@@ -155,7 +204,10 @@ def prepare(ctx, case, size, params):
 
     return Prepared(run=run, wait=wait, validate=validate, cleanup=cleanup,
                     request=request_for(case, params), evidence=evidence,
-                    payload=payload(ctx, size, peers))
+                    payload=payload(ctx, size, peers),
+                    completion=host_completion.level,
+                    completion_detail=host_completion.detail,
+                    levels=levels)
 
 
 def _peers(ctx, params):

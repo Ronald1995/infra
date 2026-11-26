@@ -10,3 +10,12 @@
 ```sh
 python -m operators.fused_deep_moe_sglang.benchmark --config configs/prefill.yaml --cases MOE-001
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001..009; LAYER-001..006, LAYER-008, LAYER-009; MOE-002/003/004/007/009. They stay in the manifest as `unsupported`.
+- **Correctness contract**: `validate_moe` over the forward output only; the registry records `numeric_contract: mxfp8_activations_and_weights` and `hardware=[Ascend 950]`, so a non-MXFP8 or non-950 comparison is not valid.
+- **Timing contract**: `moe_case`; the fused `FuseMode.FUSED_DEEP_MOE` call is one timed block, static weight quantisation stays outside it.
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `min_tokens=1`.
+- **Source**: upstream sgl-kernel-npu at commit `458e72caf6cdfb5b9c06711e6f84d134d15e3f97`; not ascendep-vendored, and no device validation exists in this tree.

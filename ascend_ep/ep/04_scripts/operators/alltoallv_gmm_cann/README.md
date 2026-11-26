@@ -12,3 +12,12 @@
 ```sh
 python -m operators.alltoallv_gmm_cann.benchmark --config operators/alltoallv_gmm_cann/config.yaml
 ```
+
+## Benchmark contract
+
+- **Cases it can run** (capability-level): L1 COMM-010; L2 FUSE-002, FUSE-004, FUSE-009; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008.
+- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (no `dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001/003/005/006/007/008 (no `dispatch`/`chunk_pipeline`/`tile_schedule`/`comm_resources`/`quantized_fusion`); LAYER-001..006, LAYER-008, LAYER-009 (no `router_layer`/`dynamic_planner`/`rank_dedup`/`server_dedup`/`dedup_training`); MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported` with the missing token as the reason.
+- **Correctness contract**: FUSE-002/004 compare the native dispatch+GMM / GMM+combine pair against the reference collective + reference GMM (relative L2); FUSE-009 uses the fused backward path; L3 uses `validate_moe`.
+- **Timing contract**: `dispatch_gmm`/`gmm_combine` are one adapter entry point inside the timed call (`benchmarks/cases/l2_fusion.py::_dispatch_gmm`, `_gmm_combine`); FUSE-009 inherits MOE-003's boundary (forward and backward in one call).
+- **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `equal_tokens`, `contiguous_placement`, `swiglu_limit=10`.
+- **Source**: vendored `operators/vendor/ascendep/ep/alltoallv_gmm_cann/demo.py` at commit `24ff84d3ab8c01e1e2071802465173e624e1f89d`; no external checkout, `EP_ASCENDEP_ROOT` is an optional override.
