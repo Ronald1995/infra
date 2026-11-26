@@ -15,3 +15,6 @@
 05_results/workflows/
 05_results/raw/wf-*/
 05_results/raw/ep-*/
+# Installer output: the generated plan, its step log and the isolated environments.
+04_scripts/.install-logs/
+04_scripts/.envs/

@@ -1,0 +1,23 @@
+schema_version: 1
+id: moonep_dedup
+title: MoonEP (dev_server_dedup) environment
+description: >-
+  Isolated environment for moonep_server_dedup: `moonep` and `npu_patch` at the
+  dev_server_dedup branch (d8495c4). It cannot share an interpreter with moonep_npu
+  because both install the same two module names.
+isolated: true
+python: ">=3.10,<3.13"
+requirements:
+  - python/base.txt
+  - python/npu.txt
+inherits: base
+conflicts_with:
+  - moonep_npu
+members:
+  - moonep-dedup-runtime
+  - npu-patch-dedup
+notes: >-
+  The two MoonEP branches are separate revisions of the same repository; installing the
+  second one over the first silently changes the dedup buffer implementation. The doctor
+  reports the pair as a conflict and the dependency report names the environment per
+  operator.

@@ -1,0 +1,25 @@
+schema_version: 1
+id: deep_ep_lueelu
+title: DeepEP (lueelu fork) environment
+description: >-
+  Isolated environment for the operators built on the pinned lueelu/DeepEP fork. It
+  installs the base requirements first and then this fork's `deep_ep`, so the module name
+  cannot be shadowed by the DeepEP_9283 fork used by deepep_v2_ascend.
+isolated: true
+python: ">=3.10,<3.13"
+requirements:
+  - python/base.txt
+  - python/npu.txt
+  - python/deep_ep.txt
+inherits: base
+conflicts_with:
+  - deep_ep_v2
+members:
+  - deep-ep
+  - deep-ep-experimental
+notes: >-
+  `deep_ep_experimental` ships inside the same checkout (experiments/ep_gmm_fused/python
+  and experiments/megamoe/python), so it is installed from the same pinned source and
+  shares this environment. The fork name is part of every result's provenance
+  (`operators/ascendep.py::source_info` names the vendored adapter tree; the dependency
+  report names the environment).

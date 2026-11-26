@@ -20,16 +20,19 @@ profiling/       trace collection and parsing
 analysis/        comparability, comparison groups, L0 analysis, report entry point
 reporting/       main report sections, formatting, specialty reports, coverage, L0 report
 schemas/         versioned result/config/capability vocabularies
-dependencies/    dependency catalog (manifest.yaml) and requirement files
-scripts/         doctor.py, install_deps.sh, manifest_diff.py, vendor_ascendep.py,
-                 benchmark_workflow.py + workflow/ (the autonomous phase machine)
+dependencies/    dependency catalog (manifest.yaml), requirement files and the
+                 isolated dependency environments (environments/)
+scripts/         doctor.py, dependency_plan.py, dependency_closure.py,
+                 dependency_report.py, install_deps.sh, manifest_diff.py,
+                 vendor_ascendep.py, benchmark_workflow.py + workflow/ (phase machine)
 references/      policies the skill reads: request interpretation, gates, dependencies,
                  execution, profiling, recovery, report acceptance
 configs/         base + EP size + suite + plan configurations
 kernels/asc_comm/ ASC-COMM AIV/CCU kernel project (device sources are blocked)
 launchers/ tests/ multi-node helpers; offline tests (`npu` marked)
-docs/            architecture, execution flow, data plane, evidence, observability,
-                 manifest diff, blocked capabilities, matrix design, reporting, workflow
+docs/            architecture, installation, execution flow, data plane, evidence,
+                 observability, manifest diff, blocked capabilities, matrix design,
+                 reporting, workflow
 ```
 
 ## Autonomous workflow
@@ -59,6 +62,7 @@ matrix, and nothing falls back to a cheaper measurement path.
 ```sh
 python -m pip install -e '.[test,charts]'
 python run_benchmark.py doctor            # per-dependency report + availability matrix
+python scripts/dependency_report.py       # per-operator dependency readiness
 python run_benchmark.py list --capabilities
 ```
 
@@ -74,7 +78,9 @@ NPU matrix (EP8, EP64, EP128 x L0-L4 x operators):
 
 ```sh
 python run_benchmark.py doctor --profile all
-bash scripts/install_deps.sh --profile all
+bash scripts/install_deps.sh --profile all --dry-run        # the exact plan, changes nothing
+bash scripts/install_deps.sh --profile all --allow-network  # fetch/build/install the pins
+bash scripts/install_deps.sh --check-only --profile all     # verify only
 
 python run_benchmark.py plan --plan configs/benchmark_plan.yaml          # 20259 tasks
 python run_benchmark.py run  --plan configs/benchmark_plan.yaml          # sequential per EP size
@@ -85,6 +91,12 @@ python run_benchmark.py profile --run-id RUN_ID --cases COMM-001,MOE-003
 python run_benchmark.py analyze --run-id RUN_ID
 python run_benchmark.py report  --run-id RUN_ID
 ```
+
+The project is self-contained: the installer installs **only** what
+`dependencies/manifest.yaml` declares, from an exact commit or release tag, into the
+dependency's isolated environment; it never clones an unpinned branch, never installs a
+driver, firmware or CANN, and never needs an external `ascendep` checkout. The full
+deployment procedure is in [docs/installation.md](docs/installation.md).
 
 The default plan is `mode: full_matrix`: `all` expands the complete catalog and each of the
 other 15 suites expands with its own scenario configuration. Identical points collapse into
@@ -120,17 +132,28 @@ is no `ep/mc2_combine_add_rmsnorm_cann/demo.py` upstream, so that operator repor
 
 ## Dependencies and the doctor
 
-`dependencies/manifest.yaml` is the single catalog: 33 entries, categories A-E
+`dependencies/manifest.yaml` is the single catalog: 39 entries, categories A-E
 (`python_base`, `cann`, `communication`, `multinode`, `profiling`), kinds `pip`,
-`native_build`, `host_provided`, `binary`, `python_import`, and an explicit `installable`
-flag. The installer never touches the driver, firmware, device nodes or CANN itself.
+`native_build`, `host_provided`, `binary`, `python_import`, an explicit `installable` flag
+and an ownership model (`in_repo`, `vendored`, `external`, `host`). Every installable entry
+carries an exact pin (40-hex commit, release tag with resolved commit, or a pinned
+requirement file) and a structured `install_spec`; the installer never touches the driver,
+firmware, device nodes or CANN itself.
 
 ```sh
 python run_benchmark.py doctor --profile cpu|npu|communication|profiling|multinode|all
-bash scripts/install_deps.sh --profile npu
+python scripts/dependency_plan.py --profile all --dry-run   # the plan, before anything runs
+bash scripts/install_deps.sh --profile npu --allow-network
 bash scripts/install_deps.sh --check-only --profile all
-bash scripts/install_deps.sh --profile all --wheelhouse /data/wheels
+bash scripts/install_deps.sh --profile all --offline \
+    --source-cache /data/ep-sources --wheelhouse /data/wheels
 ```
+
+Two dependency families install the same Python module (`deep_ep` from two DeepEP forks,
+`moonep`/`npu_patch` from two MoonEP branches), so each runs in its own environment
+(`dependencies/environments/`); every operator declares the environment it needs and the
+doctor fails when two shadowing families are importable at once. Per-operator readiness:
+`python scripts/dependency_report.py`.
 
 A missing dependency is never a silent skip: the task stays in the manifest with
 `dependency_missing`, `environment_unavailable`, `not_implemented` or `source_unavailable`
@@ -215,6 +238,7 @@ and never reported as verified.
 | [docs/reporting.md](docs/reporting.md) | report artifacts, main-report layout, data contract, comparability rules, formatting, chart degradation |
 | [docs/reporting_refactor.md](docs/reporting_refactor.md) | why the report system was rebuilt, what changed, test results, open gaps |
 | [docs/workflow.md](docs/workflow.md) | the autonomous workflow: before/after, module map, state files, recorded runs |
+| [docs/installation.md](docs/installation.md) | **deploying on a fresh Ascend host**: host prerequisites, wheel sources, source cache, offline install, isolated environments, verification |
 | [references/](references/) | the policies the skill applies: request interpretation, gates, dependencies, execution, profiling, recovery, report acceptance |
 | [docs/manifest_diff.md](docs/manifest_diff.md) | how to diff two manifests, and the numbers of this refactor |
 | [docs/blocked.md](docs/blocked.md) | **what is not done**, with the exact missing interface |

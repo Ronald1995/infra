@@ -122,7 +122,9 @@ Allowed without asking (when the request implies them):
 * plan generation, resource estimation;
 * the benchmark the user asked for;
 * installing a dependency the catalog marks installable **only** with
-  `dependency_policy: install_missing` **and** network or a wheelhouse;
+  `dependency_policy: install_missing` **and** network or a wheelhouse: the installer is
+  manifest-driven and pinned, so it fetches/builds exactly `dependencies/manifest.yaml`
+  (never an unpinned checkout) into that dependency's environment;
 * building a kernel whose source and toolchain are both present;
 * analysis and report generation.
 
@@ -130,9 +132,16 @@ Requires explicit permission in the request: network downloads, `sudo`, system p
 multi-node launches, profiling runs that would exceed the user's budget.
 
 Never, under any permission: install or upgrade the driver / firmware / CANN / device nodes,
-change system network configuration, delete an existing build artifact, delete historical
-results, kill another user's process, edit the plan file to hide a failure, or switch
-CANN/PyTorch versions. A full-benchmark request is not a system-administration permission.
+change system network configuration, delete an existing build artifact or a pinned source
+cache, delete historical results, kill another user's process, edit the plan file to hide a
+failure, or switch CANN/PyTorch versions. A full-benchmark request is not a
+system-administration permission.
+
+The vendored adapter tree needs no installation and no external checkout: verify it with
+`python scripts/vendor_ascendep.py --check`. Whether a dependency is installable, host-only
+or absent is decided by the catalog's `ownership` + `pin` + `install_spec`, and per-operator
+readiness is in `python scripts/dependency_report.py`; deployment from a bare host is
+`docs/installation.md`.
 
 Details: `references/dependency_policy.md`, `references/execution_policy.md`.
 

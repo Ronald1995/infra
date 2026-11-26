@@ -1,0 +1,23 @@
+schema_version: 1
+id: base
+title: Framework and CANN extension environment
+description: >-
+  The default environment. It carries the framework (torch, numpy, PyYAML, jsonschema),
+  the CANN extensions (torch_npu, cann_ops_transformer), the source builds that have no
+  conflicting sibling (SHMEM, FSDPTurbo, MegaMoE, Megatron, MindSpeed, DeepGEMM,
+  vllm-ascend) and the vendored ascendep adapter tree. Everything that does not install a
+  module name another family also installs lives here, so a normal benchmark needs one
+  interpreter.
+isolated: false
+python: ">=3.10,<3.13"
+requirements:
+  - python/base.txt
+  - python/npu.txt
+installs:
+  - pip
+  - source
+notes: >-
+  A dependency joins this environment when its `modules` are unique in the catalog. When
+  two dependencies claim the same module, at least one of them must move to an isolated
+  environment (see deep_ep_lueelu, deep_ep_v2, moonep_npu, moonep_dedup) instead of being
+  installed over the other.

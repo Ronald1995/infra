@@ -15,18 +15,13 @@ not. This module adds the workflow policy on top:
 After a successful install the doctor is re-run; the phase passes on the *re-probed*
 state, never on the installer's exit code alone.
 """
+import os
 from pathlib import Path
 
 import yaml
 
 from common.registry import ROOT
 from scripts.workflow.phases import PhaseOutcome
-
-#: Kinds the installer is allowed to handle on this host.
-INSTALLABLE_KINDS = ("pip", "python_import", "binary")
-#: Anything whose install command needs these is a host action, not an automation step.
-HOST_ACTION_MARKERS = ("sudo", "apt-get", "apt ", "dnf", "yum", "zypper", "rpm ",
-                       "modprobe", "systemctl", "setcap", "chmod")
 
 
 def load_manifest(root=None):
@@ -36,12 +31,6 @@ def load_manifest(root=None):
     for entry in data.get("dependencies") or ():
         entries[entry["id"]] = entry
     return entries, data
-
-
-def _requires_host_action(entry):
-    commands = entry.get("install") or ()
-    text = " ".join(commands) if isinstance(commands, (list, tuple)) else str(commands)
-    return any(marker in text for marker in HOST_ACTION_MARKERS)
 
 
 def classify(report, manifest=None):
@@ -72,25 +61,27 @@ def classify(report, manifest=None):
             continue
         record.update({
             "kind": entry.get("kind"), "version": entry.get("version"),
+            "ownership": entry.get("ownership"),
+            "environment": entry.get("environment"),
+            "install_mode": (entry.get("install_spec") or {}).get("mode"),
+            "pin": (entry.get("pin") or {}).get("kind"),
             "installable": bool(entry.get("installable")),
             "install_reason": entry.get("install_reason"),
             "manual_step": entry.get("manual_step"),
             "manual_step_owner": entry.get("manual_step_owner"),
             "optional": bool(entry.get("optional")),
         })
-        if entry.get("kind") == "host_provided" or not entry.get("installable"):
+        mode = (entry.get("install_spec") or {}).get("mode")
+        if entry.get("ownership") in ("host", "in_repo", "vendored") or not entry.get(
+                "installable") or mode in ("manual", "none"):
             buckets["host"].append(record)
-        elif entry.get("kind") == "native_build" or _requires_host_action(entry):
-            checkout = (entry.get("check") or {}).get("path")
-            present = bool(checkout) and Path(checkout).exists()
-            record["source_present"] = present
-            if present:
-                buckets["buildable"].append(record)
-            else:
-                record.setdefault("install_reason",
-                                  "the pinned source checkout is absent, so the build cannot run")
-                buckets["host"].append(record)
-        elif entry.get("kind") in INSTALLABLE_KINDS:
+        elif mode == "system":
+            # A system package needs sudo; the request has to authorize it.
+            buckets["host"].append(record)
+        elif mode == "source":
+            record["source_present"] = _source_present(entry)
+            buckets["buildable"].append(record)
+        elif mode == "pip":
             if status == "warn" and record.get("optional"):
                 buckets["ok"].append(identifier)
             else:
@@ -98,6 +89,16 @@ def classify(report, manifest=None):
         else:
             buckets["host"].append(record)
     return buckets
+
+
+def _source_present(entry):
+    """Whether the pinned checkout is already in the source cache."""
+    source = ((entry.get("install_spec") or {}).get("source") or {})
+    directory = source.get("directory")
+    if not directory:
+        return False
+    cache = os.getenv("EP_SOURCE_CACHE") or str(Path.home() / ".cache/ep-benchmark/deps")
+    return (Path(cache) / directory).exists()
 
 
 def _blocking_groups(buckets):
@@ -151,10 +152,23 @@ def handler_check(ctx):
 
 
 def _installer_argv(ctx, dry_run=False):
+    """The installer invocation, with the authorization the request granted.
+
+    The installer owns no dependency knowledge: it asks ``dependency_plan.py`` for a plan
+    generated from the manifest.  Passing ``--allow-network`` or ``--offline`` here is the
+    explicit authorization, so nothing is fetched behind the request's back.
+    """
+    request = ctx.request.environment
     argv = ["bash", str(ctx.root / "scripts" / "install_deps.sh"),
             "--profile", _profile(ctx.request)]
-    if ctx.request.environment.wheelhouse:
-        argv += ["--wheelhouse", ctx.request.environment.wheelhouse]
+    if request.wheelhouse:
+        argv += ["--wheelhouse", request.wheelhouse]
+    if request.allow_network:
+        argv.append("--allow-network")
+    else:
+        argv.append("--offline")
+        if os.getenv("EP_SOURCE_CACHE"):
+            argv += ["--source-cache", os.environ["EP_SOURCE_CACHE"]]
     if dry_run:
         argv.append("--dry-run")
     return argv
@@ -185,8 +199,8 @@ def handler_install(ctx):
             "installing would need the network, which the request did not authorise "
             "(set environment.allow_network or supply a wheelhouse): "
             + ", ".join(record["id"] for record in installable))
-    if any(_requires_host_action({"install": record.get("suggested_action")})
-           for record in installable) and not request.environment.allow_sudo:
+    if any(record.get("install_mode") == "system" for record in installable) and not (
+            request.environment.allow_sudo):
         return PhaseOutcome.blocked(
             "an installable dependency needs sudo, which the request did not authorise")
     dry = ctx.commands.run(_installer_argv(ctx, dry_run=True), log_name="install-dry-run.log")

@@ -1,23 +1,32 @@
 # Third-party dependencies
 
 This directory is the **single machine-readable catalog** of everything the EP
-benchmark needs from outside this repository, plus the descriptors and the doctor
-that turn it into a verdict.
+benchmark needs from outside this repository, plus the descriptors and the tools that turn
+it into an executable installation plan.
+
+**The rule this catalog exists to enforce:** `infra/ascend_ep` is an independent,
+reproducible, deliverable benchmark project. Another repository may be a technical
+reference, but it is never an implicit runtime dependency. Code that must be reused is
+vendored here, reviewed, pinned and hash-verified; everything else is a *declared* external
+dependency with an exact pin and an installation path, or explicit host state.
 
 ```
 dependencies/
-  manifest.yaml       the catalog: 33 entries in categories A-E, 47 capability
-                      groups, and the known-good CANN/torch/torch_npu triples
+  manifest.yaml       the catalog: every dependency's owner, pin, install recipe,
+                      verification, environment and conflicts (schema version 2)
   python/*.txt        pinned requirement files (base / npu / deep_ep / shmem / profiling)
   system/*.yaml       per-host-dependency descriptors: how to detect, how to install,
                       which environment variables matter, what evidence is collected
+  environments/       the isolated dependency environments and the operator -> environment map
   README.md           this file
 scripts/
+  dependency_plan.py  manifest -> ordered fetch/build/install/verify plan (+ the bash to run)
+  dependency_closure.py  which third-party modules an operator really imports
+  dependency_report.py   per-operator dependency readiness (the coverage report)
   doctor.py           the probe: per-dependency records + availability matrix
-  check_cann.py       CANN/driver/HCCL/HCOMM/npu-smi/torch_npu + the pairing table
-  check_communication.py  HCOMM/SHMEM/npu_patch/DeepEP/MoonEP/MPI/ASC-COMM
-  check_environment.py    devices, mounts, /dev/shm, permissions, env, LD_LIBRARY_PATH
-  install_deps.sh     the installer (idempotent; refuses host state)
+  install_deps.sh     the executor: plan, authorize, run the steps, re-verify with the doctor
+  check_cann.py / check_communication.py / check_environment.py   focused views
+  vendor_ascendep.py  verify (or refresh) the vendored ascendep adapter tree
 ```
 
 Start with the probe, not the installer:
@@ -27,7 +36,37 @@ cd ascend_ep/ep/04_scripts
 python -m scripts.doctor --profile all          # human table + matrix, exit 1 if not ready
 python -m scripts.doctor --profile all --json   # the same, machine-readable
 python -m scripts.doctor --profile cpu          # what a CPU-only box is expected to have
+python scripts/dependency_report.py             # per-operator readiness + environments
 ```
+
+## Ownership model
+
+Every entry declares who provides it (`ownership`), and the doctor, the installer and the
+tests all agree on that one word:
+
+| Ownership | Meaning | Installable here? |
+|---|---|---|
+| `in_repo` | implemented in this repository (`kernels/asc_comm`, `baselines/l0/*/native`, `launchers/`) | no: build it, never fetch it |
+| `vendored` | third-party source copied here, pinned and hash-verified (`operators/vendor/ascendep`, 23 files) | no: verify it, never fetch it |
+| `external` | a real third-party package or source build this repository installs | yes, from an exact pin |
+| `host` | driver, firmware, CANN toolkit, HCCL/HCOMM, device nodes, deployment state | never: manual step |
+
+`penn513/ascendep` is no longer a dependency. Its adapter tree is vendored, and the
+catalog records it as `vendored-ascendep` with `origin=vendored` in every result
+(`operators/ascendep.py::source_info`). `EP_ASCENDEP_ROOT` survives only as a documented
+development override for adapter development; nothing in the normal run or installation
+path reads it.
+
+Each entry also declares:
+
+| Field | Meaning |
+|---|---|
+| `pin` | `commit` (40-hex) / `release_tag` (+ how the commit is resolved) / `pip` / `system` / `in_repo` / `none` |
+| `install_spec` | `pip` (requirement file, wheel source), `source` (URL, directory, pin, steps), `system` (manager packages, sudo), `manual`, `none` |
+| `modules` | the Python module names it provides (this is how the operator closure is mapped) |
+| `environment` | which isolated environment installs it (`environments/*.yaml`) |
+| `conflicts` | the dependencies that install the same module name |
+| `check` | the doctor probe (never a claim) |
 
 ## Categories and profiles
 
@@ -105,19 +144,55 @@ python scripts/check_cann.py --json     # same, for automation
 
 ```sh
 bash scripts/install_deps.sh --profile communication --dry-run   # print every step first
-bash scripts/install_deps.sh --profile communication
+bash scripts/install_deps.sh --profile communication --allow-network
+bash scripts/install_deps.sh --profile communication --offline \
+    --source-cache /data/ep-sources --wheelhouse /data/ep-wheels
 python scripts/check_communication.py
 ```
 
-Every C-category runtime is a **source build against the installed toolkit**, so
-the installer never guesses:
+Every C-category runtime is a **pinned source build** and the installer is
+manifest-driven (`scripts/dependency_plan.py` produces the plan; the shell only runs it):
 
-* it prints the pinned source and commit it will use (from `manifest.yaml`);
-* it checks the toolchain (`ccec`, `cmake`) **before** touching anything and emits
-  `BLOCKED: <id> cannot be built: missing ccec` when it is absent;
-* it delegates to the project's own build script when a checkout exists, and
-  refuses to invent one when it does not;
-* it exits non-zero with the precise blocker rather than reporting success.
+1. read `install_spec.source.url` and `install_spec.source.pin` from the catalog;
+2. reuse the checkout in `$EP_SOURCE_CACHE` (default `~/.cache/ep-benchmark/deps`) if it is
+   already at the pin, otherwise `git clone` + `git checkout <commit>` (or `tags/<tag>`);
+3. verify the resulting `HEAD` (or the resolved tag commit) and **record it as evidence**;
+4. run the declared build/install steps in the dependency's environment;
+5. run the declared verify commands;
+6. re-run the doctor, which decides whether the profile is satisfied.
+
+Rules it never breaks:
+
+* no unpinned clone, no branch head, no `latest`;
+* no fetch at all with `--offline`; a missing or drifted checkout is a `BLOCKED` line;
+* no `--clean`, no deletion of an existing checkout or build artifact;
+* no sudo, no driver/firmware/CANN install: those are host blockers with a manual step;
+* no URL, commit or build command in the shell: all of it comes from the catalog.
+
+`--dry-run` prints the plan and the exact commands. It exits non-zero only when the plan has
+an *actionable* blocker (an unpinned installable package, a missing wheelhouse); host
+blockers are expected on a machine without CANN and are printed with their manual step.
+
+### Isolated environments
+
+Two dependency families install the **same module name**, so they cannot share an
+interpreter:
+
+| Environment | Provides | Conflicts with |
+|---|---|---|
+| `base` | framework, CANN extensions, SHMEM, FSDPTurbo, MegaMoE, Megatron, MindSpeed, DeepGEMM, vllm-ascend, vendored ascendep | - |
+| `deep_ep_lueelu` | `deep_ep` + `deep_ep_experimental` from lueelu/DeepEP @83252a5 | `deep_ep_v2` |
+| `deep_ep_v2` | `deep_ep` from DeepEP_9283 @69090a1 | `deep_ep_lueelu` |
+| `moonep_npu` | `moonep` + `npu_patch` from MoonEP `dev_npu` @b4127ba | `moonep_dedup` |
+| `moonep_dedup` | `moonep` + `npu_patch` from MoonEP `dev_server_dedup` @d8495c4 | `moonep_npu` |
+
+`environments/map.yaml` assigns every operator to one environment
+(`common/registry.py::Operator.environment`). The installer creates an isolated
+environment with its own venv under `$EP_ENV_ROOT` and installs into *that* interpreter;
+the doctor's `environment.isolation` check fails when two conflicting families are
+importable in one interpreter, because that is how a run silently measures the wrong
+implementation.
+
 
 The L0 native bridges (`libl0_transport_bridge.so`, `libl0_mem.so`,
 `libep_l0_udma.so`) are built from `baselines/l0/*/native/` in this repository;
@@ -235,7 +310,9 @@ to be green. Matrix statuses are only `available`, `degraded` and `blocked`.
 ## Keeping it correct
 
 ```sh
-python -m pytest tests/dependencies -q
+python -m pytest tests/dependencies tests/operators_vendor -q
+python scripts/vendor_ascendep.py --check
+python scripts/dependency_report.py            # per-operator readiness
 ```
 
 * `test_doctor.py` asserts host-independent invariants: a dependency the probe
@@ -246,10 +323,30 @@ python -m pytest tests/dependencies -q
   installable while host-provided ones never are (and always carry the manual
   step), every check type has a prober, and the system descriptors only reference
   dependency ids that exist.
+* `test_dependency_catalog.py` asserts the self-contained contract: the ownership model,
+  an immutable pin for every installable dependency, no `ascendep-checkout`, symmetric
+  conflicts across isolated environments, no undeclared module in any operator's import
+  closure, an installable plan for every profile, `--offline` producing no fetch step, the
+  installer owning no URL, and the vendored tree failing closed when tampered with.
+* `test_vendored_ascendep.py` proves the adapter tree resolves without
+  `EP_ASCENDEP_ROOT`, and that the manifest digests match every vendored file.
 
-When adding a dependency: add it to `manifest.yaml`, pin it in the matching
-`python/*.txt` (or document why it cannot be pinned), extend
-`install_deps.sh` if a container may install it, and re-run both the doctor and
-the tests. When adding a benchmark family: add a `capability_groups` entry and
-list it in the `required_by` of every dependency it needs -- an unlisted token is a
-catalog error that the tests catch.
+When adding a dependency:
+
+1. add it to `manifest.yaml` with `ownership`, `pin`, `install_spec`, `modules`,
+   `environment`, `conflicts`, `check` and `required_by`;
+2. pin a requirement in `python/*.txt` when it is a wheel, or a commit/tag when it is a
+   source build -- an unpinned installable entry is a catalog error;
+3. put it in an environment: `base` if its modules are unique, a new isolated environment
+   if it collides with another family (and add the operator mapping in
+   `environments/map.yaml`);
+4. run `python scripts/dependency_plan.py --profile all` and the test suite; the plan is
+   the proof that the entry is actually installable.
+
+When adding an operator: add it to `operators/registry.yaml` **and** to
+`environments/map.yaml`. The closure test then requires every module it imports to be
+declared by some dependency; an undeclared import is a catalog error, not a warning.
+
+When adding a benchmark family: add a `capability_groups` entry and list it in the
+`required_by` of every dependency it needs -- an unlisted token is a catalog error that the
+tests catch.

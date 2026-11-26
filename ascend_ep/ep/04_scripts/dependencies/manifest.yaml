@@ -1,58 +1,53 @@
-# Third-party dependency catalog for the Ascend EP benchmark.
-#
-# Why a single machine-readable catalog: the runner already reports one status
-# (``dependency_missing``) for six very different situations -- a wheel that is
-# not installed, a CANN component that is not on the host, a driver that cannot
-# exist in a container, a native kernel tree that was never built, a toolchain
-# that is missing, and a device node the user cannot open.  Collapsing them into
-# one status makes a CPU workstation and a broken Ascend node look alike.  Every
-# entry below therefore carries what the dependency is, who needs it, how the
-# doctor proves it is there, and whether the installer is even allowed to touch
-# it.
-#
-# Conventions:
-#   * ``categories`` A-E follow the refactor spec (python base / CANN /
-#     communication / multinode / profiling).
-#   * ``capability_groups`` is the closed vocabulary for ``required_by``.  A
-#     group is a benchmark family (``l0_*``), a cross-cutting stage
-#     (``profiling`` / ``reporting`` / ``multinode``) or one operator from
-#     ``operators/registry.yaml``.  ``scripts/doctor.py`` derives the
-#     availability matrix from these tokens, so a token that is not listed here
-#     is a catalog bug, not a typo to ignore.
-#   * ``required_by`` lists may be composed from the ``x-tokens`` anchors (a
-#     nested list is flattened by the loader, order preserved, duplicates
-#     removed).
-#   * ``version`` is a constraint, never "latest".  A source build that is
-#     pinned by commit uses the short commit as its version and repeats the full
-#     hash in ``commit``.
-#   * ``installable: false`` always carries ``install_reason``; a ``kind:
-#     host_provided`` entry additionally carries ``manual_step`` (the exact
-#     command a human must run) and ``manual_step_owner`` (``host`` /
-#     ``host image`` / ``deployment``), because the only honest instruction for a
-#     driver, a device permission or a site variable is the manual one.
-#   * ``install`` commands are documentation for ``scripts/install_deps.sh`` and
-#     for a human.  Lines starting with ``#`` are commentary, not commands.
-schema_version: 1
-maintained_by: scripts/doctor.py (probes) + scripts/install_deps.sh (installs)
+schema_version: 2
+maintained_by: scripts/doctor.py (probes) + scripts/install_deps.sh (installs, via scripts/dependency_plan.py)
+  + common/registry.py (operator -> environment)
 matrix_owner: common/registry.py (operator ids must stay in sync)
-
 vocabulary:
-  check_status: [pass, warn, fail, skip]
-  matrix_status: [available, degraded, blocked]
-  kinds: [pip, native_build, host_provided, binary, python_import]
+  check_status:
+  - pass
+  - warn
+  - fail
+  - skip
+  matrix_status:
+  - available
+  - degraded
+  - blocked
+  kinds:
+  - pip
+  - native_build
+  - host_provided
+  - binary
+  - python_import
   check_types:
-    - python_version
-    - python_module
-    - shared_library
-    - binary
-    - env_var
-    - device_node
-    - driver
-    - cann_home
-    - toolchain
-    - ascendep_checkout
-    - kernel_artifact
-
+  - python_version
+  - python_module
+  - shared_library
+  - binary
+  - env_var
+  - device_node
+  - driver
+  - cann_home
+  - toolchain
+  - vendored_source
+  - kernel_artifact
+  ownerships:
+  - in_repo
+  - vendored
+  - external
+  - host
+  pin_kinds:
+  - commit
+  - release_tag
+  - in_repo
+  - pip
+  - system
+  - none
+  install_modes:
+  - pip
+  - source
+  - system
+  - manual
+  - none
 categories:
   A:
     id: python_base
@@ -63,1428 +58,2651 @@ categories:
     id: cann
     title: CANN runtime, toolkit and the PyTorch device bridge
     installable_here: partial
-    note: >-
-      torch_npu and the ops packages are wheels or source builds; the driver, the
-      toolkit, HCCL/HCOMM and npu-smi come from the host image and are never
-      installed by this repository.
+    note: torch_npu and the ops packages are wheels or source builds; the driver, the toolkit, HCCL/HCOMM
+      and npu-smi come from the host image and are never installed by this repository.
   C:
     id: communication
     title: Communication runtimes and custom kernels
     installable_here: partial
-    note: >-
-      SHMEM/DeepEP/npu_patch/MoonEP are source builds that need the target CANN
-      toolkit; the ASC-COMM kernel tree is BLOCKED until the CANN ASC-COMM
-      toolchain exists.
+    note: SHMEM/DeepEP/npu_patch/MoonEP are source builds that need the target CANN toolkit; the ASC-COMM
+      kernel tree is BLOCKED until the CANN ASC-COMM toolchain exists.
   D:
     id: multinode
     title: Multi-node launch and fabric
     installable_here: false
-    note: MPI is a package; the environment, the HCCL configuration and the device permissions are deployment state.
+    note: MPI is a package; the environment, the HCCL configuration and the device permissions are deployment
+      state.
   E:
     id: profiling
     title: Profiling and toolchain
     installable_here: false
-    note: msprof and hccl_test ship inside CANN; the compiler toolchain comes from CANN plus the image's package manager.
-
-# Profile -> dependency categories probed.  ``scripts/doctor.py`` keeps the same
-# table in code; tests/dependencies/test_manifest_consistency.py refuses to let
-# the two drift.
+    note: msprof and hccl_test ship inside CANN; the compiler toolchain comes from CANN plus the image's
+      package manager.
 profiles:
-  cpu: [A]
-  npu: [A, B]
-  communication: [A, B, C]
-  profiling: [A, B, E]
-  multinode: [A, B, D]
-  all: [A, B, C, D, E]
-
-# Anchors used by ``required_by``.  Order matters: a composite anchor may only
-# reference anchors declared above it.
+  cpu:
+  - A
+  npu:
+  - A
+  - B
+  communication:
+  - A
+  - B
+  - C
+  profiling:
+  - A
+  - B
+  - E
+  multinode:
+  - A
+  - B
+  - D
+  all:
+  - A
+  - B
+  - C
+  - D
+  - E
 x-tokens:
-  l0: &l0
-    - l0_memory
-    - l0_transport
-    - l0_collectives
-    - l0_hardware
-    - l0_compute
-    - l0_overlap
-    - l0_topology
-    - l0_verification
-  stages: &stages
-    - profiling
-    - reporting
-    - multinode
-  ops: &ops
-    - "operator:allgather_hccl"
-    - "operator:allgather_megatron"
-    - "operator:allgather_fsdpturbo"
-    - "operator:allgather_overlap_mindspeed"
-    - "operator:alltoall_hccl"
-    - "operator:alltoall_megatron"
-    - "operator:alltoall_fsdpturbo"
-    - "operator:fused_fsdpturbo"
-    - "operator:chunkmoe_fsdpturbo"
-    - "operator:domino_fsdpturbo"
-    - "operator:hierarchical_alltoallv_mindspeed"
-    - "operator:mc2_dispatch_cann_v1"
-    - "operator:mc2_dispatch_cann"
-    - "operator:mc2_dispatch_cann_v3"
-    - "operator:mc2_combine_add_rmsnorm_cann"
-    - "operator:alltoallv_gmm_cann"
-    - "operator:alltoallv_quant_gmm_cann"
-    - "operator:mc2_fsdpturbo"
-    - "operator:ep_gmm_fused_lueelu"
-    - "operator:deepep_cann"
-    - "operator:deepep_ascend"
-    - "operator:deepep_v2_ascend"
-    - "operator:deepep_lueelu"
-    - "operator:deepep_direct_lueelu"
-    - "operator:deepep_sglang"
-    - "operator:megamoe_cann"
-    - "operator:megamoe_lueelu"
-    - "operator:megamoe_fsdpturbo"
-    - "operator:megamoe_td"
-    - "operator:megamoe_deepgemm_ascend"
-    - "operator:moonep"
-    - "operator:moonep_dynamic_planner"
-    - "operator:moonep_server_dedup"
-    - "operator:dispatch_ffn_combine_vllm_ascend"
-    - "operator:dispatch_ffn_combine_sglang"
-    - "operator:fused_deep_moe_sglang"
-  # The 34 operators whose adapter requires an NPU: the two torch HCCL
-  # collectives (operator:allgather_hccl, operator:alltoall_hccl) also run on the
-  # CPU/Gloo path, so they must not drag the whole NPU stack into the cpu profile.
-  ops_npu: &ops_npu
-    - "operator:allgather_megatron"
-    - "operator:allgather_fsdpturbo"
-    - "operator:allgather_overlap_mindspeed"
-    - "operator:alltoall_megatron"
-    - "operator:alltoall_fsdpturbo"
-    - "operator:fused_fsdpturbo"
-    - "operator:chunkmoe_fsdpturbo"
-    - "operator:domino_fsdpturbo"
-    - "operator:hierarchical_alltoallv_mindspeed"
-    - "operator:mc2_dispatch_cann_v1"
-    - "operator:mc2_dispatch_cann"
-    - "operator:mc2_dispatch_cann_v3"
-    - "operator:mc2_combine_add_rmsnorm_cann"
-    - "operator:alltoallv_gmm_cann"
-    - "operator:alltoallv_quant_gmm_cann"
-    - "operator:mc2_fsdpturbo"
-    - "operator:ep_gmm_fused_lueelu"
-    - "operator:deepep_cann"
-    - "operator:deepep_ascend"
-    - "operator:deepep_v2_ascend"
-    - "operator:deepep_lueelu"
-    - "operator:deepep_direct_lueelu"
-    - "operator:deepep_sglang"
-    - "operator:megamoe_cann"
-    - "operator:megamoe_lueelu"
-    - "operator:megamoe_fsdpturbo"
-    - "operator:megamoe_td"
-    - "operator:megamoe_deepgemm_ascend"
-    - "operator:moonep"
-    - "operator:moonep_dynamic_planner"
-    - "operator:moonep_server_dedup"
-    - "operator:dispatch_ffn_combine_vllm_ascend"
-    - "operator:dispatch_ffn_combine_sglang"
-    - "operator:fused_deep_moe_sglang"
-  ops_ascendep: &ops_ascendep
-    - "operator:allgather_megatron"
-    - "operator:allgather_fsdpturbo"
-    - "operator:allgather_overlap_mindspeed"
-    - "operator:alltoall_megatron"
-    - "operator:alltoall_fsdpturbo"
-    - "operator:fused_fsdpturbo"
-    - "operator:chunkmoe_fsdpturbo"
-    - "operator:domino_fsdpturbo"
-    - "operator:mc2_dispatch_cann"
-    - "operator:mc2_combine_add_rmsnorm_cann"
-    - "operator:alltoallv_gmm_cann"
-    - "operator:mc2_fsdpturbo"
-    - "operator:deepep_cann"
-    - "operator:deepep_ascend"
-    - "operator:deepep_lueelu"
-    - "operator:deepep_sglang"
-    - "operator:megamoe_lueelu"
-    - "operator:megamoe_fsdpturbo"
-    - "operator:megamoe_td"
-    - "operator:moonep"
-  ops_ascendep_comm: &ops_ascendep_comm
-    - "operator:deepep_cann"
-    - "operator:deepep_ascend"
-    - "operator:deepep_lueelu"
-    - "operator:deepep_sglang"
-    - "operator:megamoe_lueelu"
-    - "operator:megamoe_fsdpturbo"
-    - "operator:megamoe_td"
-    - "operator:alltoallv_gmm_cann"
-    - "operator:mc2_dispatch_cann"
-    - "operator:mc2_combine_add_rmsnorm_cann"
-    - "operator:allgather_megatron"
-    - "operator:allgather_fsdpturbo"
-    - "operator:allgather_overlap_mindspeed"
-    - "operator:alltoall_megatron"
-    - "operator:alltoall_fsdpturbo"
-  ops_fsdpturbo: &ops_fsdpturbo
-    - "operator:allgather_fsdpturbo"
-    - "operator:alltoall_fsdpturbo"
-    - "operator:fused_fsdpturbo"
-    - "operator:chunkmoe_fsdpturbo"
-    - "operator:domino_fsdpturbo"
-    - "operator:mc2_fsdpturbo"
-    - "operator:megamoe_fsdpturbo"
-  ops_megamoe: &ops_megamoe
-    - "operator:megamoe_lueelu"
-    - "operator:megamoe_fsdpturbo"
-    - "operator:megamoe_td"
-  ops_deepep: &ops_deepep
-    - "operator:deepep_cann"
-    - "operator:deepep_ascend"
-    - "operator:deepep_v2_ascend"
-    - "operator:deepep_lueelu"
-    - "operator:deepep_direct_lueelu"
-    - "operator:deepep_sglang"
-  ops_deepep_fork: &ops_deepep_fork
-    - "operator:deepep_ascend"
-    - "operator:deepep_lueelu"
-    - "operator:deepep_sglang"
-    - "operator:deepep_direct_lueelu"
-  ops_moonep: &ops_moonep
-    - "operator:moonep"
-    - "operator:moonep_dynamic_planner"
-    - "operator:moonep_server_dedup"
-  ops_cann_transformer: &ops_cann_transformer
-    - "operator:mc2_dispatch_cann_v3"
-    - "operator:megamoe_cann"
-    - "operator:deepep_cann"
-  # Narrowed after the anchors above: the NPU-reachable groups minus local
-  # memory, the log-verification helpers and reporting, and minus the two
-  # CPU-capable operators.  This is the token list the driver / toolkit /
-  # torch_npu / device-permission entries use.
-  npu_only: &npu_only
-    - l0_transport
-    - l0_collectives
-    - l0_hardware
-    - l0_compute
-    - l0_overlap
-    - l0_topology
-    - profiling
-    - multinode
-    - *ops_npu
-  all: &all
-    - *l0
-    - *stages
-    - *ops
-
-# The closed vocabulary of ``required_by`` values.  One row per benchmark
-# family, cross-cutting stage, or operator.
+  l0: &id002
+  - l0_memory
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - l0_verification
+  stages: &id003
+  - profiling
+  - reporting
+  - multinode
+  ops: &id004
+  - operator:allgather_hccl
+  - operator:allgather_megatron
+  - operator:allgather_fsdpturbo
+  - operator:allgather_overlap_mindspeed
+  - operator:alltoall_hccl
+  - operator:alltoall_megatron
+  - operator:alltoall_fsdpturbo
+  - operator:fused_fsdpturbo
+  - operator:chunkmoe_fsdpturbo
+  - operator:domino_fsdpturbo
+  - operator:hierarchical_alltoallv_mindspeed
+  - operator:mc2_dispatch_cann_v1
+  - operator:mc2_dispatch_cann
+  - operator:mc2_dispatch_cann_v3
+  - operator:mc2_combine_add_rmsnorm_cann
+  - operator:alltoallv_gmm_cann
+  - operator:alltoallv_quant_gmm_cann
+  - operator:mc2_fsdpturbo
+  - operator:ep_gmm_fused_lueelu
+  - operator:deepep_cann
+  - operator:deepep_ascend
+  - operator:deepep_v2_ascend
+  - operator:deepep_lueelu
+  - operator:deepep_direct_lueelu
+  - operator:deepep_sglang
+  - operator:megamoe_cann
+  - operator:megamoe_lueelu
+  - operator:megamoe_fsdpturbo
+  - operator:megamoe_td
+  - operator:megamoe_deepgemm_ascend
+  - operator:moonep
+  - operator:moonep_dynamic_planner
+  - operator:moonep_server_dedup
+  - operator:dispatch_ffn_combine_vllm_ascend
+  - operator:dispatch_ffn_combine_sglang
+  - operator:fused_deep_moe_sglang
+  ops_npu: &id001
+  - operator:allgather_megatron
+  - operator:allgather_fsdpturbo
+  - operator:allgather_overlap_mindspeed
+  - operator:alltoall_megatron
+  - operator:alltoall_fsdpturbo
+  - operator:fused_fsdpturbo
+  - operator:chunkmoe_fsdpturbo
+  - operator:domino_fsdpturbo
+  - operator:hierarchical_alltoallv_mindspeed
+  - operator:mc2_dispatch_cann_v1
+  - operator:mc2_dispatch_cann
+  - operator:mc2_dispatch_cann_v3
+  - operator:mc2_combine_add_rmsnorm_cann
+  - operator:alltoallv_gmm_cann
+  - operator:alltoallv_quant_gmm_cann
+  - operator:mc2_fsdpturbo
+  - operator:ep_gmm_fused_lueelu
+  - operator:deepep_cann
+  - operator:deepep_ascend
+  - operator:deepep_v2_ascend
+  - operator:deepep_lueelu
+  - operator:deepep_direct_lueelu
+  - operator:deepep_sglang
+  - operator:megamoe_cann
+  - operator:megamoe_lueelu
+  - operator:megamoe_fsdpturbo
+  - operator:megamoe_td
+  - operator:megamoe_deepgemm_ascend
+  - operator:moonep
+  - operator:moonep_dynamic_planner
+  - operator:moonep_server_dedup
+  - operator:dispatch_ffn_combine_vllm_ascend
+  - operator:dispatch_ffn_combine_sglang
+  - operator:fused_deep_moe_sglang
+  ops_ascendep:
+  - operator:allgather_megatron
+  - operator:allgather_fsdpturbo
+  - operator:allgather_overlap_mindspeed
+  - operator:alltoall_megatron
+  - operator:alltoall_fsdpturbo
+  - operator:fused_fsdpturbo
+  - operator:chunkmoe_fsdpturbo
+  - operator:domino_fsdpturbo
+  - operator:mc2_dispatch_cann
+  - operator:mc2_combine_add_rmsnorm_cann
+  - operator:alltoallv_gmm_cann
+  - operator:mc2_fsdpturbo
+  - operator:deepep_cann
+  - operator:deepep_ascend
+  - operator:deepep_lueelu
+  - operator:deepep_sglang
+  - operator:megamoe_lueelu
+  - operator:megamoe_fsdpturbo
+  - operator:megamoe_td
+  - operator:moonep
+  ops_ascendep_comm:
+  - operator:deepep_cann
+  - operator:deepep_ascend
+  - operator:deepep_lueelu
+  - operator:deepep_sglang
+  - operator:megamoe_lueelu
+  - operator:megamoe_fsdpturbo
+  - operator:megamoe_td
+  - operator:alltoallv_gmm_cann
+  - operator:mc2_dispatch_cann
+  - operator:mc2_combine_add_rmsnorm_cann
+  - operator:allgather_megatron
+  - operator:allgather_fsdpturbo
+  - operator:allgather_overlap_mindspeed
+  - operator:alltoall_megatron
+  - operator:alltoall_fsdpturbo
+  ops_fsdpturbo:
+  - operator:allgather_fsdpturbo
+  - operator:alltoall_fsdpturbo
+  - operator:fused_fsdpturbo
+  - operator:chunkmoe_fsdpturbo
+  - operator:domino_fsdpturbo
+  - operator:mc2_fsdpturbo
+  - operator:megamoe_fsdpturbo
+  ops_megamoe:
+  - operator:megamoe_lueelu
+  - operator:megamoe_fsdpturbo
+  - operator:megamoe_td
+  ops_deepep:
+  - operator:deepep_cann
+  - operator:deepep_ascend
+  - operator:deepep_v2_ascend
+  - operator:deepep_lueelu
+  - operator:deepep_direct_lueelu
+  - operator:deepep_sglang
+  ops_deepep_fork:
+  - operator:deepep_ascend
+  - operator:deepep_lueelu
+  - operator:deepep_sglang
+  - operator:deepep_direct_lueelu
+  ops_moonep:
+  - operator:moonep
+  - operator:moonep_dynamic_planner
+  - operator:moonep_server_dedup
+  ops_cann_transformer:
+  - operator:mc2_dispatch_cann_v3
+  - operator:megamoe_cann
+  - operator:deepep_cann
+  npu_only:
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - profiling
+  - multinode
+  - *id001
+  all:
+  - *id002
+  - *id003
+  - *id004
 capability_groups:
-  - {id: l0_memory, title: "Local memory movement (MEM-001..004)", source: baselines/l0/memory/}
-  - {id: l0_transport, title: "Native transport, one mechanism per case (LINK-001..013)", source: baselines/l0/transport/}
-  - {id: l0_collectives, title: "Communication execution, HCCL accelerator modes (EXEC-001..006)", source: baselines/l0/collectives/}
-  - {id: l0_hardware, title: "Framework collectives through torch HCCL (HW-001..006)", source: baselines/l0/collectives/torch_hccl.py}
-  - {id: l0_compute, title: "Standalone GMM / SwiGLU compute (HW-010..011)", source: baselines/l0/compute/}
-  - {id: l0_overlap, title: "Concurrent communication and compute (OVERLAP-001..009)", source: baselines/l0/overlap/}
-  - {id: l0_topology, title: "Device and topology discovery", source: baselines/l0/topology/}
-  - {id: l0_verification, title: "HCCL/HCOMM log path verification", source: baselines/l0/verification/}
-  - {id: profiling, title: "msprof capture and overlap timelines", source: profiling/}
-  - {id: reporting, title: "Coverage matrix, charts and CSV aggregation", source: reporting/}
-  - {id: multinode, title: "Multi-node launch over the HCCL fabric (EP64/EP128)", source: launchers/}
-  - {id: "operator:allgather_hccl", title: "torch.distributed all_gather / reduce_scatter", source: operators/allgather_hccl/}
-  - {id: "operator:allgather_megatron", title: "MoEAllGatherTokenDispatcher (ascendep)", source: operators/allgather_megatron/}
-  - {id: "operator:allgather_fsdpturbo", title: "all_gather_experts_forward_fn (fsdp_turbo)", source: operators/allgather_fsdpturbo/}
-  - {id: "operator:allgather_overlap_mindspeed", title: "MoELayerOverlapAllGather (MindSpeed)", source: operators/allgather_overlap_mindspeed/}
-  - {id: "operator:alltoall_hccl", title: "torch.distributed all_to_all_single", source: operators/alltoall_hccl/}
-  - {id: "operator:alltoall_megatron", title: "MoEAlltoAllTokenDispatcher (ascendep)", source: operators/alltoall_megatron/}
-  - {id: "operator:alltoall_fsdpturbo", title: "all2all_experts_forward_fn (fsdp_turbo)", source: operators/alltoall_fsdpturbo/}
-  - {id: "operator:fused_fsdpturbo", title: "fused all2all_experts_forward_fn (fsdp_turbo)", source: operators/fused_fsdpturbo/}
-  - {id: "operator:chunkmoe_fsdpturbo", title: "chunkmoe_experts_forward_fn (fsdp_turbo)", source: operators/chunkmoe_fsdpturbo/}
-  - {id: "operator:domino_fsdpturbo", title: "get_domino_experts_forward_fn (fsdp_turbo)", source: operators/domino_fsdpturbo/}
-  - {id: "operator:hierarchical_alltoallv_mindspeed", title: "MoELayerOverlapAll2All hierarchical (MindSpeed)", source: operators/hierarchical_alltoallv_mindspeed/}
-  - {id: "operator:mc2_dispatch_cann_v1", title: "npu_moe_distribute_dispatch / combine (torch_npu)", source: operators/mc2_dispatch_cann_v1/}
-  - {id: "operator:mc2_dispatch_cann", title: "npu_moe_distribute_dispatch_v2 / combine_v2", source: operators/mc2_dispatch_cann/}
-  - {id: "operator:mc2_dispatch_cann_v3", title: "aclnnMoeDistributeDispatchV5 via ops-transformer", source: operators/mc2_dispatch_cann_v3/}
-  - {id: "operator:mc2_combine_add_rmsnorm_cann", title: "npu_moe_distribute_combine_add_rms_norm", source: operators/mc2_combine_add_rmsnorm_cann/}
-  - {id: "operator:alltoallv_gmm_cann", title: "npu_alltoallv_gmm / npu_gmm_alltoallv", source: operators/alltoallv_gmm_cann/}
-  - {id: "operator:alltoallv_quant_gmm_cann", title: "npu_alltoallv_quant_gmm (MXFP8)", source: operators/alltoallv_quant_gmm_cann/}
-  - {id: "operator:mc2_fsdpturbo", title: "dispatcher_mc2 (fsdp_turbo)", source: operators/mc2_fsdpturbo/}
-  - {id: "operator:ep_gmm_fused_lueelu", title: "deep_ep_experimental.ep_gmm_fused", source: operators/ep_gmm_fused_lueelu/}
-  - {id: "operator:deepep_cann", title: "cann_ops_transformer ElasticBuffer", source: operators/deepep_cann/}
-  - {id: "operator:deepep_ascend", title: "deep_ep.EPBuffer (ascendep)", source: operators/deepep_ascend/}
-  - {id: "operator:deepep_v2_ascend", title: "deep_ep.ElasticBuffer (DeepEP_9283)", source: operators/deepep_v2_ascend/}
-  - {id: "operator:deepep_lueelu", title: "deep_ep.ElasticBuffer Mesh+Clos (lueelu fork)", source: operators/deepep_lueelu/}
-  - {id: "operator:deepep_direct_lueelu", title: "deep_ep.backends.direct.api (lueelu fork)", source: operators/deepep_direct_lueelu/}
-  - {id: "operator:deepep_sglang", title: "CamMoeDispatchNormal / CombineNormal", source: operators/deepep_sglang/}
-  - {id: "operator:megamoe_cann", title: "cann_ops_transformer.ops.mega_moe (A16W16)", source: operators/megamoe_cann/}
-  - {id: "operator:megamoe_lueelu", title: "bf16_mega_moe (ascendep)", source: operators/megamoe_lueelu/}
-  - {id: "operator:megamoe_fsdpturbo", title: "get_mega_moe_forward_fn (fsdp_turbo)", source: operators/megamoe_fsdpturbo/}
-  - {id: "operator:megamoe_td", title: "MegaMoEFunction.apply (ascendep)", source: operators/megamoe_td/}
-  - {id: "operator:megamoe_deepgemm_ascend", title: "deep_gemm.fp8_fp4_mega_moe", source: operators/megamoe_deepgemm_ascend/}
-  - {id: "operator:moonep", title: "npu_patch.Buffer dispatch/combine (UDMA)", source: operators/moonep/}
-  - {id: "operator:moonep_dynamic_planner", title: "MoonEP dev_npu planner", source: operators/moonep_dynamic_planner/}
-  - {id: "operator:moonep_server_dedup", title: "MoonEP dev_server_dedup buffer", source: operators/moonep_server_dedup/}
-  - {id: "operator:dispatch_ffn_combine_vllm_ascend", title: "torch.ops._C_ascend.dispatch_ffn_combine", source: operators/dispatch_ffn_combine_vllm_ascend/}
-  - {id: "operator:dispatch_ffn_combine_sglang", title: "sgl-kernel-npu FuseMode.DISPATCH_FFN_COMBINE", source: operators/dispatch_ffn_combine_sglang/}
-  - {id: "operator:fused_deep_moe_sglang", title: "sgl-kernel-npu FuseMode.FUSED_DEEP_MOE", source: operators/fused_deep_moe_sglang/}
-
-# CANN / PyTorch / torch_npu triples.  Never "latest": the doctor compares what
-# it can read from the host against these rows and reports an unknown triple as
-# skip (not pass), because an unlisted pairing is exactly the situation that
-# produces "works until it silently does not".
+- id: l0_memory
+  title: Local memory movement (MEM-001..004)
+  source: baselines/l0/memory/
+- id: l0_transport
+  title: Native transport, one mechanism per case (LINK-001..013)
+  source: baselines/l0/transport/
+- id: l0_collectives
+  title: Communication execution, HCCL accelerator modes (EXEC-001..006)
+  source: baselines/l0/collectives/
+- id: l0_hardware
+  title: Framework collectives through torch HCCL (HW-001..006)
+  source: baselines/l0/collectives/torch_hccl.py
+- id: l0_compute
+  title: Standalone GMM / SwiGLU compute (HW-010..011)
+  source: baselines/l0/compute/
+- id: l0_overlap
+  title: Concurrent communication and compute (OVERLAP-001..009)
+  source: baselines/l0/overlap/
+- id: l0_topology
+  title: Device and topology discovery
+  source: baselines/l0/topology/
+- id: l0_verification
+  title: HCCL/HCOMM log path verification
+  source: baselines/l0/verification/
+- id: profiling
+  title: msprof capture and overlap timelines
+  source: profiling/
+- id: reporting
+  title: Coverage matrix, charts and CSV aggregation
+  source: reporting/
+- id: multinode
+  title: Multi-node launch over the HCCL fabric (EP64/EP128)
+  source: launchers/
+- id: operator:allgather_hccl
+  title: torch.distributed all_gather / reduce_scatter
+  source: operators/allgather_hccl/
+- id: operator:allgather_megatron
+  title: MoEAllGatherTokenDispatcher (ascendep)
+  source: operators/allgather_megatron/
+- id: operator:allgather_fsdpturbo
+  title: all_gather_experts_forward_fn (fsdp_turbo)
+  source: operators/allgather_fsdpturbo/
+- id: operator:allgather_overlap_mindspeed
+  title: MoELayerOverlapAllGather (MindSpeed)
+  source: operators/allgather_overlap_mindspeed/
+- id: operator:alltoall_hccl
+  title: torch.distributed all_to_all_single
+  source: operators/alltoall_hccl/
+- id: operator:alltoall_megatron
+  title: MoEAlltoAllTokenDispatcher (ascendep)
+  source: operators/alltoall_megatron/
+- id: operator:alltoall_fsdpturbo
+  title: all2all_experts_forward_fn (fsdp_turbo)
+  source: operators/alltoall_fsdpturbo/
+- id: operator:fused_fsdpturbo
+  title: fused all2all_experts_forward_fn (fsdp_turbo)
+  source: operators/fused_fsdpturbo/
+- id: operator:chunkmoe_fsdpturbo
+  title: chunkmoe_experts_forward_fn (fsdp_turbo)
+  source: operators/chunkmoe_fsdpturbo/
+- id: operator:domino_fsdpturbo
+  title: get_domino_experts_forward_fn (fsdp_turbo)
+  source: operators/domino_fsdpturbo/
+- id: operator:hierarchical_alltoallv_mindspeed
+  title: MoELayerOverlapAll2All hierarchical (MindSpeed)
+  source: operators/hierarchical_alltoallv_mindspeed/
+- id: operator:mc2_dispatch_cann_v1
+  title: npu_moe_distribute_dispatch / combine (torch_npu)
+  source: operators/mc2_dispatch_cann_v1/
+- id: operator:mc2_dispatch_cann
+  title: npu_moe_distribute_dispatch_v2 / combine_v2
+  source: operators/mc2_dispatch_cann/
+- id: operator:mc2_dispatch_cann_v3
+  title: aclnnMoeDistributeDispatchV5 via ops-transformer
+  source: operators/mc2_dispatch_cann_v3/
+- id: operator:mc2_combine_add_rmsnorm_cann
+  title: npu_moe_distribute_combine_add_rms_norm
+  source: operators/mc2_combine_add_rmsnorm_cann/
+- id: operator:alltoallv_gmm_cann
+  title: npu_alltoallv_gmm / npu_gmm_alltoallv
+  source: operators/alltoallv_gmm_cann/
+- id: operator:alltoallv_quant_gmm_cann
+  title: npu_alltoallv_quant_gmm (MXFP8)
+  source: operators/alltoallv_quant_gmm_cann/
+- id: operator:mc2_fsdpturbo
+  title: dispatcher_mc2 (fsdp_turbo)
+  source: operators/mc2_fsdpturbo/
+- id: operator:ep_gmm_fused_lueelu
+  title: deep_ep_experimental.ep_gmm_fused
+  source: operators/ep_gmm_fused_lueelu/
+- id: operator:deepep_cann
+  title: cann_ops_transformer ElasticBuffer
+  source: operators/deepep_cann/
+- id: operator:deepep_ascend
+  title: deep_ep.EPBuffer (ascendep)
+  source: operators/deepep_ascend/
+- id: operator:deepep_v2_ascend
+  title: deep_ep.ElasticBuffer (DeepEP_9283)
+  source: operators/deepep_v2_ascend/
+- id: operator:deepep_lueelu
+  title: deep_ep.ElasticBuffer Mesh+Clos (lueelu fork)
+  source: operators/deepep_lueelu/
+- id: operator:deepep_direct_lueelu
+  title: deep_ep.backends.direct.api (lueelu fork)
+  source: operators/deepep_direct_lueelu/
+- id: operator:deepep_sglang
+  title: CamMoeDispatchNormal / CombineNormal
+  source: operators/deepep_sglang/
+- id: operator:megamoe_cann
+  title: cann_ops_transformer.ops.mega_moe (A16W16)
+  source: operators/megamoe_cann/
+- id: operator:megamoe_lueelu
+  title: bf16_mega_moe (ascendep)
+  source: operators/megamoe_lueelu/
+- id: operator:megamoe_fsdpturbo
+  title: get_mega_moe_forward_fn (fsdp_turbo)
+  source: operators/megamoe_fsdpturbo/
+- id: operator:megamoe_td
+  title: MegaMoEFunction.apply (ascendep)
+  source: operators/megamoe_td/
+- id: operator:megamoe_deepgemm_ascend
+  title: deep_gemm.fp8_fp4_mega_moe
+  source: operators/megamoe_deepgemm_ascend/
+- id: operator:moonep
+  title: npu_patch.Buffer dispatch/combine (UDMA)
+  source: operators/moonep/
+- id: operator:moonep_dynamic_planner
+  title: MoonEP dev_npu planner
+  source: operators/moonep_dynamic_planner/
+- id: operator:moonep_server_dedup
+  title: MoonEP dev_server_dedup buffer
+  source: operators/moonep_server_dedup/
+- id: operator:dispatch_ffn_combine_vllm_ascend
+  title: torch.ops._C_ascend.dispatch_ffn_combine
+  source: operators/dispatch_ffn_combine_vllm_ascend/
+- id: operator:dispatch_ffn_combine_sglang
+  title: sgl-kernel-npu FuseMode.DISPATCH_FFN_COMBINE
+  source: operators/dispatch_ffn_combine_sglang/
+- id: operator:fused_deep_moe_sglang
+  title: sgl-kernel-npu FuseMode.FUSED_DEEP_MOE
+  source: operators/fused_deep_moe_sglang/
 compatibility:
   schema_version: 1
-  note: >-
-    status=documented means the pairing comes from the vendor release matrix and
-    has not been re-verified in this repository; status=probed means the doctor
-    recorded it on this machine.  soc lists what the release is documented for;
-    the doctor only compares strings it actually read (npu-smi / version.cfg).
+  note: status=documented means the pairing comes from the vendor release matrix and has not been re-verified
+    in this repository; status=probed means the doctor recorded it on this machine.  soc lists what the
+    release is documented for; the doctor only compares strings it actually read (npu-smi / version.cfg).
   rows:
-    - id: cann-8.2-torch-2.6
-      cann: "8.2.RC1"
-      torch: "2.6.0"
-      torch_npu: "2.6.0.post3"
-      soc: [Ascend910B, Ascend910_93, Ascend950]
-      status: documented
-      source_url: https://github.com/Ascend/pytorch
-      evidence: >-
-        Ascend/pytorch pairing for PyTorch 2.6.0 (torch_npu 2.6.0.post3 targets
-        CANN 8.2.RC1).  Confirm against the site's CANN release notes before
-        rollout; this repository has not recorded a run on this triple.
-    - id: cann-8.1-torch-2.5
-      cann: "8.1.RC1"
-      torch: "2.5.1"
-      torch_npu: "2.5.1.post1"
-      soc: [Ascend910B, Ascend910_93]
-      status: documented
-      source_url: https://github.com/Ascend/pytorch
-      evidence: >-
-        Ascend/pytorch pairing for PyTorch 2.5.1.  Listed so the doctor can name
-        an older but coherent stack instead of guessing at a mixed one.
-    - id: cpu-torch-2.6
-      cann: null
-      torch: "2.6.0"
-      torch_npu: null
-      soc: []
-      status: probed
-      source_url: https://github.com/pytorch/pytorch
-      evidence: >-
-        CPU venv used by tests/dependencies: torch 2.6.0+cpu, numpy 2.2.6,
-        PyYAML 6.0.4, jsonschema 4.26.0, no torch_npu, no CANN.  Every NPU
-        dependency is expected to fail on this host.
-  policy:
-    - "The torch base version is shared by the CPU and NPU paths; only the wheel index and the +cpu local tag differ."
-    - "torch_npu must match the installed torch exactly; a mismatch is reported as warn by the doctor and blocks every npu capability group."
-    - "A triple that matches no row is skip, never pass."
-
-# ---------------------------------------------------------------------------
-# Dependencies
-# ---------------------------------------------------------------------------
-dependencies:
-  # -- A. Python and CPU base stack ----------------------------------------
-  - id: python
-    category: A
-    kind: host_provided
-    version: ">=3.10,<3.13"
-    required_by: *all
-    source_url: https://www.python.org/downloads/
-    commit: null
-    license: PSF-2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      The interpreter comes from the image or from the venv the operator creates;
-      it is not a wheel, and installing a second interpreter inside a running
-      environment would silently change what ``python`` means to the launcher.
-    manual_step: >-
-      Provision CPython 3.10-3.12 (pyenv 3.10.8, the distribution package, or the
-      CPU venv at ascend_ep/ep/.cpu-venv) and run every command from the SCRIPTS
-      root so that ``common``, ``baselines`` and ``operators`` resolve.
-    install:
-      - "# host/venv only: pyenv install 3.10.8 && pyenv local 3.10.8"
-      - "python -c 'import sys; print(sys.version_info[:2])'"
-    check:
-      type: python_version
-    runtime_paths:
-      - "<sys.executable>"
-      - "$VIRTUAL_ENV"
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      pyproject.toml declares requires-python >=3.10; 3.13 is excluded because the
-      pinned torch 2.6 release has no 3.13 CPU wheel.  The code uses
-      ``str | None`` annotations, so 3.9 is genuinely unsupported.
-    manual_step_owner: host image
-
-  - id: torch
-    category: A
-    kind: pip
-    version: "==2.6.0"
-    required_by: *all
-    source_url: https://github.com/pytorch/pytorch
-    commit: null
-    license: BSD-3-Clause
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "pip install --no-index --find-links $WHEELHOUSE torch==2.6.0"
-      - "# online CPU wheel: pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu"
-    check:
-      type: python_module
-      module: torch
-      distribution: torch
-      import: true
-    runtime_paths: []
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      The pinned base version is shared by the CPU and NPU paths; the CPU path
-      installs the +cpu local-tag wheel, which PEP 440 accepts for ``==2.6.0``.
-      The NPU path installs the same 2.6.0 torch next to torch_npu 2.6.0.post3.
-
-  - id: numpy
-    category: A
-    kind: pip
-    version: "==2.2.6"
-    required_by: *all
-    source_url: https://github.com/numpy/numpy
-    commit: null
-    license: BSD-3-Clause
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "pip install --no-index --find-links $WHEELHOUSE numpy==2.2.6"
-    check:
-      type: python_module
-      module: numpy
-      distribution: numpy
-      import: true
-    runtime_paths: []
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      torch 2.6 requires numpy < 2.3; the pin is the version the CPU venv was
-      validated with, not the newest release.
-
-  - id: pyyaml
-    category: A
-    kind: pip
-    version: "==6.0.4"
-    required_by: *all
-    source_url: https://github.com/yaml/pyyaml
-    commit: null
-    license: MIT
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "pip install --no-index --find-links $WHEELHOUSE PyYAML==6.0.4"
-    check:
-      type: python_module
-      module: yaml
-      distribution: PyYAML
-      import: true
-    runtime_paths: []
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      Imported as ``yaml``; the distribution name is PyYAML.  The manifest, every
-      config and the operator registry are YAML, so a missing PyYAML blocks the
-      entire benchmark.
-
-  - id: jsonschema
-    category: A
-    kind: pip
-    version: "==4.26.0"
-    required_by: *all
-    source_url: https://github.com/python-jsonschema/jsonschema
-    commit: null
-    license: MIT
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "pip install --no-index --find-links $WHEELHOUSE jsonschema==4.26.0"
-    check:
-      type: python_module
-      module: jsonschema
-      distribution: jsonschema
-      import: true
-    runtime_paths: []
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      Result records are validated against schemas/*.json before they are
-      aggregated; without jsonschema the runner cannot certify a result file.
-
-  - id: pandas
-    category: A
-    kind: pip
-    version: "==2.2.3"
-    required_by: [reporting]
-    source_url: https://github.com/pandas-dev/pandas
-    commit: null
-    license: BSD-3-Clause
-    optional: true
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "pip install --no-index --find-links $WHEELHOUSE pandas==2.2.3"
-    check:
-      type: python_module
-      module: pandas
-      distribution: pandas
-      import: true
-    runtime_paths: []
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      Optional: used for large tabular aggregation of results.  Absence degrades
-      the reporting group to ``degraded`` (warn), it never turns into a pass.  The
-      probe imports it, because an installed-but-broken pandas would otherwise
-      look identical to a working one.
-
-  - id: matplotlib
-    category: A
-    kind: pip
-    version: "==3.10.9"
-    required_by: [reporting]
-    source_url: https://github.com/matplotlib/matplotlib
-    commit: null
-    license: PSF-2.0
-    optional: true
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "pip install --no-index --find-links $WHEELHOUSE matplotlib==3.10.9"
-    check:
-      type: python_module
-      module: matplotlib
-      distribution: matplotlib
-      import: false
-    runtime_paths: []
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      Only reporting/charts.py imports it, lazily.  The probe reads the
-      distribution version instead of importing, because importing matplotlib
-      selects a GUI backend.
-
-  # -- B. CANN runtime, toolkit and the PyTorch device bridge --------------
-  - id: npu-driver
-    category: B
-    kind: host_provided
-    version: ">=24.1.RC1"
-    required_by: *npu_only
-    source_url: https://www.hiascend.com/hardware/firmware-drivers
-    commit: null
-    license: Proprietary (Huawei)
-    optional: false
-    installable: false
-    install_reason: >-
-      A driver is kernel code.  It must be installed on the host and cannot be
-      installed, upgraded or reloaded from inside a container; pretending
-      otherwise is how a container ends up with libascendcl and no devices.
-    manual_step: >-
-      On the host only: install Ascend-hdk-<soc>-npu-driver_<ver>_linux-*.run and
-      the matching firmware, reset the devices, then confirm ``npu-smi info``
-      lists the chips and /dev/davinci* exists.  Never run this from the
-      container -- scripts/install_deps.sh refuses and prints this step.
-    install:
-      - "# host only, refused by this repository: ./Ascend-hdk-<soc>-npu-driver_<ver>_linux.run --full"
-      - "npu-smi info   # host: after the driver reset"
-    check:
-      type: driver
-      paths:
-        - /usr/local/Ascend/driver/version.info
-        - /usr/local/Ascend/driver
-      devices:
-        - /dev/davinci_manager
-        - /dev/devmm_svm
-    runtime_paths:
-      - /usr/local/Ascend/driver/lib64
-      - /usr/local/Ascend/driver/tools
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      Version floor only: driver and CANN are paired per vendor release, and this
-      repository does not pin a driver revision.  The doctor records the observed
-      version as evidence and never enforces the floor as a hard failure.
-    manual_step_owner: host
-
-  - id: cann-toolkit
-    category: B
-    kind: host_provided
-    version: ">=8.1.RC1,<8.4"
-    required_by: *npu_only
-    source_url: https://www.hiascend.com/cann
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      The toolkit is a vendor .run package that installs under /usr/local/Ascend
-      and links against the host driver.  Containers inherit it from the host
-      image by bind mount; installing another copy inside the container would
-      shadow the host's libascendcl.
-    manual_step: >-
-      On the host: verify the sha256 of Ascend-cann-toolkit_<ver>_linux-<arch>.run
-      for the target SoC, run it with --install, then bind-mount /usr/local/Ascend
-      into the container and ``source /usr/local/Ascend/ascend-toolkit/set_env.sh``.
-    install:
-      - "# host only: ./Ascend-cann-toolkit_8.2.RC1_linux-aarch64.run --install"
-      - "source /usr/local/Ascend/ascend-toolkit/set_env.sh"
-    check:
-      type: cann_home
-      version_file: version.cfg
-    runtime_paths:
-      - /usr/local/Ascend/ascend-toolkit/latest
-      - $ASCEND_HOME_PATH/lib64
-      - $ASCEND_HOME_PATH/runtime/lib64
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      The doctor reads the version from $ASCEND_HOME_PATH/version.cfg (or
-      /usr/local/Ascend/ascend-toolkit/latest/version.cfg), reports the raw file
-      as evidence, and refuses to guess when the file is absent.
-    manual_step_owner: host
-
-  - id: torch-npu
-    category: B
-    kind: pip
-    version: "==2.6.0.post3"
-    required_by: *npu_only
+  - id: cann-8.2-torch-2.6
+    cann: 8.2.RC1
+    torch: 2.6.0
+    torch_npu: 2.6.0.post3
+    soc:
+    - Ascend910B
+    - Ascend910_93
+    - Ascend950
+    status: documented
     source_url: https://github.com/Ascend/pytorch
-    commit: null
-    license: BSD-3-Clause
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "# wheel from the site's Ascend mirror or from the CANN release package:"
-      - "pip install --no-index --find-links $WHEELHOUSE torch_npu==2.6.0.post3"
-    check:
-      type: python_module
-      module: torch_npu
-      distribution: torch-npu
-      import: false
-    runtime_paths:
-      - "<site-packages>/torch_npu"
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.2.RC1"]
-    notes: >-
-      Must match the installed torch exactly (2.6.0) and the CANN row.  The probe
-      does not import torch_npu: importing it loads libascendcl and initialises a
-      device, which a diagnostic run must not do on a CPU-only host.
-
-  - id: cann-ops-transformer
-    category: B
-    kind: native_build
-    version: "68a67e1"
-    required_by: *ops_cann_transformer
-    source_url: https://gitcode.com/cann/ops-transformer
-    commit: 68a67e130417593f37ea3cece1ebfb4be366b95f
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "git clone https://gitcode.com/cann/ops-transformer.git"
-      - "git -C ops-transformer checkout 68a67e130417593f37ea3cece1ebfb4be366b95f"
-      - "pip install --no-build-isolation ./ops-transformer"
-    check:
-      type: python_module
-      module: cann_ops_transformer
-      distribution: cann-ops-transformer
-      import: false
-    runtime_paths:
-      - "<site-packages>/cann_ops_transformer"
-    supported_soc: [Ascend910_93, Ascend950]
-    supported_cann: ["8.2.RC1", "8.3.RC1"]
-    notes: >-
-      The context Torch extension compiles Ascend C kernels, so the build needs
-      the CANN toolkit plus ccec on the target.  ``pinned by commit, not by a
-      version string``: ops-transformer has no stable release tag.
-
-  - id: hccl
-    category: B
-    kind: host_provided
-    version: ">=8.1.RC1"
-    required_by: [l0_transport, l0_collectives, l0_hardware, l0_overlap, *ops_npu]
-    source_url: https://gitcode.com/cann/hccl
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      libhccl.so is part of the CANN toolkit.  Copying a single .so between hosts
-      produces ABI drift against libascendcl; the fix is to install or upgrade
-      CANN on the host.
-    manual_step: >-
-      Install or upgrade the CANN toolkit on the host, re-source
-      set_env.sh on every rank, and confirm libhccl.so resolves (LD_LIBRARY_PATH
-      must contain $ASCEND_HOME_PATH/lib64).
-    install:
-      - "# comes with the CANN toolkit; verify, do not copy:"
-      - "python -c \"import ctypes.util; print(ctypes.util.find_library('hccl'))\""
-    check:
-      type: shared_library
-      names: [libhccl.so, libhccl.dll]
-    runtime_paths:
-      - $ASCEND_HOME_PATH/lib64
-      - $ASCEND_HOME_PATH/runtime/lib64
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      Every collective result depends on this library resolving at run time; the
-      probe reports both ctypes.util.find_library and an explicit LD_LIBRARY_PATH
-      scan because find_library ignores LD_LIBRARY_PATH on several platforms.
-    manual_step_owner: host
-
-  - id: npu-smi
-    category: B
-    kind: binary
-    version: ">=24.1.RC1"
-    required_by: [l0_topology, profiling]
-    source_url: https://www.hiascend.com/cann
-    commit: null
-    license: Proprietary (Huawei)
-    optional: false
-    installable: false
-    install_reason: >-
-      npu-smi is installed by the NPU driver package under
-      /usr/local/Ascend/driver/tools.  It is a host tool with no pip equivalent.
-    manual_step: >-
-      Install the NPU driver on the host; npu-smi arrives with it.  Inside the
-      container it is visible only if /usr/local/Ascend/driver is bind-mounted.
-    install:
-      - "# host only, part of the driver package: ls /usr/local/Ascend/driver/tools/npu-smi"
-      - "npu-smi info"
-    check:
-      type: binary
-      binary: npu-smi
-      version_args: ["--version"]
-      parse: npu_smi
-      extra_paths:
-        - /usr/local/Ascend/driver/tools
-    runtime_paths:
-      - /usr/local/Ascend/driver/tools
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      The SoC name is parsed from ``npu-smi info`` output and recorded with its
-      raw source.  When npu-smi is absent the SoC stays unknown: the doctor does
-      not fall back to a constant.
-    manual_step_owner: host
-
-  - id: ascendc-toolchain
-    category: B
-    kind: host_provided
-    version: ">=8.1.RC1"
-    required_by: [l0_transport, l0_overlap, "operator:mc2_dispatch_cann_v3", "operator:megamoe_cann"]
-    source_url: https://www.hiascend.com/cann
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      ccec (the Ascend C compiler) ships inside the CANN toolkit under
-      compiler/ccec_compiler/bin.  There is no standalone package, and a
-      mismatched compiler produces kernels the runtime rejects at load time.
-    manual_step: >-
-      Install the CANN toolkit on the host, source set_env.sh, then verify
-      ``ccec --version`` resolves.  Custom Ascend C builds (ops-transformer,
-      ASC-COMM) cannot run without it.
-    install:
-      - "# comes with the CANN toolkit: source $ASCEND_HOME_PATH/set_env.sh"
-      - "ccec --version"
-    check:
-      type: toolchain
-      binaries: [ccec]
-      env: [ASCEND_HOME_PATH]
-      subdirs:
-        - compiler/ccec_compiler/bin
-        - compiler/bin
-    runtime_paths:
-      - $ASCEND_HOME_PATH/compiler/ccec_compiler/bin
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      The compiler is a host-installed CANN component even when the build runs in
-      a container; bind-mounting /usr/local/Ascend is the supported pattern.
-    manual_step_owner: host
-
-  # -- C. Communication runtimes and custom kernels ------------------------
-  - id: hcomm
-    category: C
-    kind: host_provided
-    version: ">=8.1.RC1"
-    required_by: [l0_transport, l0_collectives, l0_overlap, *ops_moonep, *ops_deepep]
-    source_url: https://gitcode.com/cann/hcomm
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      HCOMM is the channel/engine layer below HCCL and arrives with the CANN
-      toolkit.  It has no independent release artifact, so there is nothing to
-      install separately.
-    manual_step: >-
-      Install or upgrade the CANN toolkit on the host and re-source set_env.sh.
-      The UB channel families the L0 transport cases name (AivUrmaChannel,
-      AicpuTsUrmaChannel, CcuUrmaChannel) are created by this library, so a
-      missing libhcomm.so makes every URMA/UB case unobservable.
-    install:
-      - "# comes with the CANN toolkit; verify, do not copy:"
-      - "python -c \"import ctypes.util; print(ctypes.util.find_library('hcomm'))\""
-    check:
-      type: shared_library
-      names: [libhcomm.so, libhcomm.dll]
-    runtime_paths:
-      - $ASCEND_HOME_PATH/lib64
-      - $ASCEND_HOME_PATH/runtime/lib64
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      The L0 transport layers report the URMA channel family and the
-      CommProtocol value separately; both come from this library, so the doctor
-      treats its absence as a hard failure for the transport family.
-    manual_step_owner: host
-
-  - id: shmem
-    category: C
-    kind: native_build
-    version: "8.2.RC1"
-    required_by: [l0_transport, l0_overlap]
-    source_url: https://gitcode.com/cann/shmem
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "git clone https://gitcode.com/cann/shmem.git"
-      - "git -C shmem checkout <release tag that matches the CANN row>"
-      - "cd shmem && bash build.sh && pip install --no-build-isolation ./build/*.whl"
-    check:
-      type: python_module
-      module: shmem
-      distribution: shmem
-      import: false
-      libraries: [libshmem.so, libascshmem.so]
-    runtime_paths:
-      - <site-packages>/shmem
-      - $ASCEND_HOME_PATH/lib64
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.2.RC1", "8.3.RC1"]
-    notes: >-
-      commit is null on purpose: this repository has not recorded a SHMEM
-      revision, and inventing one would be worse than asking for the release tag
-      that matches the CANN row.  The build needs the CANN toolkit plus a C++17
-      compiler, and the runtime needs a bootstrap/rendezvous configuration that
-      baselines/l0/shmem/runtime.py reads from the config.
-
-  - id: npu-patch
-    category: C
-    kind: native_build
-    version: "b4127ba"
-    required_by: *ops_moonep
-    source_url: https://gitcode.com/Ascend/MoonEP
-    commit: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
-    license: Not declared upstream (MoonEP research checkout)
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "git clone https://gitcode.com/Ascend/MoonEP.git && git -C MoonEP checkout b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f"
-      - "cd MoonEP && pip install --no-build-isolation ./npu_patch"
-    check:
-      type: python_module
-      module: npu_patch
-      distribution: npu_patch
-      import: false
-      libraries: [libnpu_patch.so]
-    runtime_paths:
-      - <site-packages>/npu_patch
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.2.RC1", "8.3.RC1"]
-    notes: >-
-      AOT-compiles Ascend C kernels on the target, so it needs ccec and a CANN
-      release that matches torch_npu.  The MoonEP branches are separate: dev_npu
-      is pinned at b4127ba, dev_server_dedup at d8495c4.
-
-  - id: deep-ep
-    category: C
-    kind: native_build
-    version: "83252a5"
-    required_by: *ops_deepep_fork
-    source_url: https://github.com/lueelu/DeepEP
-    commit: 83252a54d2363734a706a7dd8368bebc3094af5a
-    license: MIT (inherited from deepseek-ai/DeepEP; verify in the fork)
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "git clone https://github.com/lueelu/DeepEP.git && git -C DeepEP checkout 83252a54d2363734a706a7dd8368bebc3094af5a"
-      - "cd DeepEP && bash build.sh   # fork build script; check the checkout's README"
-      - "cd DeepEP && pip install --no-build-isolation ."
-    check:
-      type: python_module
-      module: deep_ep
-      distribution: deep_ep
-      import: false
-      libraries: [libdeep_ep.so]
-    runtime_paths:
-      - <site-packages>/deep_ep
-      - $ASCEND_HOME_PATH/lib64
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.2.RC1", "8.3.RC1"]
-    notes: >-
-      Two incompatible DeepEP forks are pinned in this catalog (see deep-ep-v2).
-      They both install the module name ``deep_ep``, so one environment serves
-      one operator family; the doctor reports whichever distribution is present
-      and names the checkout it belongs to in the evidence.
-
-  - id: deep-ep-v2
-    category: C
-    kind: native_build
-    version: "69090a1"
-    required_by: ["operator:deepep_v2_ascend"]
-    source_url: https://gitcode.com/lishaoxun/DeepEP_9283
-    commit: 69090a120cfee06be431a79873692677bc07b042
-    license: MIT (inherited from deepseek-ai/DeepEP; verify in the fork)
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "git clone https://gitcode.com/lishaoxun/DeepEP_9283.git && git -C DeepEP_9283 checkout 69090a120cfee06be431a79873692677bc07b042"
-      - "cd DeepEP_9283 && bash build.sh && pip install --no-build-isolation ."
-    check:
-      type: python_module
-      module: deep_ep
-      distribution: deep_ep
-      import: false
-      libraries: [libdeep_ep.so]
-    runtime_paths:
-      - <site-packages>/deep_ep
-    supported_soc: [Ascend910_93, Ascend950]
-    supported_cann: ["8.2.RC1", "8.3.RC1"]
-    notes: >-
-      Provides deep_ep.ElasticBuffer for the V2 dispatch/combine adapters.  Same
-      module name as deep-ep: install one of the two, never both.
-
-  - id: deep-ep-experimental
-    category: C
-    kind: python_import
-    version: "24ff84d"
-    required_by: ["operator:ep_gmm_fused_lueelu"]
-    source_url: https://github.com/penn513/ascendep
-    commit: 24ff84d3ab8c01e1e2071802465173e624e1f89d
-    license: Not declared upstream (ascendep research checkout)
-    optional: false
-    installable: false
-    install_reason: >-
-      Ships inside the pinned ascendep checkout.  Installing a second copy would
-      shadow the pinned tree that operators/ascendep.py verifies by commit.
-    manual_step: >-
-      Set EP_ASCENDEP_ROOT to a checkout at 24ff84d and make sure that path
-      precedes site-packages on sys.path; operators/ascendep.py refuses a dirty
-      or re-pointed tree.
-    install:
-      - "export EP_ASCENDEP_ROOT=/path/to/ascendep   # commit 24ff84d, clean ep/ tree"
-    check:
-      type: python_module
-      module: deep_ep_experimental
-      import: false
-      requires_env: EP_ASCENDEP_ROOT
-    runtime_paths:
-      - $EP_ASCENDEP_ROOT
-    supported_soc: [Ascend910B, Ascend910_93]
-    supported_cann: ["8.2.RC1"]
-    notes: >-
-      ep_gmm_fused carries its own tiling module
-      (deep_ep_experimental.ep_gmm_fused._tiling), so a stale copy produces an
-      import error rather than a wrong number.
-
-  - id: moonep-runtime
-    category: C
-    kind: python_import
-    version: "b4127ba"
-    required_by: *ops_moonep
-    source_url: https://gitcode.com/Ascend/MoonEP
-    commit: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
-    license: Not declared upstream (MoonEP research checkout)
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "git clone https://gitcode.com/Ascend/MoonEP.git && git -C MoonEP checkout b4127ba"
-      - "pip install --no-build-isolation -e MoonEP"
-    check:
-      type: python_module
-      module: moonep
-      import: false
-    runtime_paths:
-      - <site-packages>/moonep
-      - $EP_ASCENDEP_ROOT
-    supported_soc: [Ascend910B, Ascend910_93]
-    supported_cann: ["8.2.RC1"]
-    notes: >-
-      One checkout serves one branch: dev_npu (b4127ba) for the planner and the
-      UDMA buffer, dev_server_dedup (d8495c4) for the dedup buffer.
-
-  - id: fsdp-turbo
-    category: C
-    kind: python_import
-    version: "24ff84d"
-    required_by: *ops_fsdpturbo
-    source_url: https://github.com/penn513/ascendep
-    commit: 24ff84d3ab8c01e1e2071802465173e624e1f89d
-    license: Not declared upstream (ascendep research checkout)
-    optional: false
-    installable: false
-    install_reason: >-
-      Provided by the ascendep checkout (EP_ASCENDEP_ROOT); there is no
-      standalone wheel and no independent version to pin.
-    manual_step: >-
-      Install ascendep-checkout and set EP_ASCENDEP_ROOT; fsdp_turbo becomes
-      importable from that tree after the launcher prepends it to sys.path.
-    install:
-      - "# provided by the ascendep checkout: see the ascendep-checkout entry"
-      - "python -c \"import fsdp_turbo; print(fsdp_turbo.__file__)\""
-    check:
-      type: python_module
-      module: fsdp_turbo
-      import: false
-      requires_env: EP_ASCENDEP_ROOT
-    runtime_paths:
-      - $EP_ASCENDEP_ROOT
-    supported_soc: [Ascend910B, Ascend910_93]
-    supported_cann: ["8.2.RC1"]
-    notes: >-
-      The fsdpturbo adapters call native forward functions that live in the same
-      checkout, so the module and the pinned commit are one unit.
-
-  - id: mega-moe
-    category: C
-    kind: python_import
-    version: "24ff84d"
-    required_by: *ops_megamoe
-    source_url: https://github.com/penn513/ascendep
-    commit: 24ff84d3ab8c01e1e2071802465173e624e1f89d
-    license: Not declared upstream (ascendep research checkout)
-    optional: false
-    installable: false
-    install_reason: >-
-      Provided by the ascendep checkout (EP_ASCENDEP_ROOT); no standalone
-      artifact exists.
-    manual_step: >-
-      Install ascendep-checkout and set EP_ASCENDEP_ROOT; mega_moe resolves from
-      that tree.
-    install:
-      - "# provided by the ascendep checkout: see the ascendep-checkout entry"
-    check:
-      type: python_module
-      module: mega_moe
-      import: false
-      requires_env: EP_ASCENDEP_ROOT
-    runtime_paths:
-      - $EP_ASCENDEP_ROOT
-    supported_soc: [Ascend910B, Ascend910_93]
-    supported_cann: ["8.2.RC1"]
-    notes: >-
-      bf16_mega_moe and MegaMoEFunction.apply are separate entry points over the
-      same kernel, which is why megamoe_lueelu, megamoe_fsdpturbo and megamoe_td
-      share this dependency.
-
-  - id: ascendep-checkout
-    category: C
-    kind: python_import
-    version: "24ff84d"
-    required_by: *ops_ascendep
-    source_url: https://github.com/penn513/ascendep
-    commit: 24ff84d3ab8c01e1e2071802465173e624e1f89d
-    license: Not declared upstream (research checkout); record the licence before redistribution
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "git clone https://github.com/penn513/ascendep.git"
-      - "git -C ascendep checkout 24ff84d3ab8c01e1e2071802465173e624e1f89d"
-      - "export EP_ASCENDEP_ROOT=$PWD/ascendep"
-    check:
-      type: ascendep_checkout
-      env: EP_ASCENDEP_ROOT
-      commit: 24ff84d3ab8c01e1e2071802465173e624e1f89d
-      marker: ep/runner.py
-    runtime_paths:
-      - $EP_ASCENDEP_ROOT
-    supported_soc: [Ascend910B, Ascend910_93]
-    supported_cann: ["8.2.RC1"]
-    notes: >-
-      operators/ascendep.py verifies both the commit and a clean ``ep/`` tree and
-      reports source_unavailable otherwise; the doctor performs the same check so
-      a dirty checkout is visible before a 18k-task run starts.
-
-  - id: asc-comm-kernels
-    category: C
-    kind: native_build
-    version: "ABI 1 (build id in build/manifest.json)"
-    required_by: [l0_transport, l0_overlap]
-    source_url: kernels/asc_comm/ (in this repository)
-    commit: null
-    license: Same as this repository
-    optional: false
-    installable: false
-    install_reason: >-
-      BLOCKED: kernels/asc_comm/ exists, but its device programs
-      (aiv/write_nbi/kernel.cpp and ccu/dsl/kernel.cpp) are not written, and the
-      CANN ASC-COMM toolchain (toolkit headers plus the CCU DSL frontend) is not
-      installed on any host reachable from this workstream.  build.sh exits
-      non-zero with that blocker; it never produces a library whose symbols only
-      return UNSUPPORTED.
-    manual_step: >-
-      On an Ascend host that has the CANN ASC-COMM toolchain: source set_env.sh,
-      write the device sources against the installed headers (checklists in
-      kernels/asc_comm/aiv/README.md and kernels/asc_comm/ccu/README.md), then run
-      ``bash kernels/asc_comm/build.sh --soc <soc>``.  The probe reads
-      build/manifest.json, so a build that did not link stays missing; see
-      dependencies/system/asc_comm.yaml for the blocker list.
-    install:
-      - "# BLOCKED until the device sources exist and the CANN ASC-COMM toolchain is installed"
-      - "source /usr/local/Ascend/ascend-toolkit/set_env.sh"
-      - "bash kernels/asc_comm/build.sh --soc Ascend950"
-    check:
-      type: kernel_artifact
-      root: kernels/asc_comm
-      build: build
-      manifest: manifest.json
-      libraries: [libasc_comm_kernels.so]
-      engines: [AIV, CCU]
-    runtime_paths:
-      - kernels/asc_comm/build
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.2.RC1", "8.3.RC1"]
-    notes: >-
-      BLOCKED is recorded, not papered over: the entry exists so the matrix says why
-      the transport family is degraded, instead of the case failing later as
-      "unsupported by the adapter".  The artifact contract is the project's own:
-      build/manifest.json names the library per engine, and
-      baselines/l0/transport/kernel_artifacts.py additionally resolves the ABI
-      symbols declared in common/abi.h.
-
-  - id: l0-native-bridges
-    category: C
-    kind: native_build
-    version: "in-repo"
-    required_by: [l0_memory, l0_transport, l0_overlap]
-    source_url: baselines/l0/transport/native/ (in this repository)
-    commit: null
-    license: Same as this repository
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "bash baselines/l0/transport/native/build.sh"
-      - "export EP_L0_TRANSPORT_LIBRARY=$PWD/baselines/l0/transport/native/build/libl0_transport_bridge.so"
-    check:
-      type: shared_library
-      names: [libl0_transport_bridge.so, libl0_mem.so, libep_l0_udma.so]
-      require_all: false
-      search:
-        - baselines/l0/transport/native/build
-        - baselines/l0/memory/native/build
-        - baselines/l0/shmem/native/build
-    runtime_paths:
-      - baselines/l0/transport/native/build
-      - baselines/l0/memory/native/build
-      - baselines/l0/shmem/native/build
-    supported_soc: ["*"]
-    supported_cann: ["8.2.RC1", "8.3.RC1"]
-    notes: >-
-      Three optional bridges, each with its own build.sh: the transport bridge
-      (LINK-001..011), the memory MTE/UB bridge (MEM-002/003) and the UDMA
-      endpoint (LINK-013 device variant).  A partial build is warn, not pass,
-      because the missing bridge is what turns those cases into dependency_missing.
-
-  # -- D. Multi-node launch and fabric -------------------------------------
-  - id: mpi
-    category: D
-    kind: binary
-    version: ">=4.1 (Open MPI) or >=3.4 (MPICH/Hydra)"
-    required_by: [multinode, l0_transport]
-    source_url: https://www.open-mpi.org/
-    commit: null
-    license: BSD-3-Clause (Open MPI) / MIT (MPICH)
-    optional: false
-    installable: true
-    install_reason: null
-    manual_step: null
-    install:
-      - "# needs root: pass --yes to scripts/install_deps.sh"
-      - "apt-get install -y openmpi-bin libopenmpi-dev"
-      - "# or, for a Hydra-based site: apt-get install -y mpich"
-    check:
-      type: binary
-      binary: mpirun
-      version_args: ["--version"]
-      parse: mpi
-    runtime_paths:
-      - /usr/lib/x86_64-linux-gnu/openmpi/bin
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      The doctor records the implementation (Open MPI / MPICH-Hydra / Intel MPI)
-      and the version line.  ``command -v mpirun`` is not evidence: the launch
-      flags, the hostfile syntax and the binding model differ per implementation,
-      and the multi-node scripts select flags from what the doctor reported.
-
-  - id: multinode-env
-    category: D
-    kind: host_provided
-    version: "deployment-managed"
-    required_by: [multinode]
-    source_url: launchers/ (in this repository)
-    commit: null
-    license: n/a (site configuration)
-    optional: false
-    installable: false
-    install_reason: >-
-      These are environment values for one deployment (rank addresses, visible
-      devices, control-plane port).  There is nothing to install; a wrong value
-      is a deployment error, not a missing package.
-    manual_step: >-
-      Export MASTER_ADDR, MASTER_PORT, ASCEND_RT_VISIBLE_DEVICES and
-      HCCL_IF_BASE_PORT on every node before the launcher runs, and keep them
-      identical across nodes that must join the same job.
-    install:
-      - "export MASTER_ADDR=<node0-ip> MASTER_PORT=6000"
-      - "export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7"
-    check:
-      type: env_var
-      names: [MASTER_ADDR, MASTER_PORT, ASCEND_RT_VISIBLE_DEVICES, HCCL_IF_BASE_PORT]
-      mode: all
-    runtime_paths: []
-    supported_soc: ["*"]
-    supported_cann: ["*"]
-    notes: >-
-      A single-node run does not need any of these; the multinode group is the
-      only group that requires them, so their absence fails exactly one row of
-      the matrix.
-    manual_step_owner: deployment
-
-  - id: hccl-config
-    category: D
-    kind: host_provided
-    version: "toolkit-managed"
-    required_by: [multinode, l0_collectives]
-    source_url: https://gitcode.com/cann/hccl
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      HCCL configuration selects the transport and the collective algorithm for a
-      site.  It is environment policy shipped with the deployment, and overriding
-      it from an installer would silently change what the L0 cases measure.
-    manual_step: >-
-      Set the site's HCCL_* values on every rank (HCCL_SOCKET_IFNAME,
-      HCCL_INTRA_ROCE_ENABLE, HCCL_BUFFSIZE, HCCL_ALGO, HCCL_OP_EXPANSION_MODE).
-      The L0 execution cases read them back as evidence for the requested
+    evidence: Ascend/pytorch pairing for PyTorch 2.6.0 (torch_npu 2.6.0.post3 targets CANN 8.2.RC1).  Confirm
+      against the site's CANN release notes before rollout; this repository has not recorded a run on
+      this triple.
+  - id: cann-8.1-torch-2.5
+    cann: 8.1.RC1
+    torch: 2.5.1
+    torch_npu: 2.5.1.post1
+    soc:
+    - Ascend910B
+    - Ascend910_93
+    status: documented
+    source_url: https://github.com/Ascend/pytorch
+    evidence: Ascend/pytorch pairing for PyTorch 2.5.1.  Listed so the doctor can name an older but coherent
+      stack instead of guessing at a mixed one.
+  - id: cpu-torch-2.6
+    cann: null
+    torch: 2.6.0
+    torch_npu: null
+    soc: []
+    status: probed
+    source_url: https://github.com/pytorch/pytorch
+    evidence: 'CPU venv used by tests/dependencies: torch 2.6.0+cpu, numpy 2.2.6, PyYAML 6.0.4, jsonschema
+      4.26.0, no torch_npu, no CANN.  Every NPU dependency is expected to fail on this host.'
+  policy:
+  - The torch base version is shared by the CPU and NPU paths; only the wheel index and the +cpu local
+    tag differ.
+  - torch_npu must match the installed torch exactly; a mismatch is reported as warn by the doctor and
+    blocks every npu capability group.
+  - A triple that matches no row is skip, never pass.
+  shmem_tags:
+    note: The SHMEM pin is a release tag, resolved to a commit at install time and recorded as evidence.
+      A CANN row without a tag is not installable.
+    8.2.RC1: 8.2.RC1
+    8.3.RC1: 8.3.RC1
+dependencies:
+- id: python
+  category: A
+  kind: host_provided
+  version: '>=3.10,<3.13'
+  required_by:
+  - l0_memory
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - l0_verification
+  - profiling
+  - reporting
+  - multinode
+  source_url: https://www.python.org/downloads/
+  commit: null
+  license: PSF-2.0
+  optional: false
+  installable: false
+  install_reason: The interpreter comes from the image or from the venv the operator creates; it is not
+    a wheel, and installing a second interpreter inside a running environment would silently change what
+    ``python`` means to the launcher.
+  manual_step: Provision CPython 3.10-3.12 (pyenv 3.10.8, the distribution package, or the CPU venv at
+    ascend_ep/ep/.cpu-venv) and run every command from the SCRIPTS root so that ``common``, ``baselines``
+    and ``operators`` resolve.
+  install:
+  - Provision CPython 3.10-3.12 (pyenv 3.10.8, the distribution package, or the CPU venv at ascend_ep/ep/.cpu-venv)
+    and run every command from the SCRIPTS root so that ``common``, ``baselines`` and ``operators`` resolve.
+  check:
+    type: python_version
+  runtime_paths:
+  - <sys.executable>
+  - $VIRTUAL_ENV
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: pyproject.toml declares requires-python >=3.10; 3.13 is excluded because the pinned torch 2.6
+    release has no 3.13 CPU wheel.  The code uses ``str | None`` annotations, so 3.9 is genuinely unsupported.
+  manual_step_owner: host image
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+    value: null
+    verify: null
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Provision CPython 3.10-3.12 (pyenv 3.10.8, the distribution package, or the CPU venv at ascend_ep/ep/.cpu-venv)
+      and run every command from the SCRIPTS root so that ``common``, ``baselines`` and ``operators``
+      resolve.
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: torch
+  category: A
+  kind: pip
+  version: ==2.6.0
+  required_by:
+  - l0_memory
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - l0_verification
+  - profiling
+  - reporting
+  - multinode
+  - operator:allgather_fsdpturbo
+  - operator:allgather_hccl
+  - operator:allgather_overlap_mindspeed
+  - operator:alltoall_fsdpturbo
+  - operator:alltoallv_gmm_cann
+  - operator:chunkmoe_fsdpturbo
+  - operator:deepep_ascend
+  - operator:deepep_cann
+  - operator:deepep_sglang
+  - operator:domino_fsdpturbo
+  - operator:ep_gmm_fused_lueelu
+  - operator:fused_fsdpturbo
+  - operator:hierarchical_alltoallv_mindspeed
+  - operator:mc2_dispatch_cann
+  - operator:mc2_fsdpturbo
+  - operator:megamoe_fsdpturbo
+  - operator:megamoe_lueelu
+  - operator:megamoe_td
+  - operator:moonep
+  - operator:moonep_dynamic_planner
+  - operator:moonep_server_dedup
+  source_url: https://github.com/pytorch/pytorch
+  commit: null
+  license: BSD-3-Clause
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - pip install -r python/base.txt
+  - pip install torch==2.6.0
+  check:
+    type: python_module
+    module: torch
+    distribution: torch
+    import: true
+  runtime_paths: []
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: The pinned base version is shared by the CPU and NPU paths; the CPU path installs the +cpu local-tag
+    wheel, which PEP 440 accepts for ``==2.6.0``. The NPU path installs the same 2.6.0 torch next to torch_npu
+    2.6.0.post3.
+  ownership: external
+  environment: base
+  modules:
+  - torch
+  pin:
+    kind: pip
+    value: ==2.6.0
+    verify: python -c 'import torch; print(torch.__version__)'
+  conflicts: []
+  install_spec:
+    mode: pip
+    requirements: python/base.txt
+    packages:
+    - torch==2.6.0
+    verify:
+    - python -c "import importlib.metadata as m; print(m.version('torch'))"
+- id: numpy
+  category: A
+  kind: pip
+  version: ==2.2.6
+  required_by:
+  - l0_memory
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - l0_verification
+  - profiling
+  - reporting
+  - multinode
+  source_url: https://github.com/numpy/numpy
+  commit: null
+  license: BSD-3-Clause
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - pip install -r python/base.txt
+  - pip install numpy==2.2.6
+  check:
+    type: python_module
+    module: numpy
+    distribution: numpy
+    import: true
+  runtime_paths: []
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: torch 2.6 requires numpy < 2.3; the pin is the version the CPU venv was validated with, not the
+    newest release.
+  ownership: external
+  environment: base
+  modules:
+  - numpy
+  pin:
+    kind: pip
+    value: ==2.2.6
+  conflicts: []
+  install_spec:
+    mode: pip
+    requirements: python/base.txt
+    packages:
+    - numpy==2.2.6
+    verify:
+    - python -c "import importlib.metadata as m; print(m.version('numpy'))"
+- id: pyyaml
+  category: A
+  kind: pip
+  version: ==6.0.4
+  required_by:
+  - l0_memory
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - l0_verification
+  - profiling
+  - reporting
+  - multinode
+  source_url: https://github.com/yaml/pyyaml
+  commit: null
+  license: MIT
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - pip install -r python/base.txt
+  - pip install PyYAML==6.0.4
+  check:
+    type: python_module
+    module: yaml
+    distribution: PyYAML
+    import: true
+  runtime_paths: []
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: Imported as ``yaml``; the distribution name is PyYAML.  The manifest, every config and the operator
+    registry are YAML, so a missing PyYAML blocks the entire benchmark.
+  ownership: external
+  environment: base
+  modules:
+  - yaml
+  pin:
+    kind: pip
+    value: ==6.0.4
+  conflicts: []
+  install_spec:
+    mode: pip
+    requirements: python/base.txt
+    packages:
+    - PyYAML==6.0.4
+    verify:
+    - python -c "import importlib.metadata as m; print(m.version('PyYAML'))"
+- id: jsonschema
+  category: A
+  kind: pip
+  version: ==4.26.0
+  required_by:
+  - l0_memory
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - l0_verification
+  - profiling
+  - reporting
+  - multinode
+  source_url: https://github.com/python-jsonschema/jsonschema
+  commit: null
+  license: MIT
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - pip install -r python/base.txt
+  - pip install jsonschema==4.26.0
+  check:
+    type: python_module
+    module: jsonschema
+    distribution: jsonschema
+    import: true
+  runtime_paths: []
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: Result records are validated against schemas/*.json before they are aggregated; without jsonschema
+    the runner cannot certify a result file.
+  ownership: external
+  environment: base
+  modules:
+  - jsonschema
+  pin:
+    kind: pip
+    value: ==4.26.0
+  conflicts: []
+  install_spec:
+    mode: pip
+    requirements: python/base.txt
+    packages:
+    - jsonschema==4.26.0
+    verify:
+    - python -c "import importlib.metadata as m; print(m.version('jsonschema'))"
+- id: pandas
+  category: A
+  kind: pip
+  version: ==2.2.3
+  required_by:
+  - reporting
+  source_url: https://github.com/pandas-dev/pandas
+  commit: null
+  license: BSD-3-Clause
+  optional: true
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - pip install -r python/base.txt
+  - pip install pandas==2.2.3
+  check:
+    type: python_module
+    module: pandas
+    distribution: pandas
+    import: true
+  runtime_paths: []
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: 'Optional: used for large tabular aggregation of results.  Absence degrades the reporting group
+    to ``degraded`` (warn), it never turns into a pass.  The probe imports it, because an installed-but-broken
+    pandas would otherwise look identical to a working one.'
+  ownership: external
+  environment: base
+  modules:
+  - pandas
+  pin:
+    kind: pip
+    value: ==2.2.3
+  conflicts: []
+  install_spec:
+    mode: pip
+    requirements: python/base.txt
+    packages:
+    - pandas==2.2.3
+    verify:
+    - python -c "import importlib.metadata as m; print(m.version('pandas'))"
+- id: matplotlib
+  category: A
+  kind: pip
+  version: ==3.10.9
+  required_by:
+  - reporting
+  source_url: https://github.com/matplotlib/matplotlib
+  commit: null
+  license: PSF-2.0
+  optional: true
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - pip install -r python/base.txt
+  - pip install matplotlib==3.10.9
+  check:
+    type: python_module
+    module: matplotlib
+    distribution: matplotlib
+    import: false
+  runtime_paths: []
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: Only reporting/charts.py imports it, lazily.  The probe reads the distribution version instead
+    of importing, because importing matplotlib selects a GUI backend.
+  ownership: external
+  environment: base
+  modules:
+  - matplotlib
+  pin:
+    kind: pip
+    value: ==3.10.9
+  conflicts: []
+  install_spec:
+    mode: pip
+    requirements: python/base.txt
+    packages:
+    - matplotlib==3.10.9
+    verify:
+    - python -c "import importlib.metadata as m; print(m.version('matplotlib'))"
+- id: npu-driver
+  category: B
+  kind: host_provided
+  version: '>=24.1.RC1'
+  required_by:
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - profiling
+  - multinode
+  source_url: https://www.hiascend.com/hardware/firmware-drivers
+  commit: null
+  license: Proprietary (Huawei)
+  optional: false
+  installable: false
+  install_reason: A driver is kernel code.  It must be installed on the host and cannot be installed,
+    upgraded or reloaded from inside a container; pretending otherwise is how a container ends up with
+    libascendcl and no devices.
+  manual_step: 'On the host only: install Ascend-hdk-<soc>-npu-driver_<ver>_linux-*.run and the matching
+    firmware, reset the devices, then confirm ``npu-smi info`` lists the chips and /dev/davinci* exists.  Never
+    run this from the container -- scripts/install_deps.sh refuses and prints this step.'
+  install:
+  - 'On the host only: install Ascend-hdk-<soc>-npu-driver_<ver>_linux-*.run and the matching firmware,
+    reset the devices, then confirm ``npu-smi info`` lists the chips and /dev/davinci* exists.  Never
+    run this from the container -- scripts/install_deps.sh refuses and prints this step.'
+  check:
+    type: driver
+    paths:
+    - /usr/local/Ascend/driver/version.info
+    - /usr/local/Ascend/driver
+    devices:
+    - /dev/davinci_manager
+    - /dev/devmm_svm
+  runtime_paths:
+  - /usr/local/Ascend/driver/lib64
+  - /usr/local/Ascend/driver/tools
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'Version floor only: driver and CANN are paired per vendor release, and this repository does
+    not pin a driver revision.  The doctor records the observed version as evidence and never enforces
+    the floor as a hard failure.'
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: 'On the host only: install Ascend-hdk-<soc>-npu-driver_<ver>_linux-*.run and the matching
+      firmware, reset the devices, then confirm ``npu-smi info`` lists the chips and /dev/davinci* exists.  Never
+      run this from the container -- scripts/install_deps.sh refuses and prints this step.'
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: cann-toolkit
+  category: B
+  kind: host_provided
+  version: '>=8.1.RC1,<8.4'
+  required_by:
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - profiling
+  - multinode
+  source_url: https://www.hiascend.com/cann
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: false
+  install_reason: The toolkit is a vendor .run package that installs under /usr/local/Ascend and links
+    against the host driver.  Containers inherit it from the host image by bind mount; installing another
+    copy inside the container would shadow the host's libascendcl.
+  manual_step: 'On the host: verify the sha256 of Ascend-cann-toolkit_<ver>_linux-<arch>.run for the target
+    SoC, run it with --install, then bind-mount /usr/local/Ascend into the container and ``source /usr/local/Ascend/ascend-toolkit/set_env.sh``.'
+  install:
+  - 'On the host: verify the sha256 of Ascend-cann-toolkit_<ver>_linux-<arch>.run for the target SoC,
+    run it with --install, then bind-mount /usr/local/Ascend into the container and ``source /usr/local/Ascend/ascend-toolkit/set_env.sh``.'
+  check:
+    type: cann_home
+    version_file: version.cfg
+  runtime_paths:
+  - /usr/local/Ascend/ascend-toolkit/latest
+  - $ASCEND_HOME_PATH/lib64
+  - $ASCEND_HOME_PATH/runtime/lib64
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: The doctor reads the version from $ASCEND_HOME_PATH/version.cfg (or /usr/local/Ascend/ascend-toolkit/latest/version.cfg),
+    reports the raw file as evidence, and refuses to guess when the file is absent.
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules:
+  - acl
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: 'On the host: verify the sha256 of Ascend-cann-toolkit_<ver>_linux-<arch>.run for the target
+      SoC, run it with --install, then bind-mount /usr/local/Ascend into the container and ``source /usr/local/Ascend/ascend-toolkit/set_env.sh``.'
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: torch-npu
+  category: B
+  kind: pip
+  version: ==2.6.0.post3
+  required_by:
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - profiling
+  - multinode
+  - operator:allgather_megatron
+  - operator:alltoall_megatron
+  - operator:alltoallv_gmm_cann
+  - operator:alltoallv_quant_gmm_cann
+  - operator:dispatch_ffn_combine_sglang
+  - operator:dispatch_ffn_combine_vllm_ascend
+  - operator:fused_deep_moe_sglang
+  - operator:hierarchical_alltoallv_mindspeed
+  - operator:mc2_combine_add_rmsnorm_cann
+  - operator:mc2_dispatch_cann
+  - operator:mc2_dispatch_cann_v1
+  - operator:megamoe_deepgemm_ascend
+  - operator:alltoall_hccl
+  source_url: https://github.com/Ascend/pytorch
+  commit: null
+  license: BSD-3-Clause
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - pip install -r python/npu.txt --find-links <wheelhouse>
+  - pip install torch_npu==2.6.0.post3
+  check:
+    type: python_module
+    module: torch_npu
+    distribution: torch-npu
+    import: false
+  runtime_paths:
+  - <site-packages>/torch_npu
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  notes: 'Must match the installed torch exactly (2.6.0) and the CANN row.  The probe does not import
+    torch_npu: importing it loads libascendcl and initialises a device, which a diagnostic run must not
+    do on a CPU-only host.'
+  ownership: external
+  environment: base
+  modules:
+  - torch_npu
+  pin:
+    kind: pip
+    value: ==2.6.0.post3
+    verify: python -c 'import torch_npu; print(torch_npu.__version__)'
+  conflicts: []
+  install_spec:
+    mode: pip
+    requirements: python/npu.txt
+    packages:
+    - torch_npu==2.6.0.post3
+    verify:
+    - python -c "import importlib.metadata as m; print(m.version('torch_npu'))"
+    wheel_source:
+      kind: ascend_wheelhouse
+      required: true
+      env_var: EP_ASCEND_WHEEL_INDEX
+      note: torch_npu is not published on PyPI. Pass --wheelhouse with the Ascend wheels, or set EP_ASCEND_WHEEL_INDEX
+        to the index that serves the pinned torch/torch_npu/CANN triple. The installer refuses to fall
+        back to PyPI.
+- id: cann-ops-transformer
+  category: B
+  kind: native_build
+  version: 68a67e1
+  required_by:
+  - operator:deepep_cann
+  - operator:mc2_dispatch_cann_v3
+  - operator:megamoe_cann
+  source_url: https://gitcode.com/cann/ops-transformer
+  commit: 68a67e130417593f37ea3cece1ebfb4be366b95f
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - git clone https://gitcode.com/cann/ops-transformer <source-cache>/ops-transformer
+  - git -C <source-cache>/ops-transformer checkout 68a67e130417593f37ea3cece1ebfb4be366b95f
+  - pip install --no-build-isolation .
+  check:
+    type: python_module
+    module: cann_ops_transformer
+    distribution: cann-ops-transformer
+    import: false
+  runtime_paths:
+  - <site-packages>/cann_ops_transformer
+  supported_soc:
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'The context Torch extension compiles Ascend C kernels, so the build needs the CANN toolkit plus
+    ccec on the target.  ``pinned by commit, not by a version string``: ops-transformer has no stable
+    release tag.'
+  ownership: external
+  environment: base
+  modules:
+  - cann_ops_transformer
+  pin:
+    kind: commit
+    value: 68a67e130417593f37ea3cece1ebfb4be366b95f
+    verify: git rev-parse HEAD
+  conflicts: []
+  install_spec:
+    mode: source
+    source:
+      url: https://gitcode.com/cann/ops-transformer
+      directory: ops-transformer
+      submodules: false
+      pin:
+        kind: commit
+        value: 68a67e130417593f37ea3cece1ebfb4be366b95f
+    steps:
+    - run: pip install --no-build-isolation .
+    verify:
+    - python -c "import cann_ops_transformer; print(cann_ops_transformer.__file__)"
+- id: hccl
+  category: B
+  kind: host_provided
+  version: '>=8.1.RC1'
+  required_by:
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_overlap
+  source_url: https://gitcode.com/cann/hccl
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: false
+  install_reason: libhccl.so is part of the CANN toolkit.  Copying a single .so between hosts produces
+    ABI drift against libascendcl; the fix is to install or upgrade CANN on the host.
+  manual_step: Install or upgrade the CANN toolkit on the host, re-source set_env.sh on every rank, and
+    confirm libhccl.so resolves (LD_LIBRARY_PATH must contain $ASCEND_HOME_PATH/lib64).
+  install:
+  - Install or upgrade the CANN toolkit on the host, re-source set_env.sh on every rank, and confirm libhccl.so
+    resolves (LD_LIBRARY_PATH must contain $ASCEND_HOME_PATH/lib64).
+  check:
+    type: shared_library
+    names:
+    - libhccl.so
+    - libhccl.dll
+  runtime_paths:
+  - $ASCEND_HOME_PATH/lib64
+  - $ASCEND_HOME_PATH/runtime/lib64
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: Every collective result depends on this library resolving at run time; the probe reports both
+    ctypes.util.find_library and an explicit LD_LIBRARY_PATH scan because find_library ignores LD_LIBRARY_PATH
+    on several platforms.
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Install or upgrade the CANN toolkit on the host, re-source set_env.sh on every rank, and confirm
+      libhccl.so resolves (LD_LIBRARY_PATH must contain $ASCEND_HOME_PATH/lib64).
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: npu-smi
+  category: B
+  kind: binary
+  version: '>=24.1.RC1'
+  required_by:
+  - l0_topology
+  - profiling
+  source_url: https://www.hiascend.com/cann
+  commit: null
+  license: Proprietary (Huawei)
+  optional: false
+  installable: false
+  install_reason: npu-smi is installed by the NPU driver package under /usr/local/Ascend/driver/tools.  It
+    is a host tool with no pip equivalent.
+  manual_step: Install the NPU driver on the host; npu-smi arrives with it.  Inside the container it is
+    visible only if /usr/local/Ascend/driver is bind-mounted.
+  install:
+  - Install the NPU driver on the host; npu-smi arrives with it.  Inside the container it is visible only
+    if /usr/local/Ascend/driver is bind-mounted.
+  check:
+    type: binary
+    binary: npu-smi
+    version_args:
+    - --version
+    parse: npu_smi
+    extra_paths:
+    - /usr/local/Ascend/driver/tools
+  runtime_paths:
+  - /usr/local/Ascend/driver/tools
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'The SoC name is parsed from ``npu-smi info`` output and recorded with its raw source.  When
+    npu-smi is absent the SoC stays unknown: the doctor does not fall back to a constant.'
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Install the NPU driver on the host; npu-smi arrives with it.  Inside the container it is visible
+      only if /usr/local/Ascend/driver is bind-mounted.
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: ascendc-toolchain
+  category: B
+  kind: host_provided
+  version: '>=8.1.RC1'
+  required_by:
+  - l0_transport
+  - l0_overlap
+  source_url: https://www.hiascend.com/cann
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: false
+  install_reason: ccec (the Ascend C compiler) ships inside the CANN toolkit under compiler/ccec_compiler/bin.  There
+    is no standalone package, and a mismatched compiler produces kernels the runtime rejects at load time.
+  manual_step: Install the CANN toolkit on the host, source set_env.sh, then verify ``ccec --version``
+    resolves.  Custom Ascend C builds (ops-transformer, ASC-COMM) cannot run without it.
+  install:
+  - Install the CANN toolkit on the host, source set_env.sh, then verify ``ccec --version`` resolves.  Custom
+    Ascend C builds (ops-transformer, ASC-COMM) cannot run without it.
+  check:
+    type: toolchain
+    binaries:
+    - ccec
+    env:
+    - ASCEND_HOME_PATH
+    subdirs:
+    - compiler/ccec_compiler/bin
+    - compiler/bin
+  runtime_paths:
+  - $ASCEND_HOME_PATH/compiler/ccec_compiler/bin
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: The compiler is a host-installed CANN component even when the build runs in a container; bind-mounting
+    /usr/local/Ascend is the supported pattern.
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Install the CANN toolkit on the host, source set_env.sh, then verify ``ccec --version`` resolves.  Custom
+      Ascend C builds (ops-transformer, ASC-COMM) cannot run without it.
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: hcomm
+  category: C
+  kind: host_provided
+  version: '>=8.1.RC1'
+  required_by:
+  - l0_transport
+  - l0_collectives
+  - l0_overlap
+  source_url: https://gitcode.com/cann/hcomm
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: false
+  install_reason: HCOMM is the channel/engine layer below HCCL and arrives with the CANN toolkit.  It
+    has no independent release artifact, so there is nothing to install separately.
+  manual_step: Install or upgrade the CANN toolkit on the host and re-source set_env.sh. The UB channel
+    families the L0 transport cases name (AivUrmaChannel, AicpuTsUrmaChannel, CcuUrmaChannel) are created
+    by this library, so a missing libhcomm.so makes every URMA/UB case unobservable.
+  install:
+  - Install or upgrade the CANN toolkit on the host and re-source set_env.sh. The UB channel families
+    the L0 transport cases name (AivUrmaChannel, AicpuTsUrmaChannel, CcuUrmaChannel) are created by this
+    library, so a missing libhcomm.so makes every URMA/UB case unobservable.
+  check:
+    type: shared_library
+    names:
+    - libhcomm.so
+    - libhcomm.dll
+  runtime_paths:
+  - $ASCEND_HOME_PATH/lib64
+  - $ASCEND_HOME_PATH/runtime/lib64
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: The L0 transport layers report the URMA channel family and the CommProtocol value separately;
+    both come from this library, so the doctor treats its absence as a hard failure for the transport
+    family.
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Install or upgrade the CANN toolkit on the host and re-source set_env.sh. The UB channel families
+      the L0 transport cases name (AivUrmaChannel, AicpuTsUrmaChannel, CcuUrmaChannel) are created by
+      this library, so a missing libhcomm.so makes every URMA/UB case unobservable.
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: shmem
+  category: C
+  kind: native_build
+  version: 8.2.RC1
+  required_by:
+  - l0_transport
+  - l0_overlap
+  source_url: https://gitcode.com/cann/shmem
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - git clone https://gitcode.com/cann/shmem <source-cache>/shmem
+  - git -C <source-cache>/shmem checkout tags/8.2.RC1
+  - bash build.sh
+  - pip install --no-build-isolation ./build/*.whl
+  check:
+    type: python_module
+    module: shmem
+    distribution: shmem
+    import: false
+    libraries:
+    - libshmem.so
+    - libascshmem.so
+  runtime_paths:
+  - <site-packages>/shmem
+  - $ASCEND_HOME_PATH/lib64
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'commit is null on purpose: this repository has not recorded a SHMEM revision, and inventing
+    one would be worse than asking for the release tag that matches the CANN row.  The build needs the
+    CANN toolkit plus a C++17 compiler, and the runtime needs a bootstrap/rendezvous configuration that
+    baselines/l0/shmem/runtime.py reads from the config.'
+  ownership: external
+  environment: base
+  modules:
+  - shmem
+  pin:
+    kind: release_tag
+    value: 8.2.RC1
+    resolve: git ls-remote --tags --refs <url> <tag>
+    verify: python -c 'import shmem; print(shmem.__file__)'
+  conflicts: []
+  install_spec:
+    mode: source
+    source:
+      url: https://gitcode.com/cann/shmem
+      directory: shmem
+      submodules: false
+      pin:
+        kind: release_tag
+        value: 8.2.RC1
+    steps:
+    - run: bash build.sh
+    - run: pip install --no-build-isolation ./build/*.whl
+    verify:
+    - python -c "import shmem; print(shmem.__file__)"
+    - python -c "import ctypes.util; assert ctypes.util.find_library('shmem')"
+- id: npu-patch
+  category: C
+  kind: native_build
+  version: b4127ba
+  required_by:
+  - operator:moonep
+  - operator:moonep_dynamic_planner
+  source_url: https://gitcode.com/Ascend/MoonEP
+  commit: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+  license: Not declared upstream (MoonEP research checkout)
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - git clone https://gitcode.com/Ascend/MoonEP <source-cache>/MoonEP
+  - git -C <source-cache>/MoonEP checkout b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+  - pip install --no-build-isolation ./npu_patch
+  check:
+    type: python_module
+    module: npu_patch
+    distribution: npu_patch
+    import: false
+    libraries:
+    - libnpu_patch.so
+  runtime_paths:
+  - <site-packages>/npu_patch
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'AOT-compiles Ascend C kernels on the target, so it needs ccec and a CANN release that matches
+    torch_npu.  The MoonEP branches are separate: dev_npu is pinned at b4127ba, dev_server_dedup at d8495c4.'
+  ownership: external
+  environment: moonep_npu
+  modules:
+  - npu_patch
+  pin:
+    kind: commit
+    value: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+    verify: git rev-parse HEAD
+  conflicts:
+  - npu-patch-dedup
+  install_spec:
+    mode: source
+    source:
+      url: https://gitcode.com/Ascend/MoonEP
+      directory: MoonEP
+      submodules: false
+      pin:
+        kind: commit
+        value: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+    steps:
+    - run: pip install --no-build-isolation ./npu_patch
+    verify:
+    - python -c "import npu_patch; print(npu_patch.__file__)"
+- category: C
+  kind: native_build
+  version: d8495c4
+  source_url: https://gitcode.com/Ascend/MoonEP/tree/dev_server_dedup
+  commit: d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+  license: Not declared upstream (MoonEP research checkout)
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  check:
+    type: python_module
+    module: npu_patch
+    distribution: npu_patch
+    import: false
+    libraries:
+    - libnpu_patch.so
+  runtime_paths:
+  - <site-packages>/npu_patch
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: The dev_server_dedup branch of the same MoonEP repository. It installs the same `npu_patch` module
+    name as the dev_npu branch, so it lives in its own environment and never shadows the planner family.
+  manual_step_owner: null
+  id: npu-patch-dedup
+  ownership: external
+  environment: moonep_dedup
+  modules:
+  - npu_patch
+  pin:
+    kind: commit
+    value: d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+    verify: git rev-parse HEAD
+  conflicts:
+  - npu-patch
+  install_spec:
+    mode: source
+    source:
+      url: https://gitcode.com/Ascend/MoonEP
+      directory: MoonEP
+      submodules: false
+      pin:
+        kind: commit
+        value: d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+    steps:
+    - run: pip install --no-build-isolation ./npu_patch
+    verify:
+    - python -c "import npu_patch; print(npu_patch.__file__)"
+  required_by:
+  - operator:moonep_server_dedup
+  install:
+  - git clone https://gitcode.com/Ascend/MoonEP <source-cache>/MoonEP
+  - git -C <source-cache>/MoonEP checkout d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+  - pip install --no-build-isolation ./npu_patch
+- id: deep-ep
+  category: C
+  kind: native_build
+  version: 83252a5
+  required_by:
+  - operator:deepep_ascend
+  - operator:deepep_direct_lueelu
+  - operator:deepep_lueelu
+  - operator:deepep_sglang
+  - operator:dispatch_ffn_combine_sglang
+  - operator:fused_deep_moe_sglang
+  source_url: https://github.com/lueelu/DeepEP
+  commit: 83252a54d2363734a706a7dd8368bebc3094af5a
+  license: MIT (inherited from deepseek-ai/DeepEP; verify in the fork)
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - git clone https://github.com/lueelu/DeepEP <source-cache>/DeepEP
+  - git -C <source-cache>/DeepEP checkout 83252a54d2363734a706a7dd8368bebc3094af5a
+  - bash build.sh
+  - pip install --no-build-isolation .
+  check:
+    type: python_module
+    module: deep_ep
+    distribution: deep_ep
+    import: false
+    libraries:
+    - libdeep_ep.so
+  runtime_paths:
+  - <site-packages>/deep_ep
+  - $ASCEND_HOME_PATH/lib64
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: Two incompatible DeepEP forks are pinned in this catalog (see deep-ep-v2). They both install
+    the module name ``deep_ep``, so one environment serves one operator family; the doctor reports whichever
+    distribution is present and names the checkout it belongs to in the evidence.
+  ownership: external
+  environment: deep_ep_lueelu
+  modules:
+  - deep_ep
+  pin:
+    kind: commit
+    value: 83252a54d2363734a706a7dd8368bebc3094af5a
+    verify: git rev-parse HEAD
+  conflicts:
+  - deep-ep-v2
+  install_spec:
+    mode: source
+    source:
+      url: https://github.com/lueelu/DeepEP
+      directory: DeepEP
+      submodules: false
+      pin:
+        kind: commit
+        value: 83252a54d2363734a706a7dd8368bebc3094af5a
+    steps:
+    - run: bash build.sh
+    - run: pip install --no-build-isolation .
+    verify:
+    - python -c "import deep_ep; print(deep_ep.__file__)"
+- id: deep-ep-v2
+  category: C
+  kind: native_build
+  version: 69090a1
+  required_by:
+  - operator:deepep_v2_ascend
+  source_url: https://gitcode.com/lishaoxun/DeepEP_9283
+  commit: 69090a120cfee06be431a79873692677bc07b042
+  license: MIT (inherited from deepseek-ai/DeepEP; verify in the fork)
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - git clone https://gitcode.com/lishaoxun/DeepEP_9283 <source-cache>/DeepEP_9283
+  - git -C <source-cache>/DeepEP_9283 checkout 69090a120cfee06be431a79873692677bc07b042
+  - bash build.sh
+  - pip install --no-build-isolation .
+  check:
+    type: python_module
+    module: deep_ep
+    distribution: deep_ep
+    import: false
+    libraries:
+    - libdeep_ep.so
+  runtime_paths:
+  - <site-packages>/deep_ep
+  supported_soc:
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'Provides deep_ep.ElasticBuffer for the V2 dispatch/combine adapters.  Same module name as deep-ep:
+    install one of the two, never both.'
+  ownership: external
+  environment: deep_ep_v2
+  modules:
+  - deep_ep
+  pin:
+    kind: commit
+    value: 69090a120cfee06be431a79873692677bc07b042
+    verify: git rev-parse HEAD
+  conflicts:
+  - deep-ep
+  install_spec:
+    mode: source
+    source:
+      url: https://gitcode.com/lishaoxun/DeepEP_9283
+      directory: DeepEP_9283
+      submodules: false
+      pin:
+        kind: commit
+        value: 69090a120cfee06be431a79873692677bc07b042
+    steps:
+    - run: bash build.sh
+    - run: pip install --no-build-isolation .
+    verify:
+    - python -c "import deep_ep; print(deep_ep.__file__)"
+- id: deep-ep-experimental
+  category: C
+  kind: python_import
+  version: 24ff84d
+  required_by:
+  - operator:ep_gmm_fused_lueelu
+  - operator:megamoe_lueelu
+  source_url: https://github.com/penn513/ascendep
+  commit: 24ff84d3ab8c01e1e2071802465173e624e1f89d
+  license: Not declared upstream (ascendep research checkout)
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - git clone https://github.com/lueelu/DeepEP <source-cache>/DeepEP
+  - git -C <source-cache>/DeepEP checkout 83252a54d2363734a706a7dd8368bebc3094af5a
+  - pip install --no-build-isolation ./experiments/ep_gmm_fused/python
+  - pip install --no-build-isolation ./experiments/megamoe/python
+  check:
+    type: python_module
+    module: deep_ep_experimental
+    import: false
+    requires_env: EP_ASCENDEP_ROOT
+  runtime_paths:
+  - $EP_ASCENDEP_ROOT
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  supported_cann:
+  - 8.2.RC1
+  notes: '`deep_ep_experimental` ships inside the pinned lueelu/DeepEP checkout (experiments/ep_gmm_fused/python
+    and experiments/megamoe/python at 83252a5). It is installed from the same source and shares the deep_ep_lueelu
+    environment; the earlier mapping to penn513/ascendep was wrong, the adapter only imported it from
+    there.'
+  ownership: external
+  environment: deep_ep_lueelu
+  modules:
+  - deep_ep_experimental
+  pin:
+    kind: commit
+    value: 83252a54d2363734a706a7dd8368bebc3094af5a
+    verify: git rev-parse HEAD
+  conflicts: []
+  install_spec:
+    mode: source
+    source:
+      url: https://github.com/lueelu/DeepEP
+      directory: DeepEP
+      submodules: false
+      pin:
+        kind: commit
+        value: 83252a54d2363734a706a7dd8368bebc3094af5a
+    steps:
+    - run: pip install --no-build-isolation ./experiments/ep_gmm_fused/python
+    - run: pip install --no-build-isolation ./experiments/megamoe/python
+    verify:
+    - python -c "import deep_ep_experimental, deep_ep_experimental.ep_gmm_fused; print(deep_ep_experimental.__file__)"
+    subdirectories:
+    - experiments/ep_gmm_fused/python
+    - experiments/megamoe/python
+- id: moonep-runtime
+  category: C
+  kind: python_import
+  version: b4127ba
+  required_by:
+  - operator:moonep_dynamic_planner
+  source_url: https://gitcode.com/Ascend/MoonEP
+  commit: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+  license: Not declared upstream (MoonEP research checkout)
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - git clone https://gitcode.com/Ascend/MoonEP <source-cache>/MoonEP
+  - git -C <source-cache>/MoonEP checkout b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+  - pip install --no-build-isolation -e .
+  check:
+    type: python_module
+    module: moonep
+    import: false
+  runtime_paths:
+  - <site-packages>/moonep
+  - $EP_ASCENDEP_ROOT
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  supported_cann:
+  - 8.2.RC1
+  notes: 'One checkout serves one branch: dev_npu (b4127ba) for the planner and the UDMA buffer, dev_server_dedup
+    (d8495c4) for the dedup buffer.'
+  ownership: external
+  environment: moonep_npu
+  modules:
+  - moonep
+  pin:
+    kind: commit
+    value: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+    verify: git rev-parse HEAD
+  conflicts:
+  - moonep-dedup-runtime
+  install_spec:
+    mode: source
+    source:
+      url: https://gitcode.com/Ascend/MoonEP
+      directory: MoonEP
+      submodules: false
+      pin:
+        kind: commit
+        value: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+    steps:
+    - run: pip install --no-build-isolation -e .
+    verify:
+    - python -c "import moonep; print(moonep.__file__)"
+- category: C
+  kind: python_import
+  version: d8495c4
+  source_url: https://gitcode.com/Ascend/MoonEP/tree/dev_server_dedup
+  commit: d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+  license: Not declared upstream (MoonEP research checkout)
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  check:
+    type: python_module
+    module: moonep
+    import: false
+  runtime_paths:
+  - <site-packages>/moonep
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'One checkout serves one branch: dev_server_dedup (d8495c4) for the dedup buffer, dev_npu (b4127ba)
+    for the planner. They install the same module name.'
+  manual_step_owner: null
+  id: moonep-dedup-runtime
+  ownership: external
+  environment: moonep_dedup
+  modules:
+  - moonep
+  pin:
+    kind: commit
+    value: d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+    verify: git rev-parse HEAD
+  conflicts:
+  - moonep-runtime
+  install_spec:
+    mode: source
+    source:
+      url: https://gitcode.com/Ascend/MoonEP
+      directory: MoonEP
+      submodules: false
+      pin:
+        kind: commit
+        value: d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+    steps:
+    - run: pip install --no-build-isolation -e .
+    verify:
+    - python -c "import moonep; print(moonep.__file__)"
+  required_by:
+  - operator:moonep_server_dedup
+  install:
+  - git clone https://gitcode.com/Ascend/MoonEP <source-cache>/MoonEP
+  - git -C <source-cache>/MoonEP checkout d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+  - pip install --no-build-isolation -e .
+- id: fsdp-turbo
+  category: C
+  kind: python_import
+  version: unpinned
+  required_by:
+  - operator:allgather_fsdpturbo
+  - operator:alltoall_fsdpturbo
+  - operator:chunkmoe_fsdpturbo
+  - operator:domino_fsdpturbo
+  - operator:fused_fsdpturbo
+  - operator:mc2_fsdpturbo
+  - operator:megamoe_fsdpturbo
+  source_url: https://gitcode.com/Ascend/FSDPTurbo
+  commit: null
+  license: See the MindSpeed FSDPTurbo release (Ascend); verify in the checkout
+  optional: false
+  installable: false
+  install_reason: The `fsdp_turbo` package ships with the MindSpeed FSDPTurbo release (Ascend/FSDPTurbo),
+    but this repository has not recorded the commit that matches the installed MindSpeed/CANN pairing.
+    An unpinned checkout is not something automation may install.
+  manual_step: Install the FSDPTurbo revision that matches the installed MindSpeed (pip install -e <FSDPTurbo
+    checkout>), then record that commit in dependencies/manifest.yaml so the pin becomes reproducible.
+  install:
+  - Install the FSDPTurbo revision that matches the installed MindSpeed (pip install -e <FSDPTurbo checkout>),
+    then record that commit in dependencies/manifest.yaml so the pin becomes reproducible.
+  check:
+    type: python_module
+    module: fsdp_turbo
+    import: false
+    requires_env: EP_ASCENDEP_ROOT
+  runtime_paths:
+  - $EP_ASCENDEP_ROOT
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  supported_cann:
+  - 8.2.RC1
+  notes: 'Evidence: the adapters import fsdp_turbo.distributed.expert_parallel.dispatcher_all_gather /
+    dispatcher_chunkmoe / dispatcher_mega_moe / domino_dispatcher, and the MindSpeed FSDPTurbo documentation
+    publishes the same module layout (fsdp_turbo/distributed/expert_parallel/...). The earlier mapping
+    to penn513/ascendep was an attribution error: the ascendep checkout imported the package, it did not
+    provide it.'
+  ownership: external
+  environment: base
+  modules:
+  - fsdp_turbo
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Install the FSDPTurbo revision that matches the installed MindSpeed (pip install -e <FSDPTurbo
+      checkout>), then record that commit in dependencies/manifest.yaml so the pin becomes reproducible.
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: mega-moe
+  category: C
+  kind: python_import
+  version: unpinned
+  required_by:
+  - operator:megamoe_td
+  source_url: provided by the deployment (see notes)
+  commit: null
+  license: Not declared upstream (ascendep research checkout)
+  optional: false
+  installable: false
+  install_reason: '`mega_moe` and `_moe_testkit` are imported by the megamoe_td vendored demo and are
+    not published as a package; the test tree that provides them is not identified in this repository.'
+  manual_step: Provide the MegaMoE test tree (modules `mega_moe` and `_moe_testkit`) on PYTHONPATH from
+    the deployment that owns it, or measure the CANN MegaMoE path instead (operator megamoe_cann).
+  install:
+  - Provide the MegaMoE test tree (modules `mega_moe` and `_moe_testkit`) on PYTHONPATH from the deployment
+    that owns it, or measure the CANN MegaMoE path instead (operator megamoe_cann).
+  check:
+    type: python_module
+    module: mega_moe
+    import: false
+    requires_env: EP_ASCENDEP_ROOT
+  runtime_paths:
+  - $EP_ASCENDEP_ROOT
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  supported_cann:
+  - 8.2.RC1
+  notes: 'The `mega_moe` name had three different sources in the old catalog. They are now separated:
+    cann_ops_transformer.ops.mega_moe (megamoe_cann, declared by cann-ops-transformer), deep_ep_experimental.megamoe
+    (megamoe_lueelu, declared by deep-ep-experimental) and the test tree this entry names (megamoe_td
+    only).'
+  ownership: external
+  environment: base
+  modules:
+  - mega_moe
+  - _moe_testkit
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Provide the MegaMoE test tree (modules `mega_moe` and `_moe_testkit`) on PYTHONPATH from the
+      deployment that owns it, or measure the CANN MegaMoE path instead (operator megamoe_cann).
+    verify:
+    - echo 'manual step required; see manual_step'
+- category: C
+  kind: python_import
+  version: 24ff84d
+  source_url: operators/vendor/ascendep/ (in this repository)
+  commit: 24ff84d3ab8c01e1e2071802465173e624e1f89d
+  license: Not declared upstream; see operators/vendor/THIRD_PARTY_NOTICES.md
+  optional: false
+  installable: false
+  install_reason: The adapter tree is already in this repository, byte-exact at the pinned upstream commit;
+    there is nothing to install. It is verified by scripts/vendor_ascendep.py against VENDOR.json and
+    never needs an external checkout.
+  manual_step: Nothing to install. Verify it with `python scripts/vendor_ascendep.py --check`; if it fails,
+    restore the tree with `python scripts/vendor_ascendep.py --check --list`.
+  check:
+    type: vendored_source
+    root: operators/vendor/ascendep
+    manifest: VENDOR.json
+    marker: ep/runner.py
+  runtime_paths:
+  - operators/vendor/ascendep
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: Replaces the former `ascendep-checkout` dependency. `EP_ASCENDEP_ROOT` is a development-only
+    override; a benchmark run never uses it, and operators/ascendep.py reports origin=vendored in every
+    result.
+  manual_step_owner: null
+  id: vendored-ascendep
+  ownership: vendored
+  environment: base
+  modules:
+  - ep
+  pin:
+    kind: commit
+    value: 24ff84d3ab8c01e1e2071802465173e624e1f89d
+    verify: python scripts/vendor_ascendep.py --check
+  conflicts: []
+  install_spec:
+    mode: none
+    verify:
+    - python scripts/vendor_ascendep.py --check
+  required_by:
+  - operator:allgather_fsdpturbo
+  - operator:allgather_hccl
+  - operator:allgather_megatron
+  - operator:allgather_overlap_mindspeed
+  - operator:alltoall_fsdpturbo
+  - operator:alltoall_megatron
+  - operator:alltoallv_gmm_cann
+  - operator:chunkmoe_fsdpturbo
+  - operator:deepep_ascend
+  - operator:deepep_cann
+  - operator:deepep_direct_lueelu
+  - operator:deepep_lueelu
+  - operator:deepep_sglang
+  - operator:deepep_v2_ascend
+  - operator:domino_fsdpturbo
+  - operator:ep_gmm_fused_lueelu
+  - operator:fused_fsdpturbo
+  - operator:mc2_dispatch_cann
+  - operator:mc2_fsdpturbo
+  - operator:megamoe_fsdpturbo
+  - operator:megamoe_lueelu
+  - operator:megamoe_td
+  - operator:moonep
+  install:
+  - Nothing to install. Verify it with `python scripts/vendor_ascendep.py --check`; if it fails, restore
+    the tree with `python scripts/vendor_ascendep.py --check --list`.
+- category: C
+  kind: python_import
+  version: baf94af
+  source_url: https://github.com/NVIDIA/Megatron-LM
+  commit: baf94af3c667248865f23df73b9fb8e2395e6fd0
+  license: Apache-2.0 (NVIDIA Megatron-LM); verify in the checkout
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  check:
+    type: python_module
+    module: megatron
+    import: false
+  runtime_paths:
+  - <site-packages>/megatron
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: The commit is the one operators/hierarchical_alltoallv_mindspeed records as its tested pairing
+    (MindSpeed core_r0.8.0 needs it). A different Megatron revision is a different adapter contract, so
+    the pin is part of the measurement.
+  manual_step_owner: null
+  id: megatron
+  ownership: external
+  environment: base
+  modules:
+  - megatron
+  pin:
+    kind: commit
+    value: baf94af3c667248865f23df73b9fb8e2395e6fd0
+    verify: git rev-parse HEAD
+  conflicts: []
+  install_spec:
+    mode: source
+    source:
+      url: https://github.com/NVIDIA/Megatron-LM
+      directory: Megatron-LM
+      submodules: false
+      pin:
+        kind: commit
+        value: baf94af3c667248865f23df73b9fb8e2395e6fd0
+    steps:
+    - run: pip install --no-build-isolation -e .
+    verify:
+    - python -c "import megatron.core; print(megatron.__file__)"
+  required_by:
+  - operator:allgather_megatron
+  - operator:allgather_overlap_mindspeed
+  - operator:alltoall_megatron
+  - operator:hierarchical_alltoallv_mindspeed
+  install:
+  - git clone https://github.com/NVIDIA/Megatron-LM <source-cache>/Megatron-LM
+  - git -C <source-cache>/Megatron-LM checkout baf94af3c667248865f23df73b9fb8e2395e6fd0
+  - pip install --no-build-isolation -e .
+- category: C
+  kind: python_import
+  version: core_r0.8.0
+  source_url: https://gitcode.com/Ascend/MindSpeed
+  commit: c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+  license: Apache-2.0 (Ascend MindSpeed); verify in the checkout
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  check:
+    type: python_module
+    module: mindspeed
+    import: false
+  runtime_paths:
+  - <site-packages>/mindspeed
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: The commit is the one operators/hierarchical_alltoallv_mindspeed records; MindSpeed core_r0.8.0
+    pairs with the pinned Megatron revision.
+  manual_step_owner: null
+  id: mindspeed
+  ownership: external
+  environment: base
+  modules:
+  - mindspeed
+  pin:
+    kind: commit
+    value: c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+    verify: git rev-parse HEAD
+  conflicts: []
+  install_spec:
+    mode: source
+    source:
+      url: https://gitcode.com/Ascend/MindSpeed
+      directory: MindSpeed
+      submodules: false
+      pin:
+        kind: commit
+        value: c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+    steps:
+    - run: pip install --no-build-isolation -e .
+    verify:
+    - python -c "import mindspeed; print(mindspeed.__file__)"
+  required_by:
+  - operator:allgather_overlap_mindspeed
+  - operator:hierarchical_alltoallv_mindspeed
+  install:
+  - git clone https://gitcode.com/Ascend/MindSpeed <source-cache>/MindSpeed
+  - git -C <source-cache>/MindSpeed checkout c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+  - pip install --no-build-isolation -e .
+- category: C
+  kind: native_build
+  version: 3a35326
+  source_url: https://github.com/deepseek-ai/DeepGEMM-Ascend
+  commit: 3a35326271b069b8b5bf1a754435acd6cc91575b
+  license: MIT (DeepGEMM upstream); verify in the fork
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  check:
+    type: python_module
+    module: deep_gemm
+    import: false
+  runtime_paths:
+  - <site-packages>/deep_gemm
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: Provides the `deep_gemm` kernels used by megamoe_deepgemm_ascend. It compiles Ascend C kernels,
+    so the build needs the CANN toolkit plus ccec.
+  manual_step_owner: null
+  id: deepgemm-ascend
+  ownership: external
+  environment: base
+  modules:
+  - deep_gemm
+  pin:
+    kind: commit
+    value: 3a35326271b069b8b5bf1a754435acd6cc91575b
+    verify: git rev-parse HEAD
+  conflicts: []
+  install_spec:
+    mode: source
+    source:
+      url: https://github.com/deepseek-ai/DeepGEMM-Ascend
+      directory: DeepGEMM-Ascend
+      submodules: false
+      pin:
+        kind: commit
+        value: 3a35326271b069b8b5bf1a754435acd6cc91575b
+    steps:
+    - run: pip install --no-build-isolation .
+    verify:
+    - python -c "import deep_gemm; print(deep_gemm.__file__)"
+  required_by:
+  - operator:megamoe_deepgemm_ascend
+  install:
+  - git clone https://github.com/deepseek-ai/DeepGEMM-Ascend <source-cache>/DeepGEMM-Ascend
+  - git -C <source-cache>/DeepGEMM-Ascend checkout 3a35326271b069b8b5bf1a754435acd6cc91575b
+  - pip install --no-build-isolation .
+- category: C
+  kind: python_import
+  version: 0f63cfa
+  source_url: https://github.com/vllm-project/vllm-ascend
+  commit: 0f63cfa1a52225f301ffd4a335b8daa3028c283f
+  license: Apache-2.0 (vLLM Ascend); verify in the checkout
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  check:
+    type: python_module
+    module: vllm_ascend
+    import: false
+  runtime_paths:
+  - <site-packages>/vllm_ascend
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: Provides the fused dispatch/FFN/combine entry point used by dispatch_ffn_combine_vllm_ascend.
+  manual_step_owner: null
+  id: vllm-ascend
+  ownership: external
+  environment: base
+  modules:
+  - vllm_ascend
+  pin:
+    kind: commit
+    value: 0f63cfa1a52225f301ffd4a335b8daa3028c283f
+    verify: git rev-parse HEAD
+  conflicts: []
+  install_spec:
+    mode: source
+    source:
+      url: https://github.com/vllm-project/vllm-ascend
+      directory: vllm-ascend
+      submodules: false
+      pin:
+        kind: commit
+        value: 0f63cfa1a52225f301ffd4a335b8daa3028c283f
+    steps:
+    - run: pip install --no-build-isolation .
+    verify:
+    - python -c "import vllm_ascend; print(vllm_ascend.__file__)"
+  required_by:
+  - operator:dispatch_ffn_combine_vllm_ascend
+  install:
+  - git clone https://github.com/vllm-project/vllm-ascend <source-cache>/vllm-ascend
+  - git -C <source-cache>/vllm-ascend checkout 0f63cfa1a52225f301ffd4a335b8daa3028c283f
+  - pip install --no-build-isolation .
+- id: asc-comm-kernels
+  category: C
+  kind: native_build
+  version: ABI 1 (build id in build/manifest.json)
+  required_by:
+  - l0_transport
+  - l0_overlap
+  source_url: kernels/asc_comm/ (in this repository)
+  commit: null
+  license: Same as this repository
+  optional: false
+  installable: false
+  install_reason: 'BLOCKED: kernels/asc_comm/ exists, but its device programs (aiv/write_nbi/kernel.cpp
+    and ccu/dsl/kernel.cpp) are not written, and the CANN ASC-COMM toolchain (toolkit headers plus the
+    CCU DSL frontend) is not installed on any host reachable from this workstream.  build.sh exits non-zero
+    with that blocker; it never produces a library whose symbols only return UNSUPPORTED.'
+  manual_step: 'On an Ascend host that has the CANN ASC-COMM toolchain: source set_env.sh, write the device
+    sources against the installed headers (checklists in kernels/asc_comm/aiv/README.md and kernels/asc_comm/ccu/README.md),
+    then run ``bash kernels/asc_comm/build.sh --soc <soc>``.  The probe reads build/manifest.json, so
+    a build that did not link stays missing; see dependencies/system/asc_comm.yaml for the blocker list.'
+  install:
+  - 'On an Ascend host that has the CANN ASC-COMM toolchain: source set_env.sh, write the device sources
+    against the installed headers (checklists in kernels/asc_comm/aiv/README.md and kernels/asc_comm/ccu/README.md),
+    then run ``bash kernels/asc_comm/build.sh --soc <soc>``.  The probe reads build/manifest.json, so
+    a build that did not link stays missing; see dependencies/system/asc_comm.yaml for the blocker list.'
+  check:
+    type: kernel_artifact
+    root: kernels/asc_comm
+    build: build
+    manifest: manifest.json
+    libraries:
+    - libasc_comm_kernels.so
+    engines:
+    - AIV
+    - CCU
+  runtime_paths:
+  - kernels/asc_comm/build
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'BLOCKED is recorded, not papered over: the entry exists so the matrix says why the transport
+    family is degraded, instead of the case failing later as "unsupported by the adapter".  The artifact
+    contract is the project''s own: build/manifest.json names the library per engine, and baselines/l0/transport/kernel_artifacts.py
+    additionally resolves the ABI symbols declared in common/abi.h.'
+  ownership: in_repo
+  environment: base
+  modules: []
+  pin:
+    kind: in_repo
+    value: in-repo
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: 'On an Ascend host that has the CANN ASC-COMM toolchain: source set_env.sh, write the device
+      sources against the installed headers (checklists in kernels/asc_comm/aiv/README.md and kernels/asc_comm/ccu/README.md),
+      then run ``bash kernels/asc_comm/build.sh --soc <soc>``.  The probe reads build/manifest.json, so
+      a build that did not link stays missing; see dependencies/system/asc_comm.yaml for the blocker list.'
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: l0-native-bridges
+  category: C
+  kind: native_build
+  version: in-repo
+  required_by:
+  - l0_memory
+  - l0_transport
+  - l0_overlap
+  source_url: baselines/l0/transport/native/ (in this repository)
+  commit: null
+  license: Same as this repository
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - git clone in-repo <source-cache>/.
+  - bash baselines/l0/transport/native/build.sh
+  check:
+    type: shared_library
+    names:
+    - libl0_transport_bridge.so
+    - libl0_mem.so
+    - libep_l0_udma.so
+    require_all: false
+    search:
+    - baselines/l0/transport/native/build
+    - baselines/l0/memory/native/build
+    - baselines/l0/shmem/native/build
+  runtime_paths:
+  - baselines/l0/transport/native/build
+  - baselines/l0/memory/native/build
+  - baselines/l0/shmem/native/build
+  supported_soc:
+  - '*'
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'Three optional bridges, each with its own build.sh: the transport bridge (LINK-001..011), the
+    memory MTE/UB bridge (MEM-002/003) and the UDMA endpoint (LINK-013 device variant).  A partial build
+    is warn, not pass, because the missing bridge is what turns those cases into dependency_missing.'
+  ownership: in_repo
+  environment: base
+  modules: []
+  pin:
+    kind: in_repo
+    value: in-repo
+  conflicts: []
+  install_spec:
+    mode: source
+    source:
+      url: in-repo
+      directory: .
+      pin:
+        kind: in_repo
+        value: in-repo
+    steps:
+    - run: bash baselines/l0/transport/native/build.sh
+    verify:
+    - test -f baselines/l0/transport/native/build/libl0_transport_bridge.so
+- id: mpi
+  category: D
+  kind: binary
+  version: '>=4.1 (Open MPI) or >=3.4 (MPICH/Hydra)'
+  required_by:
+  - multinode
+  - l0_transport
+  source_url: https://www.open-mpi.org/
+  commit: null
+  license: BSD-3-Clause (Open MPI) / MIT (MPICH)
+  optional: false
+  installable: true
+  install_reason: null
+  manual_step: null
+  install:
+  - apt install openmpi-bin libopenmpi-dev
+  - dnf install openmpi openmpi-devel
+  - yum install openmpi openmpi-devel
+  check:
+    type: binary
+    binary: mpirun
+    version_args:
+    - --version
+    parse: mpi
+  runtime_paths:
+  - /usr/lib/x86_64-linux-gnu/openmpi/bin
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: 'The doctor records the implementation (Open MPI / MPICH-Hydra / Intel MPI) and the version line.  ``command
+    -v mpirun`` is not evidence: the launch flags, the hostfile syntax and the binding model differ per
+    implementation, and the multi-node scripts select flags from what the doctor reported.'
+  ownership: external
+  environment: base
+  modules: []
+  pin:
+    kind: system
+    value: '>=4.1'
+  conflicts: []
+  install_spec:
+    mode: system
+    system:
+      needs_sudo: true
+      manager_packages:
+        apt:
+        - openmpi-bin
+        - libopenmpi-dev
+        dnf:
+        - openmpi
+        - openmpi-devel
+        yum:
+        - openmpi
+        - openmpi-devel
+    verify:
+    - mpirun --version
+- id: multinode-env
+  category: D
+  kind: host_provided
+  version: deployment-managed
+  required_by:
+  - multinode
+  source_url: launchers/ (in this repository)
+  commit: null
+  license: n/a (site configuration)
+  optional: false
+  installable: false
+  install_reason: These are environment values for one deployment (rank addresses, visible devices, control-plane
+    port).  There is nothing to install; a wrong value is a deployment error, not a missing package.
+  manual_step: Export MASTER_ADDR, MASTER_PORT, ASCEND_RT_VISIBLE_DEVICES and HCCL_IF_BASE_PORT on every
+    node before the launcher runs, and keep them identical across nodes that must join the same job.
+  install:
+  - Export MASTER_ADDR, MASTER_PORT, ASCEND_RT_VISIBLE_DEVICES and HCCL_IF_BASE_PORT on every node before
+    the launcher runs, and keep them identical across nodes that must join the same job.
+  check:
+    type: env_var
+    names:
+    - MASTER_ADDR
+    - MASTER_PORT
+    - ASCEND_RT_VISIBLE_DEVICES
+    - HCCL_IF_BASE_PORT
+    mode: all
+  runtime_paths: []
+  supported_soc:
+  - '*'
+  supported_cann:
+  - '*'
+  notes: A single-node run does not need any of these; the multinode group is the only group that requires
+    them, so their absence fails exactly one row of the matrix.
+  manual_step_owner: deployment
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Export MASTER_ADDR, MASTER_PORT, ASCEND_RT_VISIBLE_DEVICES and HCCL_IF_BASE_PORT on every
+      node before the launcher runs, and keep them identical across nodes that must join the same job.
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: hccl-config
+  category: D
+  kind: host_provided
+  version: toolkit-managed
+  required_by:
+  - multinode
+  - l0_collectives
+  source_url: https://gitcode.com/cann/hccl
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: false
+  install_reason: HCCL configuration selects the transport and the collective algorithm for a site.  It
+    is environment policy shipped with the deployment, and overriding it from an installer would silently
+    change what the L0 cases measure.
+  manual_step: Set the site's HCCL_* values on every rank (HCCL_SOCKET_IFNAME, HCCL_INTRA_ROCE_ENABLE,
+    HCCL_BUFFSIZE, HCCL_ALGO, HCCL_OP_EXPANSION_MODE). The L0 execution cases read them back as evidence
+    for the requested execution resource.
+  install:
+  - Set the site's HCCL_* values on every rank (HCCL_SOCKET_IFNAME, HCCL_INTRA_ROCE_ENABLE, HCCL_BUFFSIZE,
+    HCCL_ALGO, HCCL_OP_EXPANSION_MODE). The L0 execution cases read them back as evidence for the requested
+    execution resource.
+  check:
+    type: env_var
+    names:
+    - HCCL_SOCKET_IFNAME
+    - HCCL_INTRA_ROCE_ENABLE
+    - HCCL_BUFFSIZE
+    - HCCL_ALGO
+    - HCCL_OP_EXPANSION_MODE
+    mode: any
+  runtime_paths: []
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: '``mode: any`` because the variables are alternatives: a site may select the fabric with HCCL_SOCKET_IFNAME
+    and leave the algorithm to the runtime.  At least one must be set for the run to be attributable.'
+  manual_step_owner: deployment
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Set the site's HCCL_* values on every rank (HCCL_SOCKET_IFNAME, HCCL_INTRA_ROCE_ENABLE, HCCL_BUFFSIZE,
+      HCCL_ALGO, HCCL_OP_EXPANSION_MODE). The L0 execution cases read them back as evidence for the requested
       execution resource.
-    install:
-      - "export HCCL_SOCKET_IFNAME=<fabric-interface>"
-      - "export HCCL_ALGO=Ring   # or the site's documented algorithm"
-    check:
-      type: env_var
-      names: [HCCL_SOCKET_IFNAME, HCCL_INTRA_ROCE_ENABLE, HCCL_BUFFSIZE, HCCL_ALGO, HCCL_OP_EXPANSION_MODE]
-      mode: any
-    runtime_paths: []
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      ``mode: any`` because the variables are alternatives: a site may select the
-      fabric with HCCL_SOCKET_IFNAME and leave the algorithm to the runtime.  At
-      least one must be set for the run to be attributable.
-    manual_step_owner: deployment
-
-  - id: device-permissions
-    category: D
-    kind: host_provided
-    version: "driver-managed"
-    required_by: *npu_only
-    source_url: https://www.hiascend.com/hardware/firmware-drivers
-    commit: null
-    license: Proprietary (Huawei)
-    optional: false
-    installable: false
-    install_reason: >-
-      Device node ownership is created by the kernel driver and the container
-      runtime.  chmod/chown from inside the container does not survive a driver
-      reset, and there is nothing to install.
-    manual_step: >-
-      On the host: add the container user to the HwHiAiUser group
-      (``usermod -aG HwHiAiUser <user>``), re-login, and start the container with
-      --device /dev/davinci*:/dev/davinci* (or the Ascend container runtime
-      flags).  Then confirm the device nodes are readable and writable by the
-      run user.
-    install:
-      - "# host only: usermod -aG HwHiAiUser <user>"
-      - "# container: docker run --device=/dev/davinci0 --device=/dev/davinci_manager ..."
-    check:
-      type: device_node
-      patterns: ["/dev/davinci[0-9]*", "/dev/davinci_manager", "/dev/devmm_svm"]
-      access: rw
-      minimum: 1
-    runtime_paths:
-      - /dev/davinci0
-      - /dev/davinci_manager
-      - /dev/devmm_svm
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      The probe opens nothing and writes nothing: it checks existence and
-      os.access(R_OK | W_OK).  A readable-but-not-writable node is reported as
-      warn with the exact missing bit, because a run would fail much later while
-      creating a context.
-    manual_step_owner: host
-
-  # -- E. Profiling and toolchain ------------------------------------------
-  - id: msprof
-    category: E
-    kind: binary
-    version: "toolkit-managed"
-    required_by: [profiling, l0_overlap]
-    source_url: https://www.hiascend.com/cann
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      msprof ships inside the CANN toolkit (tools/profiler).  There is no pip
-      package, and a profiler built against another CANN release produces
-      timelines the report cannot attribute.
-    manual_step: >-
-      Install the CANN toolkit on the host, source set_env.sh, and confirm
-      ``msprof --version`` resolves.  Profiling must run on the host or in a
-      container that bind-mounts /usr/local/Ascend.
-    install:
-      - "# comes with the CANN toolkit: source $ASCEND_HOME_PATH/set_env.sh"
-      - "msprof --version"
-    check:
-      type: binary
-      binary: msprof
-      version_args: ["--version"]
-      parse: none
-      extra_paths:
-        - $ASCEND_HOME_PATH/tools/profiler/bin
-        - /usr/local/Ascend/ascend-toolkit/latest/tools/profiler/bin
-    runtime_paths:
-      - $ASCEND_HOME_PATH/tools/profiler/bin
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      The overlap family verifies concurrency from device events; without msprof
-      those cases fall back to host timing and report overlap_verified=false,
-      which is why this is a real dependency of l0_overlap and not only of the
-      profiling stage.
-    manual_step_owner: host
-
-  - id: hccl-test
-    category: E
-    kind: binary
-    version: "toolkit-managed"
-    required_by: [l0_collectives]
-    source_url: https://gitcode.com/cann/oam-tools
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      hccl_test is built from CANN oam-tools on the host and is not distributed
-      as a wheel or a container package.  A prebuilt copy from another CANN
-      release reports different accelerator options.
-    manual_step: >-
-      Build CANN oam-tools on the host (tools/hccl_test) with the installed
-      toolkit, then either put its bin directory on PATH or set
-      benchmark.native_hccl.binary / EP_HCCL_TEST_BINARY.  The doctor probes
-      alltoall_test as the sentinel for the suite and parses ``--help`` for the
-      accelerator options the L0 cases request.
-    install:
-      - "# host only: build CANN oam-tools, then export EP_HCCL_TEST_BINARY=<dir>/alltoall_test"
-      - "$EP_HCCL_TEST_BINARY --help"
-    check:
-      type: binary
-      binary: alltoall_test
-      version_args: ["--help"]
-      parse: none
-      extra_paths:
-        - $ASCEND_HOME_PATH/tools/hccl_test/bin
-        - $ASCEND_HOME_PATH/tool/hccl_test/bin
-    runtime_paths:
-      - $ASCEND_HOME_PATH/tools/hccl_test/bin
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.1.RC1", "8.2.RC1", "8.3.RC1"]
-    notes: >-
-      baselines/l0/collectives/accelerator.py locates the same directories and
-      parses the same --help output, so the doctor and the runner agree on what
-      "the tool is installed" means.
-    manual_step_owner: host
-
-  - id: asc-comm-build-toolchain
-    category: E
-    kind: host_provided
-    version: ">=3.20 (cmake) + any C++17 g++ + the CANN ASC-COMM toolchain"
-    required_by: [l0_transport, l0_overlap]
-    source_url: https://www.hiascend.com/cann
-    commit: null
-    license: CANN Open Software License Agreement v2.0
-    optional: false
-    installable: false
-    install_reason: >-
-      cmake and g++ are ordinary packages, but the piece that matters -- the
-      ASC-COMM ops package and the ASC-COMM dialect of ccec -- is part of a CANN
-      release that is not available here.  Installing two of three and calling it
-      success is exactly the failure this catalog exists to prevent.
-    manual_step: >-
-      Install cmake and g++ from the image's package manager (scripts/install_deps.sh
-      does this only with --yes), then install the CANN release component that
-      provides the ASC-COMM toolchain and verify ``ccec --version``.  This is the
-      documented blocker for the ASC-COMM kernel build.
-    install:
-      - "# needs root: pass --yes to scripts/install_deps.sh"
-      - "apt-get install -y cmake g++"
-      - "# plus the CANN ASC-COMM toolchain component (host install)"
-    check:
-      type: toolchain
-      binaries: [cmake, g++, ccec]
-      env: [ASCEND_HOME_PATH]
-      subdirs:
-        - compiler/ccec_compiler/bin
-    runtime_paths:
-      - $ASCEND_HOME_PATH/compiler/ccec_compiler/bin
-      - /usr/bin/cmake
-      - /usr/bin/g++
-    supported_soc: [Ascend910B, Ascend910_93, Ascend950]
-    supported_cann: ["8.2.RC1", "8.3.RC1"]
-    notes: >-
-      BLOCKED for the ASC-COMM kernels: the toolchain probe lists every missing
-      member separately (cmake / g++ / ccec) so the blocker is one line long
-      instead of "the build does not work".
-    manual_step_owner: host
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: device-permissions
+  category: D
+  kind: host_provided
+  version: driver-managed
+  required_by:
+  - l0_transport
+  - l0_collectives
+  - l0_hardware
+  - l0_compute
+  - l0_overlap
+  - l0_topology
+  - profiling
+  - multinode
+  source_url: https://www.hiascend.com/hardware/firmware-drivers
+  commit: null
+  license: Proprietary (Huawei)
+  optional: false
+  installable: false
+  install_reason: Device node ownership is created by the kernel driver and the container runtime.  chmod/chown
+    from inside the container does not survive a driver reset, and there is nothing to install.
+  manual_step: 'On the host: add the container user to the HwHiAiUser group (``usermod -aG HwHiAiUser
+    <user>``), re-login, and start the container with --device /dev/davinci*:/dev/davinci* (or the Ascend
+    container runtime flags).  Then confirm the device nodes are readable and writable by the run user.'
+  install:
+  - 'On the host: add the container user to the HwHiAiUser group (``usermod -aG HwHiAiUser <user>``),
+    re-login, and start the container with --device /dev/davinci*:/dev/davinci* (or the Ascend container
+    runtime flags).  Then confirm the device nodes are readable and writable by the run user.'
+  check:
+    type: device_node
+    patterns:
+    - /dev/davinci[0-9]*
+    - /dev/davinci_manager
+    - /dev/devmm_svm
+    access: rw
+    minimum: 1
+  runtime_paths:
+  - /dev/davinci0
+  - /dev/davinci_manager
+  - /dev/devmm_svm
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'The probe opens nothing and writes nothing: it checks existence and os.access(R_OK | W_OK).  A
+    readable-but-not-writable node is reported as warn with the exact missing bit, because a run would
+    fail much later while creating a context.'
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: 'On the host: add the container user to the HwHiAiUser group (``usermod -aG HwHiAiUser <user>``),
+      re-login, and start the container with --device /dev/davinci*:/dev/davinci* (or the Ascend container
+      runtime flags).  Then confirm the device nodes are readable and writable by the run user.'
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: msprof
+  category: E
+  kind: binary
+  version: toolkit-managed
+  required_by:
+  - profiling
+  - l0_overlap
+  source_url: https://www.hiascend.com/cann
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: false
+  install_reason: msprof ships inside the CANN toolkit (tools/profiler).  There is no pip package, and
+    a profiler built against another CANN release produces timelines the report cannot attribute.
+  manual_step: Install the CANN toolkit on the host, source set_env.sh, and confirm ``msprof --version``
+    resolves.  Profiling must run on the host or in a container that bind-mounts /usr/local/Ascend.
+  install:
+  - Install the CANN toolkit on the host, source set_env.sh, and confirm ``msprof --version`` resolves.  Profiling
+    must run on the host or in a container that bind-mounts /usr/local/Ascend.
+  check:
+    type: binary
+    binary: msprof
+    version_args:
+    - --version
+    parse: none
+    extra_paths:
+    - $ASCEND_HOME_PATH/tools/profiler/bin
+    - /usr/local/Ascend/ascend-toolkit/latest/tools/profiler/bin
+  runtime_paths:
+  - $ASCEND_HOME_PATH/tools/profiler/bin
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: The overlap family verifies concurrency from device events; without msprof those cases fall back
+    to host timing and report overlap_verified=false, which is why this is a real dependency of l0_overlap
+    and not only of the profiling stage.
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Install the CANN toolkit on the host, source set_env.sh, and confirm ``msprof --version``
+      resolves.  Profiling must run on the host or in a container that bind-mounts /usr/local/Ascend.
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: hccl-test
+  category: E
+  kind: binary
+  version: toolkit-managed
+  required_by:
+  - l0_collectives
+  source_url: https://gitcode.com/cann/oam-tools
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: false
+  install_reason: hccl_test is built from CANN oam-tools on the host and is not distributed as a wheel
+    or a container package.  A prebuilt copy from another CANN release reports different accelerator options.
+  manual_step: Build CANN oam-tools on the host (tools/hccl_test) with the installed toolkit, then either
+    put its bin directory on PATH or set benchmark.native_hccl.binary / EP_HCCL_TEST_BINARY.  The doctor
+    probes alltoall_test as the sentinel for the suite and parses ``--help`` for the accelerator options
+    the L0 cases request.
+  install:
+  - Build CANN oam-tools on the host (tools/hccl_test) with the installed toolkit, then either put its
+    bin directory on PATH or set benchmark.native_hccl.binary / EP_HCCL_TEST_BINARY.  The doctor probes
+    alltoall_test as the sentinel for the suite and parses ``--help`` for the accelerator options the
+    L0 cases request.
+  check:
+    type: binary
+    binary: alltoall_test
+    version_args:
+    - --help
+    parse: none
+    extra_paths:
+    - $ASCEND_HOME_PATH/tools/hccl_test/bin
+    - $ASCEND_HOME_PATH/tool/hccl_test/bin
+  runtime_paths:
+  - $ASCEND_HOME_PATH/tools/hccl_test/bin
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.1.RC1
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: baselines/l0/collectives/accelerator.py locates the same directories and parses the same --help
+    output, so the doctor and the runner agree on what "the tool is installed" means.
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Build CANN oam-tools on the host (tools/hccl_test) with the installed toolkit, then either
+      put its bin directory on PATH or set benchmark.native_hccl.binary / EP_HCCL_TEST_BINARY.  The doctor
+      probes alltoall_test as the sentinel for the suite and parses ``--help`` for the accelerator options
+      the L0 cases request.
+    verify:
+    - echo 'manual step required; see manual_step'
+- id: asc-comm-build-toolchain
+  category: E
+  kind: host_provided
+  version: '>=3.20 (cmake) + any C++17 g++ + the CANN ASC-COMM toolchain'
+  required_by:
+  - l0_transport
+  - l0_overlap
+  source_url: https://www.hiascend.com/cann
+  commit: null
+  license: CANN Open Software License Agreement v2.0
+  optional: false
+  installable: false
+  install_reason: cmake and g++ are ordinary packages, but the piece that matters -- the ASC-COMM ops
+    package and the ASC-COMM dialect of ccec -- is part of a CANN release that is not available here.  Installing
+    two of three and calling it success is exactly the failure this catalog exists to prevent.
+  manual_step: Install cmake and g++ from the image's package manager (scripts/install_deps.sh does this
+    only with --yes), then install the CANN release component that provides the ASC-COMM toolchain and
+    verify ``ccec --version``.  This is the documented blocker for the ASC-COMM kernel build.
+  install:
+  - Install cmake and g++ from the image's package manager (scripts/install_deps.sh does this only with
+    --yes), then install the CANN release component that provides the ASC-COMM toolchain and verify ``ccec
+    --version``.  This is the documented blocker for the ASC-COMM kernel build.
+  check:
+    type: toolchain
+    binaries:
+    - cmake
+    - g++
+    - ccec
+    env:
+    - ASCEND_HOME_PATH
+    subdirs:
+    - compiler/ccec_compiler/bin
+  runtime_paths:
+  - $ASCEND_HOME_PATH/compiler/ccec_compiler/bin
+  - /usr/bin/cmake
+  - /usr/bin/g++
+  supported_soc:
+  - Ascend910B
+  - Ascend910_93
+  - Ascend950
+  supported_cann:
+  - 8.2.RC1
+  - 8.3.RC1
+  notes: 'BLOCKED for the ASC-COMM kernels: the toolchain probe lists every missing member separately
+    (cmake / g++ / ccec) so the blocker is one line long instead of "the build does not work".'
+  manual_step_owner: host
+  ownership: host
+  environment: base
+  modules: []
+  pin:
+    kind: none
+  conflicts: []
+  install_spec:
+    mode: manual
+    manual: Install cmake and g++ from the image's package manager (scripts/install_deps.sh does this
+      only with --yes), then install the CANN release component that provides the ASC-COMM toolchain and
+      verify ``ccec --version``.  This is the documented blocker for the ASC-COMM kernel build.
+    verify:
+    - echo 'manual step required; see manual_step'
+ownership:
+  model: in_repo | vendored | external | host; see dependencies/README.md
+  note: No dependency may be satisfied by an unmanaged external checkout at run time. The vendored ascendep
+    adapter tree is the only third-party source copied into this repository, and it is hash-verified.

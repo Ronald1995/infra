@@ -1,0 +1,22 @@
+schema_version: 1
+id: moonep_npu
+title: MoonEP (dev_npu) environment
+description: >-
+  Isolated environment for the MoonEP planner family: `moonep` and `npu_patch` at the
+  dev_npu branch (b4127ba). The server-dedup branch installs the same two module names
+  from a different revision, so the two families never share an interpreter.
+isolated: true
+python: ">=3.10,<3.13"
+requirements:
+  - python/base.txt
+  - python/npu.txt
+inherits: base
+conflicts_with:
+  - moonep_dedup
+members:
+  - moonep-runtime
+  - npu-patch
+notes: >-
+  `npu_patch` AOT-compiles Ascend C kernels on the target, so this environment needs ccec
+  and a CANN release that matches torch_npu. Allocating a separate venv does not duplicate
+  the CANN installation: the venv shares the host toolkit through `set_env.sh`.

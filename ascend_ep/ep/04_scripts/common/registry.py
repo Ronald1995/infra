@@ -7,6 +7,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERATORS = ROOT / "operators"
+ENVIRONMENT_MAP = ROOT / "dependencies" / "environments" / "map.yaml"
+ENVIRONMENTS = ROOT / "dependencies" / "environments"
 CAPABILITIES = (
     "dispatch", "combine", "cached_dispatch", "async_dispatch", "async_combine",
     "moe_forward", "moe_backward", "router_weight_grad", "expert_weight_grad",
@@ -30,20 +32,51 @@ class Operator:
     traffic_model: str | None = None
     upstream: str | None = None
     dependencies: tuple[str, ...] = ()
+    #: Which isolated dependency environment runs this operator
+    #: (``dependencies/environments/``).  Two dependency families that install the same
+    #: module name cannot share an interpreter, so the environment is part of the
+    #: operator's contract, not an installation detail.
+    environment: str = "base"
 
     def create(self):
         module = import_module(f"operators.{self.id}.backend")
         return module.create(self)
 
 
+def environments():
+    """The declared dependency environments, keyed by id."""
+    data = {}
+    for path in sorted(ENVIRONMENTS.glob("*.yaml")):
+        if path.name == "map.yaml":
+            continue
+        entry = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        identifier = entry.get("id") or path.stem
+        data[identifier] = {**entry, "id": identifier, "file": path.name}
+    return data
+
+
+def environment_assignments():
+    """``(default, {operator: environment})`` from ``environments/map.yaml``."""
+    data = yaml.safe_load(ENVIRONMENT_MAP.read_text(encoding="utf-8")) or {}
+    if data.get("schema_version") != 1:
+        raise ValueError("unsupported dependency environment map version")
+    return data.get("default") or "base", dict(data.get("operators") or {})
+
+
 def registry():
     data = yaml.safe_load((OPERATORS / "registry.yaml").read_text(encoding="utf-8"))
     if data["schema_version"] != 1:
         raise ValueError("unsupported operator registry version")
+    declared = environments()
+    default, assigned = environment_assignments()
     operators = {}
     for operator_id, entry in data["operators"].items():
+        environment = entry.get("environment") or assigned.get(operator_id) or default
+        if declared and environment not in declared:
+            raise ValueError(f"{operator_id}: unknown dependency environment {environment!r}")
         spec = Operator(id=operator_id, **{
-            **entry, "capabilities": tuple(entry.get("capabilities", ())),
+            **entry, "environment": environment,
+            "capabilities": tuple(entry.get("capabilities", ())),
             "dependencies": tuple(entry.get("dependencies", ())),
         })
         if set(spec.capabilities) - set(CAPABILITIES):

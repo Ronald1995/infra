@@ -37,6 +37,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from importlib.util import find_spec
 import glob
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -58,9 +59,22 @@ STATUSES = ("pass", "warn", "fail", "skip")
 #: Closed status vocabulary for one capability group.
 MATRIX_STATUSES = ("available", "degraded", "blocked")
 KINDS = ("pip", "native_build", "host_provided", "binary", "python_import")
+#: Who owns a dependency.  This is the classification a reader needs before trusting a
+#: green matrix:
+#:
+#: ``in_repo``   implemented in this repository (source + build live here);
+#: ``vendored``  third-party source copied here, pinned and hash-verified;
+#: ``external``  a real third-party package/build that this repository installs;
+#: ``host``      driver / firmware / CANN / deployment state, never installed here.
+OWNERSHIPS = ("in_repo", "vendored", "external", "host")
+#: How a dependency's source is pinned.  ``release_tag`` is resolved to a commit at
+#: install time and the resolved commit is recorded as evidence.
+PIN_KINDS = ("commit", "release_tag", "in_repo", "pip", "system", "none")
+#: What the installer does for a dependency.
+INSTALL_MODES = ("pip", "source", "system", "manual", "none")
 CHECK_TYPES = (
     "python_version", "python_module", "shared_library", "binary", "env_var", "device_node",
-    "driver", "cann_home", "toolchain", "ascendep_checkout", "kernel_artifact",
+    "driver", "cann_home", "toolchain", "vendored_source", "kernel_artifact",
 )
 CATEGORIES = {
     "A": "python_base",
@@ -84,14 +98,17 @@ REQUIRED_KEYS = (
     "id", "category", "kind", "required_by", "version", "source_url", "commit", "license",
     "optional", "installable", "install_reason", "manual_step", "install", "check",
     "runtime_paths", "supported_soc", "supported_cann", "notes",
+    "ownership", "environment", "modules", "pin", "install_spec", "conflicts",
 )
+#: Directory holding the isolated dependency environments.
+ENVIRONMENT_ROOT = "dependencies/environments"
 SOC_PATTERN = re.compile(r"Ascend[\s_-]?(\d{3,4}\w*)", re.IGNORECASE)
 PIN_PATTERN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;#]+)")
 VERSION_PATTERN = re.compile(r"(\d+(?:\.\d+)+)")
 ENV_NAMES = (
     "ASCEND_HOME_PATH", "ASCEND_TOOLKIT_HOME", "ASCEND_OPP_PATH", "ASCEND_TOOLKIT_VERSION",
     "ASCEND_RT_VISIBLE_DEVICES", "ASCEND_WORK_PATH", "HCCL_SOCKET_IFNAME",
-    "HCCL_OP_EXPANSION_MODE", "EP_ASCENDEP_ROOT", "EP_HCCL_TEST_BINARY",
+    "HCCL_OP_EXPANSION_MODE", "EP_HCCL_TEST_BINARY",
     "EP_L0_TRANSPORT_LIBRARY", "MASTER_ADDR", "MASTER_PORT", "VIRTUAL_ENV", "PIP_INDEX_URL",
 )
 GIB = 1024 ** 3
@@ -821,38 +838,65 @@ def probe_toolchain(entry, check, ctx):
     return _entry_check(entry, "pass", f"resolved {sorted(resolved.values())}", "", evidence)
 
 
-def probe_ascendep_checkout(entry, check, ctx):
-    variable = check.get("env") or "EP_ASCENDEP_ROOT"
-    value = os.getenv(variable)
-    commit = check.get("commit")
+def probe_vendored_source(entry, check, ctx):
+    """Verify a vendored third-party tree in this repository, without any checkout.
+
+    The check reads ``<root>/VENDOR.json`` (written by ``scripts/vendor_ascendep.py``),
+    hashes every listed file and compares it with the manifest.  ``EP_ASCENDEP_ROOT`` is
+    *not* consulted: a vendored tree is the runtime source, and an external checkout is a
+    development-only override that the adapter reports separately.
+    """
+    root = Path(ctx.root) / (check.get("root") or "operators/vendor/ascendep")
+    manifest_name = check.get("manifest") or "VENDOR.json"
+    manifest_path = root / manifest_name
     marker = check.get("marker") or "ep/runner.py"
-    evidence = {"environment": variable, "value": value, "expected_commit": commit, "marker": marker}
-    if not value:
-        return _entry_check(entry, "fail", f"{variable} is not set",
-                            f"git clone the ascendep checkout at {commit} and export {variable}", evidence)
-    root = Path(value).expanduser()
-    evidence["root"] = str(root)
+    evidence = {"root": str(root), "manifest": str(manifest_path)}
+    if not manifest_path.is_file():
+        return _entry_check(entry, "fail", f"no {manifest_name} under {root}",
+                            "run `python scripts/vendor_ascendep.py --check --list` to see what "
+                            "is missing, then vendor the tree again", evidence)
+    try:
+        recorded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return _entry_check(entry, "fail", f"{manifest_path} is unreadable: {exc}",
+                            "re-generate the vendor manifest with scripts/vendor_ascendep.py",
+                            evidence)
+    upstream = recorded.get("upstream") or {}
+    files = recorded.get("files") or []
+    evidence.update({"upstream_url": upstream.get("url"),
+                     "upstream_commit": upstream.get("commit"),
+                     "license_status": (recorded.get("license") or {}).get("status"),
+                     "files": len(files)})
     if not (root / marker).is_file():
         return _entry_check(entry, "fail", f"{root} has no {marker}",
-                            "point the variable at the repository root, not at a subdirectory", evidence)
-    evidence["marker_present"] = True
-    if shutil.which("git"):
-        # The doctor only ever queries the external checkout named by the
-        # variable; it never runs git against this repository.
-        returncode, stdout, stderr = _command(["git", "-C", str(root), "rev-parse", "HEAD"])
-        revision = stdout.strip()
-        evidence.update({"revision": revision or None, "git_returncode": returncode,
-                         "git_stderr": stderr.strip()[:200]})
-        if returncode != 0:
-            return _entry_check(entry, "warn", "checkout present but its revision could not be read",
-                                "make sure the checkout is a git work tree, not a tarball", evidence)
-        if commit and revision != commit:
-            return _entry_check(entry, "fail",
-                                f"checkout is at {revision[:12]}, expected {commit[:12]}",
-                                f"git -C {root} checkout {commit}", evidence)
-        return _entry_check(entry, "pass", f"pinned checkout {revision[:12]}", "", evidence)
-    return _entry_check(entry, "warn", "checkout present but git is unavailable, so the commit is unverified",
-                        "install git or verify the revision by hand", evidence)
+                            "the vendored tree is incomplete; vendor it again", evidence)
+    if not files:
+        return _entry_check(entry, "fail", "the vendor manifest lists no files",
+                            "re-generate the vendor manifest", evidence)
+    mismatched, missing = [], []
+    for item in files:
+        path = root / item.get("path", "")
+        if not path.is_file():
+            missing.append(item.get("path"))
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != item.get("sha256"):
+            mismatched.append(item.get("path"))
+    evidence.update({"missing": missing[:10], "mismatched": mismatched[:10]})
+    if missing or mismatched:
+        reason = []
+        if missing:
+            reason.append(f"{len(missing)} file(s) missing")
+        if mismatched:
+            reason.append(f"{len(mismatched)} file(s) with a changed digest")
+        return _entry_check(
+            entry, "fail", "; ".join(reason),
+            "restore the vendored tree (`python scripts/vendor_ascendep.py --check`) or "
+            "re-vendor it from the pinned upstream commit", evidence)
+    return _entry_check(
+        entry, "pass",
+        f"{len(files)} vendored file(s) match {str(upstream.get('commit'))[:12]}",
+        "", evidence)
 
 
 def probe_kernel_artifact(entry, check, ctx):
@@ -941,7 +985,7 @@ PROBES = {
     "driver": probe_driver,
     "cann_home": probe_cann_home,
     "toolchain": probe_toolchain,
-    "ascendep_checkout": probe_ascendep_checkout,
+    "vendored_source": probe_vendored_source,
     "kernel_artifact": probe_kernel_artifact,
 }
 
@@ -990,6 +1034,48 @@ def check_rdma(ctx):
                   "cross-server EP cannot use RoCE without them", evidence, ("multinode", "l0_transport"))
 
 
+def check_environment_isolation(ctx, data, checks):
+    """Refuse to call two shadowing implementations available at once.
+
+    Several dependency families install the *same* Python module name (``deep_ep`` from
+    two DeepEP forks, ``moonep``/``npu_patch`` from two MoonEP branches).  If both are
+    importable in one interpreter, whichever distribution was installed last wins, and a
+    run silently measures the other implementation.  This check turns that into a
+    visible failure instead of a wrong number.
+    """
+    passed = {check.id for check in checks if check.status == "pass"}
+    origins = {check.id: (check.evidence or {}).get("find_spec") for check in checks}
+    entries = {entry["id"]: entry for entry in data.get("dependencies") or ()}
+    declared, conflicting = set(), []
+    for identifier, entry in sorted(entries.items()):
+        for conflict in entry.get("conflicts") or ():
+            partner = entries.get(conflict)
+            if partner is None:
+                continue
+            key = tuple(sorted((identifier, conflict)))
+            declared.add(key)
+            if identifier in passed and conflict in passed:
+                conflicting.append((key, entry, partner))
+    if not conflicting:
+        return _check("environment.isolation", "C", "pass",
+                      "no conflicting dependency family is importable at the same time",
+                      "", {"conflicts_declared": len(declared)})
+    details, blocking, origin_map, envs = [], set(), {}, {}
+    for (left, right), entry, partner in conflicting:
+        shared = sorted(set(entry.get("modules") or ()) & set(partner.get("modules") or ()))
+        details.append(f"{left} and {right} are both importable"
+                       + (f" (shared module: {', '.join(shared)})" if shared else ""))
+        origin_map[left] = origins.get(left)
+        origin_map[right] = origins.get(right)
+        envs[left] = entry.get("environment")
+        envs[right] = partner.get("environment")
+        blocking.update(tokens(entry.get("required_by")))
+        blocking.update(tokens(partner.get("required_by")))
+    first = conflicting[0][0]
+    action = (f"install one family per environment: see {ENVIRONMENT_ROOT}/"
+              f"{envs.get(first[0])}.yaml and {ENVIRONMENT_ROOT}/{envs.get(first[1])}.yaml")
+    return _check("environment.isolation", "C", "fail", "; ".join(details), action,
+                  {"origins": origin_map, "environments": envs}, sorted(blocking))
 def check_ld_library_path(ctx):
     info = _ld_library_path()
     if info["value"] is None:
@@ -1087,18 +1173,105 @@ def load_manifest(path=None):
     """Load and validate the catalog; a broken catalog must not yield a matrix."""
     path = Path(path or MANIFEST)
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    errors = validate_manifest(data)
+    errors = validate_manifest(data, root=path.parent)
     if errors:
         raise ValueError(f"{path}: " + "; ".join(errors))
     return data
 
 
-def validate_manifest(data):
-    """Return a list of catalog errors; empty means the catalog is coherent."""
+def load_environments(root=None):
+    """Load ``dependencies/environments/*.yaml``: the isolated dependency environments.
+
+    Two dependencies that install the same Python module (the DeepEP forks, the two
+    MoonEP branches) cannot share one interpreter.  Each gets its own environment, and
+    every operator names the environment it needs (``dependencies/environments/map.yaml``
+    plus ``common.registry``), so a run never imports a module that another family
+    shadows.
+    """
+    directory = Path(root or SCRIPTS) / ENVIRONMENT_ROOT
+    environments = {}
+    for path in sorted(directory.glob("*.yaml")):
+        if path.name == "map.yaml":
+            continue
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        identifier = data.get("id") or path.stem
+        data["id"] = identifier
+        data["file"] = path.name
+        environments[identifier] = data
+    return environments
+
+
+def _validate_pin(identifier, entry, errors):
+    pin = entry.get("pin")
+    if not isinstance(pin, dict):
+        errors.append(f"{identifier}: pin must be a mapping")
+        return
+    kind = pin.get("kind")
+    if kind not in PIN_KINDS:
+        errors.append(f"{identifier}: invalid pin.kind {kind!r}")
+        return
+    value = str(pin.get("value") or "").strip()
+    if kind == "commit":
+        if not re.fullmatch(r"[0-9a-f]{40}", value):
+            errors.append(f"{identifier}: pin.value must be a full 40-hex commit, got {value!r}")
+        if not pin.get("verify"):
+            errors.append(f"{identifier}: a commit pin must say how it is verified")
+    elif kind == "release_tag":
+        if not value or value.lower() == "latest":
+            errors.append(f"{identifier}: release_tag pin needs a concrete tag")
+        if not pin.get("resolve"):
+            errors.append(f"{identifier}: a release_tag pin must declare how the commit is resolved")
+    elif kind == "pip":
+        if not entry.get("install_spec", {}).get("requirements"):
+            errors.append(f"{identifier}: a pip pin must name its requirement file")
+    elif kind == "in_repo":
+        if not str(entry.get("source_url") or "").startswith(("baselines/", "kernels/", "launchers/")):
+            errors.append(f"{identifier}: in_repo dependency must point at an in-repo path")
+
+
+def _validate_install_spec(identifier, entry, root, errors):
+    spec = entry.get("install_spec")
+    if not isinstance(spec, dict):
+        errors.append(f"{identifier}: install_spec must be a mapping")
+        return
+    mode = spec.get("mode")
+    if mode not in INSTALL_MODES:
+        errors.append(f"{identifier}: invalid install_spec.mode {mode!r}")
+        return
+    if mode == "pip":
+        requirements = spec.get("requirements")
+        if not requirements:
+            errors.append(f"{identifier}: pip install_spec needs requirements")
+        elif root is not None and not (Path(root) / requirements).is_file():
+            errors.append(f"{identifier}: requirement file {requirements} does not exist")
+    if mode == "source":
+        source = spec.get("source") or {}
+        if not source.get("url"):
+            errors.append(f"{identifier}: source install_spec needs source.url")
+        if not source.get("directory"):
+            errors.append(f"{identifier}: source install_spec needs source.directory")
+        if not source.get("pin"):
+            errors.append(f"{identifier}: source install_spec needs source.pin")
+        if not spec.get("steps"):
+            errors.append(f"{identifier}: source install_spec needs steps")
+    if not spec.get("verify"):
+        errors.append(f"{identifier}: install_spec needs a verify step")
+    if entry.get("installable") and mode in ("manual", "none"):
+        errors.append(f"{identifier}: installable but install_spec.mode is {mode}")
+
+
+def validate_manifest(data, root=None):
+    """Return a list of catalog errors; empty means the catalog is coherent.
+
+    Besides the original structural rules this enforces the ownership model: a
+    dependency either lives in this repository, is vendored here with a hash manifest,
+    is an external package with a concrete pin and an install path, or is host state
+    with a manual step. Anything else is a catalog error.
+    """
     errors = []
     if not isinstance(data, dict):
         return ["manifest is not a mapping"]
-    if data.get("schema_version") != 1:
+    if data.get("schema_version") not in (1, 2):
         errors.append(f"unsupported schema_version {data.get('schema_version')!r}")
     vocabulary = data.get("vocabulary") or {}
     if list(vocabulary.get("check_status") or []) != list(STATUSES):
@@ -1126,6 +1299,8 @@ def validate_manifest(data):
     entries = data.get("dependencies") or []
     if not entries:
         errors.append("no dependencies declared")
+    environments = load_environments(root) if root is not None else {}
+    environment_ids = set(environments) or set(data.get("environments") or ())
     seen = set()
     covered = set()
     for entry in entries:
@@ -1143,6 +1318,14 @@ def validate_manifest(data):
             errors.append(f"{identifier}: invalid kind {entry.get('kind')!r}")
         if entry.get("category") not in CATEGORIES:
             errors.append(f"{identifier}: invalid category {entry.get('category')!r}")
+        if entry.get("ownership") not in OWNERSHIPS:
+            errors.append(f"{identifier}: invalid ownership {entry.get('ownership')!r}")
+        if environment_ids and entry.get("environment") not in environment_ids:
+            errors.append(f"{identifier}: unknown environment {entry.get('environment')!r}")
+        if not isinstance(entry.get("modules"), list):
+            errors.append(f"{identifier}: modules must be a list")
+        if not isinstance(entry.get("conflicts"), list):
+            errors.append(f"{identifier}: conflicts must be a list")
         required_by = tokens(entry.get("required_by"))
         if not required_by:
             errors.append(f"{identifier}: required_by is empty")
@@ -1166,9 +1349,35 @@ def validate_manifest(data):
             errors.append(f"{identifier}: kind pip must be installable")
         if entry.get("installable") is True and entry.get("kind") == "host_provided":
             errors.append(f"{identifier}: host_provided cannot be installable")
+        _validate_pin(identifier, entry, errors)
+        _validate_install_spec(identifier, entry, root, errors)
+        # Ownership rules: who is allowed to provide what.
+        ownership = entry.get("ownership")
+        if ownership == "host":
+            if entry.get("installable"):
+                errors.append(f"{identifier}: a host dependency cannot be installable")
+            if entry.get("install_spec", {}).get("mode") not in ("manual", "none"):
+                errors.append(f"{identifier}: a host dependency must install with mode manual")
+        if ownership == "vendored":
+            if check.get("type") != "vendored_source":
+                errors.append(f"{identifier}: a vendored dependency must use the vendored_source check")
+            if entry.get("installable"):
+                errors.append(f"{identifier}: a vendored tree is present, not installed")
+        if ownership == "external" and entry.get("installable"):
+            if entry.get("install_spec", {}).get("mode") not in ("pip", "source", "system"):
+                errors.append(
+                    f"{identifier}: an installable external dependency needs pip/source/system")
+        if entry.get("pin", {}).get("kind") in (None, "none") and entry.get("installable"):
+            errors.append(f"{identifier}: installable with no pin")
     for group in groups:
         if group and group not in covered:
             errors.append(f"capability group {group} has no dependency")
+    for entry in entries:
+        for conflict in entry.get("conflicts") or ():
+            if conflict not in seen:
+                errors.append(f"{entry.get('id')}: conflicts with unknown dependency {conflict}")
+            if conflict == entry.get("id"):
+                errors.append(f"{entry.get('id')}: conflicts with itself")
     return errors
 
 
@@ -1386,6 +1595,8 @@ def run_doctor(profile="all", categories=None, root=None, manifest=None, wheelho
             checks.append(result)
     if "B" in probed:
         checks.append(check_cann_matrix(ctx, data))
+    if "C" in probed:
+        checks.append(check_environment_isolation(ctx, data, checks))
 
     if categories is None:
         matrix, out_of_scope = build_matrix(data, checks)

@@ -1,0 +1,52 @@
+schema_version: 1
+# Operator -> dependency environment.
+#
+# The environment decides *which interpreter* runs an operator. It only has to be set
+# when an operator's dependency family installs a module name that another family also
+# installs (deep_ep, moonep, npu_patch); everything else runs in `base`.
+#
+# common/registry.py attaches this to every Operator and refuses an operator without an
+# environment or an environment file that does not exist. Adding an operator means adding
+# it to the registry *and* here; the consistency test enforces both directions.
+default: base
+operators:
+  # DeepEP (lueelu fork) family, including its experiments packages.
+  deepep_ascend: deep_ep_lueelu
+  deepep_lueelu: deep_ep_lueelu
+  deepep_direct_lueelu: deep_ep_lueelu
+  deepep_cann: deep_ep_lueelu
+  deepep_sglang: deep_ep_lueelu
+  ep_gmm_fused_lueelu: deep_ep_lueelu
+  megamoe_lueelu: deep_ep_lueelu
+  dispatch_ffn_combine_sglang: deep_ep_lueelu
+  fused_deep_moe_sglang: deep_ep_lueelu
+  # DeepEP V2 fork: the same module name, a different source tree.
+  deepep_v2_ascend: deep_ep_v2
+  # MoonEP branches.
+  moonep: moonep_npu
+  moonep_dynamic_planner: moonep_npu
+  moonep_server_dedup: moonep_dedup
+  # Everything else runs in the base environment (see environments/base.yaml).
+  allgather_hccl: base
+  alltoall_hccl: base
+  allgather_megatron: base
+  alltoall_megatron: base
+  allgather_fsdpturbo: base
+  alltoall_fsdpturbo: base
+  fused_fsdpturbo: base
+  chunkmoe_fsdpturbo: base
+  domino_fsdpturbo: base
+  mc2_fsdpturbo: base
+  megamoe_fsdpturbo: base
+  megamoe_td: base
+  megamoe_cann: base
+  megamoe_deepgemm_ascend: base
+  allgather_overlap_mindspeed: base
+  hierarchical_alltoallv_mindspeed: base
+  mc2_dispatch_cann: base
+  mc2_dispatch_cann_v1: base
+  mc2_dispatch_cann_v3: base
+  mc2_combine_add_rmsnorm_cann: base
+  alltoallv_gmm_cann: base
+  alltoallv_quant_gmm_cann: base
+  dispatch_ffn_combine_vllm_ascend: base

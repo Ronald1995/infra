@@ -1,0 +1,21 @@
+schema_version: 1
+id: deep_ep_v2
+title: DeepEP V2 (DeepEP_9283) environment
+description: >-
+  Isolated environment for deepep_v2_ascend, built on the pinned lishaoxun/DeepEP_9283
+  fork. It installs the same module name (`deep_ep`) as the lueelu fork, which is why it
+  never shares an interpreter with deep_ep_lueelu.
+isolated: true
+python: ">=3.10,<3.13"
+requirements:
+  - python/base.txt
+  - python/npu.txt
+inherits: base
+conflicts_with:
+  - deep_ep_lueelu
+members:
+  - deep-ep-v2
+notes: >-
+  `pip install deep_ep` from this fork replaces the lueelu one. The doctor's
+  `environment.isolation` check fails when both distributions are importable, and the
+  dependency report names which environment each operator needs.
