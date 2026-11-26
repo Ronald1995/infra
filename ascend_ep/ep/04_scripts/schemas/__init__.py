@@ -18,7 +18,7 @@ report show a failed transport case in the transport table instead of dropping i
 STATUSES = (
     "passed", "unsupported", "dependency_missing", "environment_unavailable", "source_unavailable",
     "not_implemented", "correctness_failed", "runtime_failed", "timeout", "oom", "not_run",
-    "not_applicable",
+    "not_applicable", "blocked_topology", "unverified",
 )
 RETRYABLE = {"not_run", "runtime_failed", "timeout", "oom", "environment_unavailable",
              "dependency_missing", "source_unavailable"}
@@ -27,7 +27,7 @@ RETRYABLE = {"not_run", "runtime_failed", "timeout", "oom", "environment_unavail
 MEASURED = {"passed"}
 #: Statuses that mean "the plan could not run this point, for a recorded reason".
 NOT_RUN = {"unsupported", "dependency_missing", "environment_unavailable", "source_unavailable",
-           "not_implemented", "not_run", "not_applicable"}
+           "not_implemented", "not_run", "not_applicable", "blocked_topology"}
 #: Statuses that mean "the case was attempted and failed".
 FAILED = {"correctness_failed", "runtime_failed", "timeout", "oom"}
 #: Severity order from best to worst: the coverage matrix keeps the *highest*
@@ -41,6 +41,7 @@ SEVERITY = ("passed", "not_run", "not_applicable", "unsupported", "source_unavai
 #: no result record at all, so it can only be produced by the report layer.
 STATUS_GROUPS = (
     ("Passed", ("passed",)),
+    ("Unverified", ("unverified",)),
     ("Failed", ("correctness_failed", "runtime_failed", "timeout", "oom")),
     ("Unsupported", ("unsupported", "not_implemented")),
     ("Dependency Missing", ("dependency_missing",)),
@@ -48,6 +49,7 @@ STATUS_GROUPS = (
     ("Source Unavailable", ("source_unavailable",)),
     ("Not Run", ("not_run",)),
     ("Not Applicable", ("not_applicable",)),
+    ("Blocked Topology", ("blocked_topology",)),
     ("Missing", ("missing",)),
 )
 _STATUS_TO_GROUP = {status: label for label, statuses in STATUS_GROUPS for status in statuses}

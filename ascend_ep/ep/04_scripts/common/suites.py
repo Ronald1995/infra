@@ -25,7 +25,7 @@ L0_SUITES = ("hardware", "memory", "transport", "collectives")
 BUSINESS_SUITES = (
     "decode", "prefill", "training_tail", "high_throughput", "strong_scaling",
     "weak_scaling", "topology", "load_balance", "dedup", "overlap", "quantized",
-    "routing_imbalance", "straggler",
+    "routing_imbalance", "straggler", "long_tail",
 )
 
 ALL_SUITES = ("all", *L0_SUITES, *BUSINESS_SUITES)
@@ -127,6 +127,11 @@ SUITES = {
         levels=("L1", "L2", "L3", "L4"),
         case_ids=frozenset({"COMM-001", "COMM-003", "COMM-004", "MOE-001", "MOE-003",
                             "LAYER-001"})),
+    "long_tail": Suite(
+        "long_tail", "routing imbalance x straggler: the combined long tail",
+        levels=("L1", "L2", "L3", "L4"),
+        case_ids=frozenset({"COMM-001", "COMM-003", "MOE-001", "MOE-003", "LAYER-001",
+                            "LAYER-003"})),
     "quantized": Suite("quantized", "quantized dispatch and fusion",
                        levels=("L1", "L2", "L3"),
                        case_ids=frozenset({"COMM-009", "FUSE-008", "MOE-006"})),

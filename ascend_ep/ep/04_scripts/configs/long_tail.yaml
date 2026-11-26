@@ -1,0 +1,56 @@
+# Combined long-tail scenarios (C1..C9): routing imbalance x slow rank.
+#
+# Each stressed point pairs with a baseline under the *same* condition:
+#   - a straggler point pairs with the same routing, straggler disabled;
+#   - a routing-target point pairs with the same case/operator/EP/tokens/model under
+#     `routing: balanced`.
+# The analysis reports `not_applicable` when no such baseline was measured.
+suite_id: long_tail
+workload:
+  tokens_per_rank: 4096
+  routing: balanced
+  hot_rank: 0
+  seed: 42
+benchmark:
+  warmup: 20
+  iterations: 50
+  levels: [L1, L2, L3, L4]
+  rank_reduction: max
+  straggler:
+    enabled: true
+    seed: 42
+    selection: {mode: fixed, ranks: [0]}
+    injection: {stage: before_operation, method: host_delay, delay_us: 500}
+    trigger: {probability: 1.0, every_n_iterations: 1}
+    calibration: {relative_tolerance: 0.10}
+matrix:
+  # C1 ideal baseline: balanced routing, no straggler.
+  - workload: {routing: balanced}
+    benchmark: {straggler: {enabled: false}}
+  # C2 load long tail only.
+  - workload: {routing: target_distribution,
+               routing_control: {target_metric: rank_max_mean, target_value: 4.0}}
+    benchmark: {straggler: {enabled: false}}
+  # C3 hardware long tail only (balanced routing, one slow rank).
+  - workload: {routing: balanced}
+  # C4 worst case: hotspot routing plus the hotspot rank slow.
+  - workload: {routing: target_distribution,
+               routing_control: {target_metric: rank_max_mean, target_value: 4.0}}
+  # C5 tail propagation: the slow rank is not the hotspot.
+  - workload: {routing: target_distribution,
+               routing_control: {target_metric: rank_max_mean, target_value: 4.0}}
+    benchmark: {straggler: {selection: {mode: fixed, ranks: [1]}}}
+  # C6 dynamic hotspot with a fixed slow rank.
+  - workload: {routing: dynamic_trace, routing_control: null}
+  # C7 fixed hotspot with a rotating slow rank.
+  - workload: {routing: target_distribution,
+               routing_control: {target_metric: rank_max_mean, target_value: 4.0}}
+    benchmark: {straggler: {selection: {mode: rotating, ranks: [0]}}}
+  # C8 large-scale tail: 12.5% of the group is slow.
+  - workload: {routing: target_distribution,
+               routing_control: {target_metric: rank_max_mean, target_value: 4.0}}
+    benchmark: {straggler: {selection: {mode: fraction, fraction: 0.125}}}
+  # C9 planner on, worst case.
+  - workload: {routing: target_distribution,
+               routing_control: {target_metric: rank_max_mean, target_value: 4.0}}
+    load_balance: {enabled: true, redundant_experts: 3}

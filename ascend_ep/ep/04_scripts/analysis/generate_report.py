@@ -3,7 +3,7 @@ from analysis.comparison import (
     comparison_groups, dedup_comparisons, fixed_owner_comparisons, fusion, pareto,
     planner_comparisons, scaling,
 )
-from common.storage import write_json
+from common.storage import write_json, load_json
 from profiling.analyze_overlap import analyze
 from profiling.parse_profile import parse_directory
 
@@ -41,7 +41,16 @@ def analyze_run(root, rows, extra_rows=()):
                 "fusion_speedup": item["fusion_speedup"], "serial_latency_ms": item["serial_latency_ms"],
                 "fused_latency_ms": item["fused_latency_ms"], "evidence": item["serial_task"],
             })
+    from analysis import long_tail
+
+    coverage_metrics = None
+    manifest_path = root / "manifest.json"
+    if manifest_path.is_file():
+        from common import coverage as coverage_module
+
+        coverage_metrics = coverage_module.metrics(load_json(manifest_path), rows)
     output = {"comparison_details": comparison_groups(rows), "fusion": measured_fusion,
+              "long_tail": long_tail.analyze(rows), "coverage_metrics": coverage_metrics,
               "scaling_groups": scaling(combined), "pareto": pareto(rows), "profiles": profiles,
               "planner_comparisons": planner_comparisons(combined),
               "fixed_owner_comparisons": fixed_owner_comparisons(combined),

@@ -21,6 +21,7 @@ from reporting.context import build
 from reporting.coverage import write as write_coverage
 from reporting.l0_report import write as write_l0
 from reporting.sections import (
+    long_tail,
     comparison, coverage as coverage_section, environment, evidence, failures, l0 as l0_section,
     load_balance, operator, overlap, recommendations, scalability, summary,
 )
@@ -36,9 +37,10 @@ SECTIONS = (
     scalability.render,    # 6. EP Scalability
     overlap.render,        # 7. Communication and Compute Overlap
     load_balance.render,   # 8. Load Balance and Planner
-    failures.render,       # 9. Failures and Limitations
-    evidence.render,       # 10. Evidence and Raw Data
-    recommendations.render,  # 11. Recommendations and Next Steps
+    long_tail.render,      # 9. Long tail: routing targets, stragglers, combined
+    failures.render,       # 10. Failures and Limitations
+    evidence.render,       # 11. Evidence and Raw Data
+    recommendations.render,  # 12. Recommendations and Next Steps
 )
 
 #: The columns of ``benchmark_summary.csv``; kept stable for existing consumers.

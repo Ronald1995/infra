@@ -119,7 +119,7 @@ Current expansion (CPU, no hardware consulted):
 
 ```
 $ python -c "from common.plan import load_plan, expand; run = expand(load_plan('configs/benchmark_plan.yaml')); ..."
-tasks 53650   per ep {8: 10730, 16: 10730, 32: 10730, 64: 10730, 128: 10730}
+tasks 63145   per ep {8: 12629, 16: 12629, 32: 12629, 64: 12629, 128: 12629}
 config_audit ok True   (cores 480 tasks, quiet_modes 480 tasks, both swept)
 ```
 
@@ -189,6 +189,37 @@ straggler:
   the per-rank summary lands in the task result (`record["straggler"]`) and the
   baseline point of `configs/straggler.yaml` disables the injection so the slowdown
   ratio has a denominator measured under the same configuration.
+
+## 5.7 Long tail and coverage metrics
+
+`analysis/long_tail.py` pairs every stressed point with a baseline measured under the
+same condition and reports `slowdown_ratio`, `throughput_retention`, `amplification`
+(extra group latency / injected delay) and the calibration error of the injection:
+
+* a straggler point pairs with the same routing and the straggler disabled;
+* a routing-target point pairs with the same case/operator/EP/tokens/model under
+  `routing: balanced`;
+* no matching baseline -> `not_applicable` with the reason. A ratio is never computed
+  against a different configuration.
+
+`configs/long_tail.yaml` holds the nine combined scenarios from the spec (C1 ideal
+baseline, C2 load-only, C3 hardware-only, C4 hotspot routing + hotspot slow, C5 tail
+propagation, C6 dynamic hotspot, C7 rotating slow, C8 12.5% slow, C9 planner on).
+
+`common/coverage.py` keeps four numbers apart instead of one "pass rate":
+
+| Metric | Denominator | What it proves |
+|---|---|---|
+| planning | planned requirements | the matrix expansion is complete |
+| execution | applicable requirements (`not_applicable` excluded) | the run actually reached them |
+| correctness | executed requirements | the numbers are right |
+| verified performance | applicable requirements | the mechanism was proven, not a fallback |
+
+`unverified`, `blocked_topology`, `not_run` and the failure statuses all lower the
+right metric: a mechanism with no implementation can reach 100% planning coverage and
+still cannot reach 100% verified coverage, and the report now says so explicitly
+(`analysis/results.json` carries `coverage_metrics` and `long_tail`; the report has a
+dedicated long-tail section).
 
 ## 6. What is still open (tracked, not hidden)
 
