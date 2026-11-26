@@ -12,9 +12,9 @@ EP Size × Suite × Case × Operator × Parameter Variant
 
 | 层 | 位置 | 职责 |
 |---|---|---|
-| Case Catalog | `common/cases.py` | 唯一的 Case 定义来源（83 个 ID / 79 个 canonical + 4 个 legacy alias） |
+| Case Catalog | `common/case_spec.py`（`common/cases.py` 为兼容外壳） | 唯一的 Case 定义来源（83 个 ID / 79 个 canonical + 4 个 legacy alias）；每个 Case 自带 handler、variants、sweep、applicability、transform、owner |
 | Suite | `common/suites.py` | 按 level / category / case id 选择 Case，不定义 Case |
-| Parameter Variant | `common/variants.py` | Case-specific 参数展开（消息大小窗口、peer sweep、shape mode、机制可用性） |
+| Parameter Variant | `common/variants.py` | 把 `CaseSpec.variants` / `sweep` / `size_window` 展开成参数（消息大小窗口、peer sweep、shape mode、机制可用性），不判断 Case 语义 |
 | EP 环境配置 | `configs/ep{8,64,128}_bf16.yaml` | 只描述 EP 环境：EP/TP、模型、专家数、拓扑来源、rank mapping |
 | Suite 配置 | `configs/{suite}.yaml` | 只描述场景：workload、benchmark 维度、operators |
 | Benchmark Plan | `configs/benchmark_plan.yaml` | 组合 base → EP → Suite → Case variant，生成三个 EP Size 的完整 Manifest |
@@ -245,23 +245,34 @@ python run_benchmark.py run    --config configs/ep8_bf16.yaml --cases COMM-001  
 
 ## 9. 扩展方式
 
-- 新增 Case：只在 `common/cases.py` 添加定义，并按类别加入 Suite（如属于现有 Suite 的
-  category 则无需改 Suite 表）。
+- 新增 Case：在 `common/case_spec.py` 增加一行（id / level / operation / handler /
+  variants / sweep / correctness / applicability / transform），再在
+  `benchmarks/cases/<level 模块>.py` 写一个 handler 并登记到该模块的 `HANDLERS`。不需要改
+  `scheduler.py`、`variants.py` 或 `cases.py`；`tests/test_case_spec.py` 会验证 handler
+  覆盖与 EP 矩阵一致性。
 - 新增 Suite：在 `common/suites.py` 增加声明式 Suite，并在 `configs/benchmark_plan.yaml`
   的 `suite_configs` 中登记可选场景文件。
-- 新增参数维度：在 `common/variants.py` 增加 Case-specific 展开函数，不要在
-  `scheduler.py` 里硬编码。
+- 新增参数维度：在 `common/case_spec.py` 的 `SWEEPS` 与 `CaseSpec.sweep` 声明，然后在
+  `common/variants.py` 的对应 family 展开函数里消费它，不要在 `scheduler.py` 里硬编码。
 - 新增 EP Size：新增 `configs/ep{N}_bf16.yaml`（只写环境），并在 plan 的 `ep_configs`
-  登记；`check_completeness` 会验证它与其它 EP Size 的 Case 集合一致。
+  登记；`check_completeness` 验证 Case 集合一致，`check_parity` 验证
+  `(case, level, operator, variant)` 的多重集一致。
 
 ## 10. 测试
 
+`tests/test_case_spec.py` 覆盖：CaseSpec 作为唯一来源、每层不再保留 case-ID 表、handler 覆盖、
+variant 归属、EP Size 不变性（`check_parity` 拒绝被 capability 压缩的变体）、非可执行点仍保留任务、
+L0 不参与 operator 笛卡尔积、transform 声明化。
 `tests/test_matrix.py` 覆盖：EP Size 覆盖一致性、L0 展开与 alias、L1～L4 展开与 capability、
 Suite 映射与去重、Strong/Weak Scaling、Full Matrix 组合与去重、拓扑来源、执行完整性统计、
 Case×Operator×Variant 覆盖、L0 scale-out 分组、覆盖率与性能对比报告、CLI 组合。
 `tests/test_l0.py` 覆盖：transport 机制过滤（enabled / 空列表 / 未配置）、peer 策略（无跨机 Peer、
 无拓扑、peer_count 超限、确定性轮转、不回退）、capability 矩阵与路径验证。
-所有测试均为离线规划/聚合测试，不代表真实 NPU 性能。
+`tests/test_payload.py`、`tests/test_dataplane.py`、`tests/test_evidence.py` 覆盖 float32 载荷与
+可精确规约预算、data plane / completion 契约、证据与能力分级。
+`tests/operators/test_native_execution.py` 用两个真实 Gloo rank 执行 CPU 可用的适配器，并断言
+其余适配器以带原因的 blocked 状态呈现。
+所有测试均为离线规划/聚合测试（除 Gloo 集成测试外），不代表真实 NPU 性能。
 
 常用命令：
 
