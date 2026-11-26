@@ -39,7 +39,22 @@
         "ep_size",
         "tp_size",
         "timeout_seconds"
-      ]
+      ],
+      "properties": {
+        "hierarchical_inner_size": {"type": "integer", "minimum": 2}
+      }
+    },
+    "workload": {
+      "type": "object",
+      "properties": {
+        "router_bias": {"enum": ["rotating_hot_expert", "remote_rank", null]}
+      }
+    },
+    "benchmark": {
+      "type": "object",
+      "properties": {
+        "planner_steps": {"type": "integer", "minimum": 2}
+      }
     }
   }
 }

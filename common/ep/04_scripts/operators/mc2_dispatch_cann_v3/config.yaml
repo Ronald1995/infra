@@ -1,2 +1,4 @@
 extends: ../../configs/ep8_bf16.yaml
+workload: {tokens_per_rank: 128}
+benchmark: {levels: [L1], phase: forward}
 operators: [mc2_dispatch_cann_v3]

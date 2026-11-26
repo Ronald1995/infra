@@ -17,6 +17,7 @@ class Workload:
     local_experts: tuple[int, ...]
     route: object
     limit: float
+    router_bias: object = None
 
     def leaves(self):
         return (self.hidden_states, self.topk_weights, self.w_gate, self.w_up, self.w_down)
@@ -48,6 +49,20 @@ def activation_inputs(torch, config, rank, step, tokens):
             random_tensor(torch, (tokens, h), seed + 1, h ** -0.5))
 
 
+def router_bias(torch, config, placement, rank, step):
+    mode = config["workload"].get("router_bias")
+    if mode is None:
+        return None
+    if mode == "rotating_hot_expert":
+        favored = {(step + config["workload"].get("hot_expert", 0)) % len(placement)}
+    else:
+        domains = config["topology"]["server_ids"]
+        peers = [peer for peer, domain in enumerate(domains) if domain != domains[rank]]
+        target = peers[(rank + step) % len(peers)]
+        favored = {expert for expert, owner in enumerate(placement) if owner == target}
+    return torch.tensor([8.0 if expert in favored else 0.0 for expert in range(len(placement))])
+
+
 def make_workload(context, step=0, allocate_weights=True):
     torch, cfg, rank = context.torch, context.config, context.rank
     model = cfg["model"]
@@ -73,11 +88,15 @@ def make_workload(context, step=0, allocate_weights=True):
                                   cfg["workload"]["seed"] + 7499,
                                   model["hidden_size"] ** -0.5)
     router_weight = router_weight.to(context.device, dtype).requires_grad_()
+    bias = router_bias(torch, cfg, route.placement, rank, step)
     return Workload(x, torch.from_numpy(route.ids).to(context.device), probabilities,
-                    *tensors, dy, router_weight, owned, route, model["swiglu_limit"])
+                    *tensors, dy, router_weight, owned, route, model["swiglu_limit"],
+                    bias.to(context.device, dtype) if bias is not None else None)
 
 
 def router(workload):
     logits = workload.hidden_states @ workload.router_weight.T
+    if workload.router_bias is not None:
+        logits = logits + workload.router_bias
     values, ids = logits.topk(workload.topk_ids.shape[-1])
     return replace(workload, topk_ids=ids, topk_weights=values.float().softmax(-1).to(logits.dtype))

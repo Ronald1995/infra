@@ -13,7 +13,7 @@ CAPABILITIES = (
     "dispatch_gmm", "gmm_combine", "chunk_pipeline", "tile_schedule", "comm_resources",
     "quantized_dispatch", "quantized_fusion", "fused_backward", "rank_dedup",
     "server_dedup", "dynamic_planner", "recompute", "concurrent", "router_layer", "combine_add_rmsnorm",
-    "dynamic_shapes", "planned_dispatch",
+    "dynamic_shapes", "planned_dispatch", "dedup_training",
 )
 
 
@@ -57,6 +57,12 @@ def check_constraints(spec, config):
     limits = spec.constraints
     if config["device"] not in limits.get("devices", ["npu"]):
         return f"{spec.id} requires {limits.get('devices', ['npu'])}"
+    if limits.get("hierarchical"):
+        inner = d.get("hierarchical_inner_size", 0)
+        if type(inner) is not int or inner < 2 or d["ep_size"] % inner or d["ep_size"] // inner < 2:
+            return "native hierarchy requires at least two outer ranks, each with at least two inner ranks"
+        if not config["topology"].get("server_ids"):
+            return "native hierarchy requires an explicit rank-to-server map"
     if m["dtype"] not in limits.get("dtypes", [m["dtype"]]):
         return f"dtype {m['dtype']} outside adapter's supported dtypes {limits['dtypes']}"
     sizes = limits.get("ep_sizes")
@@ -75,6 +81,10 @@ def check_constraints(spec, config):
         return f"tokens per rank exceeds adapter capacity {limits['max_tokens']}"
     if limits.get("contiguous_placement") and w.get("expert_placement") is not None:
         return "adapter requires default contiguous expert placement"
+    for key in ("hidden_size", "top_k", "num_experts"):
+        lower, upper = limits.get(f"{key}_range", (None, None))
+        if lower is not None and not lower <= m[key] <= upper:
+            return f"{key}={m[key]} is outside the inclusive range [{lower}, {upper}]"
     routes = limits.get("routing")
     if routes and w["routing"] not in routes:
         return f"adapter requires routing from {routes}"

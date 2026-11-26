@@ -1,4 +1,4 @@
-"""MoonEP dev_npu planner plus dispatch. The full training cycle is a separate case."""
+"""MoonEP dev_npu planner, dispatch and replica-aware training."""
 from common.backend import BenchmarkUnavailable, EPBackend
 
 
@@ -13,6 +13,12 @@ class MoonEPPlannedDispatchBackend(EPBackend):
         self.initialized = False
 
     def prepare(self, work):
+        self.allocate(work, training=False)
+
+    def prepare_training(self, work):
+        self.allocate(work, training=True)
+
+    def allocate(self, work, training):
         ctx = self.context
         desired = ctx.config["load_balance"].get("redundant_experts", len(work.local_experts))
         if desired != len(work.local_experts):
@@ -23,6 +29,13 @@ class MoonEPPlannedDispatchBackend(EPBackend):
             len(work.route.placement), ctx.size, B=desired, group=ctx.ep_group,
             use_udma=use_udma, planning_use_udma=False, explicitly_destroy=True,
         )
+        if training:
+            from moonep.buffer import release_owned
+            from operators.moonep_dynamic_planner.training import Projections
+            # Register weight, home-gradient and replica carrier descriptors
+            # before SHMEM computes its process-wide symmetric allocation.
+            self.release_owned = release_owned
+            self.projections = Projections(work, ctx)
         options = dict(group=ctx.ep_group, enable_udma=use_udma, qp_count=2 if use_udma else 0)
         ip_port = ctx.config["benchmark"].get("shmem_rendezvous")
         if ip_port:
@@ -56,6 +69,10 @@ class MoonEPPlannedDispatchBackend(EPBackend):
                 "planned_expert_copies": int((plan.experts_to_copy >= 0).sum().item())}
 
     def finalize(self):
+        if getattr(self, "release_owned", None) is not None:
+            self.release_owned(buffers=(self.buffer,))
+            self.projections = None
+            return
         try:
             if getattr(self, "initialized", False):
                 self.runtime.finalize()

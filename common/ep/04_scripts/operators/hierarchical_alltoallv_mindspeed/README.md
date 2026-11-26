@@ -1,14 +1,16 @@
 # hierarchical_alltoallv_mindspeed
 
-原生入口为 `--moe-hierarchical-alltoallv / --moe-tp-extend-ep`。参考提交为 `c68e201a5733065b3aa59a3d44dc5e2ec700d7c9`。 [源码](https://gitcode.com/Ascend/MindSpeed)
+原生入口为 `MoELayerOverlapAll2All.apply`，使用 `preprocess_tp_extend_ep` 和 MindSpeed 的分层 token permutation。有明确的外部 AllGather/ReduceScatter 组和节点内 AllToAllV 组。 [MindSpeed 固定实现](https://gitcode.com/Ascend/MindSpeed/blob/c68e201a5733065b3aa59a3d44dc5e2ec700d7c9/mindspeed/core/transformer/moe/moe_layer_overlap_all2all.py) · [Megatron core_r0.8.0](https://github.com/NVIDIA/Megatron-LM/tree/baf94af3c667248865f23df73b9fb8e2395e6fd0)
 
-- **接入与验证** · `not_implemented`。Pinned ascendep demo is a launcher for a separate Megatron training driver. The TP-extend-EP model and workload integration is pending.
-- **布局和范围** · 平台、容量及布局限制见源码。输入含 `[T,H]`、`[T,K]` 和本地专家权重，专家前向输出为 `[T,H]`。
-- **层次与能力** · 待接入。独立能力待接入。 [注册表](../registry.yaml)
-- **计时和统计** · 必需布局转换和通信计入相应用例。有效专家前向 FLOPs 为 `6 × routes × H × I`，完整反向为其两倍。通信模型按实际 trace 统计。 [方法与计时边界](../../../03_benchmark/ep_benchmark_methodology.md)
-- **依赖** · 按源码安装目标依赖。计划保留接入缺口。
-- **归档** · [测试矩阵](../README.md) · [EP8 历史报告](../../../05_results/ep_benchmark_ep8.md) · [结果索引](../../../05_results/raw/README.md)
+- L3 共享固定路由。L4 可由统一 Runner 加入 Router。原生前反向执行通信及 GMM，适配层转换分片权重并回传输入、路由权重与本地专家参数梯度。使用限幅 SwiGLU，无共享专家。
+- BF16 `[T,H]` 和等长 `[T,K]`。全局专家数能被物理 EP rank 数整除。显式设置 `hierarchical_inner_size` 和 `server_ids`，运行时核对单节点内层与实际进程组顺序。单节点环境不能启动此路径。
+- 需要指定提交的 MindSpeed、Megatron、torch_npu 和可用的 MindSpeed GMM 扩展。当前没有目标集群执行证据。
+- 通算边界见 [测试方法](../../../03_benchmark/ep_benchmark_methodology.md)。有效专家前向 FLOPs 为 `6 × routes × H × I`。 [结果归档](../../../05_results/raw/README.md)
 
 ```sh
-python -m operators.hierarchical_alltoallv_mindspeed.benchmark --config operators/hierarchical_alltoallv_mindspeed/config.yaml
+python -m operators.hierarchical_alltoallv_mindspeed.benchmark \
+  --config operators/hierarchical_alltoallv_mindspeed/config.yaml --cases MOE-003 \
+  --nnodes 2 --nproc-per-node 8 --node-rank "$NODE_RANK" \
+  --master-addr "$MASTER_ADDR" --master-port 29520 --output /shared/ep-runs \
+  --run-id hierarchical-ep16 --session launch-hierarchical-ep16
 ```

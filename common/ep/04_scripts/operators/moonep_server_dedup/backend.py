@@ -17,6 +17,12 @@ class MoonEPDedupBackend(EPBackend):
         self.initialized = False
 
     def prepare(self, work):
+        self.allocate(work, training=False)
+
+    def prepare_training(self, work):
+        self.allocate(work, training=True)
+
+    def allocate(self, work, training):
         ctx = self.context
         mode = ctx.config["dedup"]["mode"]
         if mode not in {"rank", "server"}:
@@ -27,11 +33,20 @@ class MoonEPDedupBackend(EPBackend):
                 len(set(domains[i:i + 8])) != 1 for i in range(0, ctx.size, 8)
             ):
                 raise BenchmarkUnavailable("unsupported", "server dedup requires an explicit contiguous eight-rank board map")
+            hosts = [entry["host"] for entry in ctx.gather(ctx.mapping())]
+            if any(len(set(hosts[i:i + 8])) != 1 for i in range(0, ctx.size, 8)):
+                raise BenchmarkUnavailable("unsupported", "a server dedup group spans physical hosts")
         self.buffer = self.kind(
             len(work.hidden_states), work.hidden_states.shape[1], work.topk_ids.shape[1],
             len(work.route.placement), ctx.size, B=len(work.local_experts), group=ctx.ep_group,
             use_udma=True, dedup_mode=mode, ranks_per_server=8, explicitly_destroy=True,
         )
+        if training:
+            from moonep.buffer import release_owned
+            from operators.moonep_dynamic_planner.training import Projections
+
+            self.release_owned = release_owned
+            self.projections = Projections(work, ctx)
         options = dict(group=ctx.ep_group, enable_udma=True, qp_count=2)
         ip_port = ctx.config["benchmark"].get("shmem_rendezvous")
         if ip_port:
@@ -47,6 +62,9 @@ class MoonEPDedupBackend(EPBackend):
             work.hidden_states.detach().contiguous(), work.topk_weights.detach().float(),
             topk_experts_sk=ids, tokens_per_expert=counts,
         )
+
+    def planned_dispatch(self, work):
+        return self.deduplicated_dispatch(work)
 
     def validate_dedup(self, work, dispatched):
         from common.validation import CorrectnessError, error
@@ -67,6 +85,10 @@ class MoonEPDedupBackend(EPBackend):
                 "native_dup_counts": plan.dup_counts.tolist()}
 
     def finalize(self):
+        if getattr(self, "release_owned", None) is not None:
+            self.release_owned(buffers=(self.buffer,))
+            self.projections = None
+            return
         try:
             if getattr(self, "initialized", False):
                 self.runtime.finalize()

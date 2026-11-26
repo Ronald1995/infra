@@ -42,12 +42,12 @@ python run_benchmark.py baseline --config configs/ep8_bf16.yaml --levels L1,L2
 # 批量运行、恢复及产物
 python run_benchmark.py run --config configs/ep8_bf16.yaml --operators all
 python run_benchmark.py resume --run-id RUN_ID
-python run_benchmark.py profile --run-id RUN_ID
+python run_benchmark.py profile --run-id RUN_ID --cases COMM-001,MOE-003
 python run_benchmark.py analyze --run-id RUN_ID
 python run_benchmark.py report --run-id RUN_ID
 ```
 
-`--list-backends` 等价于 `list`，旧的 `--config PATH` 等价于 `run --config PATH`。`pipeline` 在同一 run 执行计划、样本采集、分析和报告。`profile` 重新运行已通过测点并独立保存 Trace。
+`--list-backends` 等价于 `list`，旧的 `--config PATH` 等价于 `run --config PATH`。未按层级或 Case 限定的 NPU `pipeline` 先运行公共基线，再运行算子用例。启用 `profiling.enabled` 时，每个后端、层级和配置组合选取一个已通过的用例单独采集 Trace，然后生成分析和报告。也可用 `profile` 独立采集已通过的用例。
 
 ## 多机和扩展性
 
@@ -68,7 +68,9 @@ launchers/run_ep64.sh --config configs/weak_scaling.yaml --ep-size 64 \
 - `schemas/` 提供版本化配置及结果。基线只有在配置、环境指纹均匹配时才能复用。NPU 缓存当前限单节点。
 - `--output` 可以改变归档根。默认见 [原始结果索引](../05_results/raw/README.md)。
 
-`not_implemented` 表示待接入。历史实测和新运行分开保存。设备计数器缺失时保留空值。部分量化推理、动态专家完整训练周期及若干原生 L1 路径仍待完成。当前覆盖与源码依据见 [算子接入矩阵](operators/README.md)。
+`not_implemented` 表示对应能力待接入。历史实测和新运行分开保存。设备计数器缺失时保留空值。各算子的适用版本、形状和用例边界见 [算子接入矩阵](operators/README.md)。
+
+专项入口包括 `configs/load_balance.yaml`、`configs/dedup.yaml` 和 `configs/overlap.yaml`。MoonEP 的训练用例对照固定归属 HCCL，并单独记录原生 fresh/cached plan 或 rank/server dedup。去重前后跨服务器字节数是对原始路由归属的 Dispatch 模型估算。报告中保留该计量边界。并发用例 MOE-007 在两条 NPU Stream 和两个 HCCL 通信组上提交两次独立专家前向。
 
 分开执行的扩展点可用 `report --run-id weak-128 --compare-run weak-8 --compare-run weak-64` 合并分析。NPU Smoke 可通过设置 `EP_RUN_NPU_TESTS=1` 后运行 `python -m pytest -m npu` 执行。
 

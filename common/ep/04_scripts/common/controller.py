@@ -192,13 +192,15 @@ def persist_case(path, record):
     write_json(path, record)
 
 
-def execute(root, manifest, args, profile=False, resume=False):
+def execute(root, manifest, args, profile=False, resume=False, representative=False):
     from hashlib import sha256
 
     session = args.session if args.nnodes > 1 else uuid4().hex
-    control = root / "logs" / f"control-{checked_id(session)}"
+    phase = "profile" if profile else "run"
+    control = root / "logs" / f"control-{checked_id(session)}-{phase}"
     failed = False
     environments = {}
+    profiled = set()
     for task in manifest["tasks"]:
         task_id = task["task_id"]
         path = result_path(root, task)
@@ -216,6 +218,16 @@ def execute(root, manifest, args, profile=False, resume=False):
         executable = task["status"] == "not_run" and task["reason"] is None
         eligible = executable and ((prior and prior["status"] == "passed") if profile else
                                   (not prior or resume and prior["status"] in RETRYABLE))
+        if profile:
+            cases = getattr(args, "cases", None)
+            eligible = eligible and (not cases or task["case_id"] in cases)
+        if representative:
+            config = task["config"]
+            group = (task["backend_id"], task["level"], fingerprint(config))
+            eligible = (eligible and config["device"] == "npu" and
+                        config["profiling"].get("enabled", False) and group not in profiled)
+            if eligible:
+                profiled.add(group)
         preflight = None
         if eligible and task["config"]["device"] == "npu" and args.nnodes == 1:
             python, env = environment_for(task)
@@ -241,6 +253,8 @@ def execute(root, manifest, args, profile=False, resume=False):
             persist_case(path, preflight)
             failed = True
             continue
+        if preflight and profile:
+            eligible = False
         key = baseline_key(manifest, task, args) if task["baseline"] and not profile else None
         cache = root.parent / ".baseline_cache" / f"{key}.json" if key else None
         cache_hit = eligible and cache and cache.is_file()

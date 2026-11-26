@@ -1,5 +1,7 @@
 """Analyze persisted performance and rank profiler artifacts."""
-from analysis.comparison import comparisons, fusion, pareto, scaling
+from analysis.comparison import (
+    comparisons, dedup_comparisons, fixed_owner_comparisons, fusion, pareto, planner_comparisons, scaling,
+)
 from common.storage import write_json
 from profiling.analyze_overlap import analyze
 from profiling.parse_profile import parse_directory
@@ -40,6 +42,9 @@ def analyze_run(root, rows, extra_rows=()):
             })
     output = {"comparison_groups": comparisons(rows), "fusion": measured_fusion,
               "scaling_groups": scaling(combined), "pareto": pareto(rows), "profiles": profiles,
+              "planner_comparisons": planner_comparisons(combined),
+              "fixed_owner_comparisons": fixed_owner_comparisons(combined),
+              "dedup_comparisons": dedup_comparisons(combined),
               "hypotheses": hypotheses, "profile_parse_errors": parse_errors}
     write_json(root / "analysis" / "results.json", output)
     return output

@@ -6,7 +6,7 @@ import torch
 
 from baselines.reference.collectives import CollectiveBackend
 from common.routing import generate
-from common.workload import activation_inputs, expert_parameters, router
+from common.workload import activation_inputs, expert_parameters, router, router_bias
 
 
 class CorrectnessError(Exception):
@@ -27,6 +27,18 @@ def error(actual, expected, threshold):
     return relative
 
 
+def opaque_row_order(rows, counts):
+    """Canonicalize row order within each expert independently of an opaque handle."""
+    indices = []
+    offset = 0
+    for part in rows.split(counts):
+        data = part.detach().float().cpu().numpy()
+        indices.append(np.lexsort(data.T[::-1]) + offset)
+        offset += len(part)
+    order = np.concatenate(indices) if indices else np.empty(0, dtype=np.int64)
+    return torch.from_numpy(order).to(rows.device)
+
+
 def validate_dispatch(work, result, ctx, trace, threshold=0):
     expected = tuple(trace["expert_counts"][e] for e in work.local_experts)
     if result.expert_token_counts != expected or len(result.expert_input) != sum(expected):
@@ -45,16 +57,10 @@ def validate_dispatch(work, result, ctx, trace, threshold=0):
         if not torch.equal(result.expert_ids, ref.expert_ids):
             raise CorrectnessError("expert boundaries disagree with reference")
 
-        def canonical(rows):
-            # Lexicographic matching is only used for APIs whose reverse map is opaque.
-            data = rows.detach().cpu().numpy().astype(np.float32)
-            order = np.lexsort(data.T[::-1])
-            return torch.from_numpy(data[order])
-
-        checks = [error(canonical(actual.float()), canonical(expected.float()), 0)
-                  for actual, expected in zip(result.expert_input.split(result.expert_token_counts),
-                                              ref.expert_input.split(ref.expert_token_counts))]
-        return {"dispatch_relative_l2": max(checks, default=0), "route_validation": "per_expert_token_multiset"}
+        actual = result.expert_input[opaque_row_order(result.expert_input, expected)]
+        wanted = ref.expert_input[opaque_row_order(ref.expert_input, expected)]
+        return {"dispatch_relative_l2": error(actual, wanted, threshold),
+                "route_validation": "per_expert_token_multiset"}
     observed = result.route_slots.argsort()
     wanted = ref.route_slots.argsort()
     if not torch.equal(result.route_slots[observed], ref.route_slots[wanted]) or not torch.equal(
@@ -85,10 +91,13 @@ def cpu_oracle(ctx, work, step, use_router, training):
     if use_router:
         # The router is replicated. Its local gradient is measured before any
         # optimizer-level replica reduction, while experts see all source ranks.
-        logits = torch.cat([
-            part @ (router_weight if rank == ctx.rank else router_weight.detach()).T
-            for rank, part in enumerate(x.split(work.route.tokens))
-        ]).to(dtype).float()
+        rank_logits = []
+        for rank, part in enumerate(x.split(work.route.tokens)):
+            weight = router_weight if rank == ctx.rank else router_weight.detach()
+            scores = (part @ weight.T).to(dtype)
+            bias = router_bias(torch, cfg, work.route.placement, rank, step)
+            rank_logits.append(scores if bias is None else scores + bias.to(dtype))
+        logits = torch.cat(rank_logits).float()
         logits, ids = logits.topk(ids.shape[-1])
         weights = logits.softmax(-1).to(dtype).float()
     output = torch.zeros_like(x)

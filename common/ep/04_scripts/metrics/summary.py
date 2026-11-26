@@ -12,6 +12,16 @@ def percentile(values, fraction):
     return values[lo] + (values[hi] - values[lo]) * (index - lo)
 
 
+def stage_latency(rank_records):
+    groups = list(zip(*(rank["samples"] for rank in rank_records)))
+    if not groups or "stage_ns" not in groups[0][0]:
+        return {}
+    return {
+        name: percentile([max(sample["stage_ns"][name] for sample in group) for group in groups], .5) / 1e6
+        for name in groups[0][0]["stage_ns"]
+    }
+
+
 def latency(rank_records):
     ranks = [record["samples"] for record in rank_records]
     sizes = {len(record) for record in ranks}
@@ -110,13 +120,15 @@ def compute(config, routes, op, milliseconds):
     forward, backward = 3 * single, 6 * single
     if op in {"backward", "fused_backward"}:
         effective = backward
-    elif op in {"forward_backward", "recompute", "router_training", "router_large_training"}:
+    elif op in {"forward_backward", "recompute", "router_training", "router_large_training",
+                "planner", "redundant_experts", "planner_training_steps", "rank_dedup_layer",
+                "server_dedup_layer"}:
         effective = forward + backward
-    elif op in {"serial_dispatch_gmm", "dispatch_gmm", "quantized_fusion"}:
+    elif op in {"serial_dispatch_gmm", "dispatch_gmm", "quantized_fusion", "tile_schedule", "comm_resources"}:
         effective = 2 * single
     elif op in {"serial_gmm_combine", "gmm_combine"}:
         effective = single
-    elif op == "multilayer":
+    elif op in {"multilayer", "concurrent"}:
         effective = 2 * forward
     else:
         effective = forward

@@ -1,9 +1,10 @@
 """Differentiable EP collectives with explicit split and reverse-route metadata."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import timedelta
 
 import torch
 
-from common.backend import CombineResult, DispatchResult, EPBackend
+from common.backend import BenchmarkUnavailable, CombineResult, DispatchResult, EPBackend
 
 
 class Exchange(torch.autograd.Function):
@@ -83,6 +84,35 @@ class CollectiveBackend(EPBackend):
     def __init__(self, spec, mode):
         super().__init__(spec)
         self.mode = mode
+        self.concurrent_group = None
+
+    def prepare_concurrent(self):
+        ctx = self.context
+        if ctx.device.type != "npu" or ctx.size < 2:
+            raise BenchmarkUnavailable("unsupported", "concurrent MoE requires at least two HCCL ranks")
+        self.concurrent_group = ctx.dist.new_group(
+            ranks=list(range(ctx.size)), backend="hccl",
+            timeout=timedelta(seconds=ctx.config["distributed"]["timeout_seconds"]),
+        )
+        self.concurrent_backend = CollectiveBackend(self.spec, self.mode)
+        self.concurrent_backend.initialize(replace(ctx, ep_group=self.concurrent_group))
+        self.concurrent_stream = ctx.torch.npu.Stream(device=ctx.device)
+
+    def concurrent_forward(self, work, other):
+        ctx = self.context
+        npu = ctx.torch.npu
+        current = npu.current_stream(ctx.device)
+        self.concurrent_stream.wait_stream(current)
+        # The two communication lanes own distinct HCCL communicators.
+        with npu.stream(self.concurrent_stream):
+            second = self.concurrent_backend.moe_forward(other)
+        first = self.moe_forward(work)
+        current.wait_stream(self.concurrent_stream)
+        return first, second
+
+    def finalize(self):
+        if self.concurrent_group is not None:
+            self.context.dist.destroy_process_group(self.concurrent_group)
 
     def dispatch(self, workload, cached=None):
         return self.alltoall(workload, cached) if self.mode == "alltoall" else self.allgather(workload)

@@ -15,7 +15,8 @@
         "combine",
         "router_layer",
         "recompute",
-        "dynamic_shapes"
+        "dynamic_shapes",
+        "concurrent"
       ],
       "constraints": {
         "devices": [
@@ -141,7 +142,8 @@
         "cached_dispatch",
         "async_dispatch",
         "async_combine",
-        "dynamic_shapes"
+        "dynamic_shapes",
+        "concurrent"
       ],
       "constraints": {
         "devices": [
@@ -318,17 +320,34 @@
       }
     },
     "hierarchical_alltoallv_mindspeed": {
-      "status": "not_implemented",
+      "status": "integrated",
       "source": "https://gitcode.com/Ascend/MindSpeed",
       "commit": "c68e201a5733065b3aa59a3d44dc5e2ec700d7c9",
-      "api": "--moe-hierarchical-alltoallv / --moe-tp-extend-ep",
-      "capabilities": [],
+      "api": "MoELayerOverlapAll2All with TP-extend-EP hierarchical dispatcher",
+      "capabilities": [
+        "moe_forward",
+        "moe_backward",
+        "router_weight_grad",
+        "expert_weight_grad",
+        "router_layer"
+      ],
+      "dependencies": [
+        "MindSpeed core_r0.8.0",
+        "Megatron-LM baf94af3c667248865f23df73b9fb8e2395e6fd0",
+        "torch_npu"
+      ],
       "constraints": {
         "devices": [
           "npu"
-        ]
-      },
-      "reason": "Pinned ascendep demo is a launcher for a separate Megatron training driver. The TP-extend-EP model and workload integration is pending."
+        ],
+        "dtypes": [
+          "bfloat16"
+        ],
+        "hierarchical": true,
+        "min_tokens": 1,
+        "equal_tokens": true,
+        "contiguous_placement": true
+      }
     },
     "mc2_dispatch_cann_v1": {
       "status": "integrated",
@@ -407,17 +426,49 @@
       }
     },
     "mc2_dispatch_cann_v3": {
-      "status": "not_implemented",
+      "status": "integrated",
       "source": "https://gitcode.com/cann/ops-transformer",
       "commit": "68a67e130417593f37ea3cece1ebfb4be366b95f",
-      "api": "aclnnMoeDistributeDispatchV3 / aclnnMoeDistributeCombineV3",
-      "capabilities": [],
+      "api": "MoeDistributeBuffer / context-based aclnnMoeDistributeDispatchV5 and CombineV5",
+      "capabilities": [
+        "dispatch",
+        "combine",
+        "moe_forward",
+        "quantized_dispatch"
+      ],
+      "dependencies": [
+        "cann_ops_transformer context Torch extension",
+        "torch_npu"
+      ],
       "constraints": {
         "devices": [
           "npu"
+        ],
+        "dtypes": [
+          "bfloat16",
+          "float16"
+        ],
+        "min_tokens": 1,
+        "max_tokens": 512,
+        "equal_tokens": true,
+        "contiguous_placement": true,
+        "hardware": [
+          "Ascend 950DT dispatch",
+          "Atlas A3 dispatch/combine"
+        ],
+        "hidden_size_range": [
+          1024,
+          8192
+        ],
+        "top_k_range": [
+          1,
+          16
+        ],
+        "num_experts_range": [
+          2,
+          2048
         ]
-      },
-      "reason": "The published V3 ACLNN API takes a communication context. The pinned op-plugin does not expose V3 dispatch/combine Python bindings."
+      }
     },
     "mc2_combine_add_rmsnorm_cann": {
       "status": "integrated",
@@ -561,7 +612,9 @@
         "expert_weight_grad",
         "dispatch_gmm",
         "gmm_combine",
-        "fused_backward"
+        "fused_backward",
+        "tile_schedule",
+        "comm_resources"
       ],
       "constraints": {
         "devices": [
@@ -1008,7 +1061,10 @@
       "commit": "b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f",
       "api": "MoonEP dev_npu planner / replica refresh",
       "capabilities": [
-        "planned_dispatch"
+        "planned_dispatch",
+        "dynamic_planner",
+        "router_weight_grad",
+        "expert_weight_grad"
       ],
       "constraints": {
         "devices": [
@@ -1019,20 +1075,18 @@
         ],
         "min_tokens": 1,
         "equal_tokens": true,
-        "contiguous_placement": true,
-        "unadapted": {
-          "dynamic_planner": "End-to-end replica weight refresh and gradient reduction are not integrated"
-        }
+        "contiguous_placement": true
       }
     },
     "moonep_server_dedup": {
       "status": "integrated",
       "source": "https://gitcode.com/Ascend/MoonEP/tree/dev_server_dedup",
       "commit": "d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d",
-      "api": "MoonEP dev_server_dedup dispatch / combine",
+      "api": "MoonEP dev_server_dedup Buffer.dispatch / combine / prefetch_projections / reduce_projection_grads",
       "capabilities": [
         "rank_dedup",
-        "server_dedup"
+        "server_dedup",
+        "dedup_training"
       ],
       "constraints": {
         "devices": [
@@ -1043,10 +1097,7 @@
         ],
         "min_tokens": 1,
         "equal_tokens": true,
-        "contiguous_placement": true,
-        "unadapted": {
-          "router_layer": "Full native Router, experts and dedup layer is pending"
-        }
+        "contiguous_placement": true
       }
     },
     "dispatch_ffn_combine_vllm_ascend": {

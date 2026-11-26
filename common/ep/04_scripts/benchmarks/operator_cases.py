@@ -5,8 +5,7 @@ import torch
 
 from baselines.reference.collectives import CollectiveBackend
 from baselines.reference.experts import activate, gmm1, gmm2
-from common.backend import BenchmarkUnavailable
-from common.validation import error, operation_gradients, validate_dispatch, validate_moe
+from common.validation import error, opaque_row_order, operation_gradients, validate_dispatch, validate_moe
 from common.workload import router
 
 
@@ -16,9 +15,52 @@ class Operation:
     call: object
     validate: object
     wait: object = lambda value: value
+    sample_metrics: object = lambda value: {}
 
 
-def operator_case(ctx, case, backend, works, traces):
+PLANNER_TRAINING = {"planner", "redundant_experts", "planner_training_steps",
+                    "rank_dedup_layer", "server_dedup_layer"}
+
+
+def planned_training_case(ctx, case, backend, works, parameters):
+    from operators.moonep_dynamic_planner.training import prepare_route, run_training_step
+
+    cached = prepare_route(backend, works[0]) if parameters["variant"] == "cached_plan" else None
+    collect_stages = case.operation == "redundant_experts"
+
+    def call(_):
+        return [run_training_step(backend, work, cached=cached, collect_stages=collect_stages)
+                for work in works]
+
+    def validate():
+        checked = []
+        for step, work in enumerate(works):
+            value = run_training_step(backend, work, cached=cached)
+            check = validate_moe(ctx, work, value.output, value.gradients, step, use_router=True)
+            rank_counts = ctx.gather(value.received_rows)
+            copies = int((value.replica_plan[ctx.rank] >= 0).sum().item())
+            copied = sum(ctx.gather(copies))
+            check.update(
+                planned_receive_rows=rank_counts,
+                planned_rank_max_mean=max(rank_counts) * ctx.size / sum(rank_counts),
+                planned_expert_copies=copied,
+                planned_redundant_weight_bytes=copied * sum(
+                    tensor[0].numel() * tensor.element_size() for tensor in (work.w_gate, work.w_up, work.w_down)
+                ),
+            )
+            checked.append(check)
+        return {"steps": checked, "plan_mode": "cached_plan" if cached else "fresh_plan"}
+
+    return Operation(lambda _: None, call, validate, sample_metrics=lambda values: values[0].timing_ns())
+
+
+def uses_planner(operation, parameters):
+    from common.scheduler import FIXED_OWNER
+
+    return operation in PLANNER_TRAINING and parameters["variant"] != FIXED_OWNER
+
+
+def operator_case(ctx, case, backend, works, traces, parameters):
     op = case.operation
     work, trace = works[0], traces[0]
     untouched = lambda _: None
@@ -129,8 +171,12 @@ def operator_case(ctx, case, backend, works, traces):
             # Adapters which expose their own dispatch may return a distinct local order.
             if op.startswith("serial"):
                 native = dispatch(work)
-                sorted_native = native.route_slots.argsort()
-                sorted_ref = layout.route_slots.argsort()
+                if native.route_slots is None:
+                    sorted_native = opaque_row_order(native.expert_input, native.expert_token_counts)
+                    sorted_ref = opaque_row_order(layout.expert_input, counts)
+                else:
+                    sorted_native = native.route_slots.argsort()
+                    sorted_ref = layout.route_slots.argsort()
                 expected = gate_up[sorted_ref]
                 check = lambda: call(None)[sorted_native]
             else:
@@ -142,7 +188,13 @@ def operator_case(ctx, case, backend, works, traces):
             expected = ref.combine(work, layout, gmm2(work, activation, counts, ctx)).output
             if op.startswith("serial"):
                 native = dispatch(work)
-                native_activation = activation[layout.route_slots.argsort()][native.route_slots.argsort().argsort()]
+                if native.route_slots is None:
+                    validate_dispatch(work, native, ctx, trace)
+                    native_activation = activate(
+                        gmm1(work, native.expert_input, native.expert_token_counts, ctx), work.limit
+                    ).detach()
+                else:
+                    native_activation = activation[layout.route_slots.argsort()][native.route_slots.argsort().argsort()]
                 call = serial
             else:
                 call = lambda _: backend.gmm_combine(work, activation)
@@ -156,11 +208,46 @@ def operator_case(ctx, case, backend, works, traces):
 
         return Operation(untouched, call, lambda: backend.validate_quantized_fusion(work, call(None)))
 
+    if op in {"tile_schedule", "comm_resources"}:
+        run = backend.tuned_dispatch(work, parameters["variant"])
+        ref = CollectiveBackend(None, "alltoall")
+        ref.initialize(ctx)
+        native_layout = ref.dispatch(work)
+        expected = gmm1(work, native_layout.expert_input, native_layout.expert_token_counts, ctx)
+
+        def call(_):
+            with torch.profiler.record_function("ep_dispatch_gmm"):
+                return run(work)
+
+        return Operation(untouched, call, lambda: {"relative_l2": error(call(None), expected, threshold)})
+
+    if op == "chunk_pipeline":
+        chunks = int(parameters["variant"].rsplit("_", 1)[1])
+
+        def call(_):
+            with torch.profiler.record_function("ep_chunk_forward"):
+                return backend.chunk_forward(work, chunks)
+
+        return Operation(untouched, call, lambda: validate_moe(ctx, work, call(None), None))
+
     use_router = case.level == "L4"
     use_backward = case.training
-    if op in {"planner", "redundant_experts", "rank_dedup_layer", "server_dedup_layer", "planner_training_steps",
-              "concurrent", "tile_schedule", "comm_resources"}:
-        raise BenchmarkUnavailable("not_implemented", f"{op} needs a dedicated native measurement contract")
+    if uses_planner(op, parameters):
+        return planned_training_case(ctx, case, backend, works, parameters)
+    if op == "concurrent":
+        backend.prepare_concurrent()
+        second = work.with_hidden(work.hidden_states.detach().clone())
+
+        def call(_):
+            with torch.no_grad(), torch.profiler.record_function("ep_concurrent_forward"):
+                return backend.concurrent_forward(work, second)
+
+        def validate():
+            first_output, second_output = call(None)
+            return {"requests": [validate_moe(ctx, work, first_output, None),
+                                 validate_moe(ctx, second, second_output, None)]}
+
+        return Operation(untouched, call, validate)
 
     def forward(value):
         with torch.profiler.record_function("ep_forward"):

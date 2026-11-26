@@ -51,7 +51,8 @@ def report(root, manifest, rows, analysis):
         file.write("\nCPU results validate framework behavior. NPU results require an Ascend run.\n")
         file.write("\nOutcome counts: " + ", ".join(f"{k}={v}" for k, v in sorted(stats.items())) + "\n")
         files = ("operator_comparison.md", "bandwidth_analysis.md", "overlap_analysis.md",
-                 "scalability_analysis.md", "load_balance_analysis.md", "failure_summary.md")
+                 "scalability_analysis.md", "load_balance_analysis.md", "planner_training.md", "dedup_comparison.md",
+                 "failure_summary.md")
         file.write("\n" + "\n".join(f"- [{name}]({name})" for name in files) + "\n")
         file.write("\n[Environment and versions](../environment.json) · [Run manifest](../manifest.json)\n")
     write_table(destination / "operator_comparison.md", "Comparable operator measurements",
@@ -82,6 +83,33 @@ def report(root, manifest, rows, analysis):
                 ((row["task_id"], row["load_balance"]["expert_max_mean"], row["load_balance"]["rank_max_mean"],
                   row["load_balance"]["cross_server_ratio"], (row["bandwidth"] or {}).get("dedup_opportunity_ratio"))
                  for row in rows if row["load_balance"]))
+    planner_path = destination / "planner_training.md"
+    write_table(planner_path, "Native replica training stages",
+                ("Task", "Planned rank max/mean", "Weight prefetch P50 ms",
+                 "Gradient reduction P50 ms", "Replicated weight bytes"),
+                ((row["task_id"], row["load_balance"].get("planned_rank_max_mean"),
+                  row["load_balance"].get("weight_prefetch_latency_ms"),
+                  row["load_balance"].get("gradient_reduce_latency_ms"),
+                  row["load_balance"].get("redundant_weight_bytes"))
+                 for row in rows if (row.get("load_balance") or {}).get("planned_expert_copies") is not None))
+    with planner_path.open("a", encoding="utf-8") as file:
+        file.write("\n## Fresh and cached routing plans\n\n")
+        for point in analysis["planner_comparisons"]:
+            file.write(f"- {point['fresh_task']} and {point['cached_task']} · "
+                       f"{point['fresh_ms']:.3f} ms and {point['cached_ms']:.3f} ms · "
+                       f"{point['cached_plan_speedup']:.3f}× cached-plan speedup\n")
+        file.write("\n## MoonEP planner and fixed-owner HCCL reference\n\n")
+        for point in analysis["fixed_owner_comparisons"]:
+            file.write(f"- {point['planner_task']} and {point['fixed_owner_task']} · "
+                       f"{point['planner_ms']:.3f} ms and {point['fixed_owner_ms']:.3f} ms · "
+                       f"{point['speedup_vs_fixed_owner_hccl']:.3f}× vs. fixed-owner HCCL\n")
+    write_table(destination / "dedup_comparison.md", "Native dedup and fixed-owner HCCL measurements",
+                ("Level", "Baseline mode", "Native mode", "Baseline task", "Native task",
+                 "Baseline P50 ms", "Native P50 ms", "Speedup", "Baseline dispatch cross-server bytes (model)",
+                 "Native dispatch cross-server bytes (model)", "Modelled payload saving"),
+                ((p["level"], p["baseline_mode"], p["native_mode"], p["baseline_task"], p["native_task"],
+                  p["baseline_ms"], p["native_ms"], p["speedup"], p["baseline_cross_server_bytes"], p["native_cross_server_bytes"],
+                  p["modeled_payload_saving"]) for p in analysis["dedup_comparisons"]))
     write_table(destination / "failure_summary.md", "Failed, unsupported and skipped cases",
                 ("Task", "Backend", "Status", "Evidence"),
                 ((row["task_id"], row["backend_id"], row["status"], row["error_reason"] or "No run record")

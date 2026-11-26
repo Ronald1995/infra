@@ -5,7 +5,7 @@ import jsonschema
 import numpy as np
 import pytest
 
-from analysis.comparison import comparisons, scaling
+from analysis.comparison import comparisons, dedup_comparisons, scaling
 from common.config import DEFAULT, load_configs, merge, validate
 from common.controller import create_manifest, execute, results
 from common.registry import ROOT, registry
@@ -89,6 +89,37 @@ def test_rank_max_percentiles_and_flops():
     assert summary["p95"] == pytest.approx(5.8)
     values = compute(DEFAULT, 10, "forward_backward", 1)
     assert values["effective_flops"] == 18 * 10 * 128 * 64
+
+
+def test_specialized_cases_plan_native_and_control_tasks():
+    load = load_configs(ROOT / "configs/load_balance.yaml")
+    tasks = make_plan(load, cases=["LAYER-003"])
+    assert {task["parameters"]["variant"] for task in tasks if not task["reason"]} == {
+        "fresh_plan", "cached_plan", "fixed_owner",
+    }
+    dedup = load_configs(ROOT / "configs/dedup.yaml")
+    tasks = make_plan(dedup, cases=["COMM-010", "LAYER-005", "LAYER-006"])
+    active = [(t["case_id"], t["backend_id"], t["config"]["dedup"]["mode"])
+              for t in tasks if not t["reason"]]
+    assert len(active) == 6
+    assert ("LAYER-006", "moonep_server_dedup", "server") in active
+    overlap = load_configs(ROOT / "configs/overlap.yaml")
+    tasks = make_plan(overlap, cases=["FUSE-005", "FUSE-006", "FUSE-007", "MOE-007"])
+    assert len([t for t in tasks if not t["reason"]]) == 11
+
+
+def test_dedup_comparison_joins_only_matching_traces():
+    configs = load_configs(ROOT / "configs/dedup.yaml")
+    tasks = [task for task in make_plan(configs, cases=["COMM-010"]) if not task["reason"]]
+    rows = [result({"run_id": "d", "environment": {}}, task, "passed") for task in tasks]
+    for row, milliseconds, payload in zip(rows, (4, 2), (1024, 256)):
+        row.update(latency={"p50": milliseconds}, correctness={"passed": True},
+                   routing_trace_hash="same", bandwidth={"cross_server_payload_bytes": payload})
+    matched, = dedup_comparisons(rows)
+    assert matched["speedup"] == 2
+    assert matched["modeled_payload_saving"] == .75
+    rows[0]["routing_trace_hash"] = "other"
+    assert dedup_comparisons(rows) == []
 
 
 def test_profile_formats_and_interval_union(tmp_path):

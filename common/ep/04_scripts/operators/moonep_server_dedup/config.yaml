@@ -1,2 +1,6 @@
 extends: ../../configs/ep8_bf16.yaml
+suite_id: dedup
+dedup: {mode: rank}
+benchmark:
+  levels: [L1, L4]
 operators: [moonep_server_dedup]

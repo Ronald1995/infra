@@ -52,7 +52,7 @@ def execute_worker(manifest_path, task_id, output, profile=False):
 
 def run_task(ctx, task, record, output, profile):
     from benchmarks.l0_hardware import hardware_case
-    from benchmarks.operator_cases import Operation, operator_case
+    from benchmarks.operator_cases import Operation, operator_case, uses_planner
     from common import memory
     from common.cases import catalog
     from common.routing import Routing, summarize, summarize_local
@@ -75,6 +75,8 @@ def run_task(ctx, task, record, output, profile):
     steps = len(cfg["workload"].get("token_steps", [0])) if operation == "dynamic_tokens" else 1
     if operation == "trace_replay":
         steps = len(load_json(cfg["workload"]["trace_path"])["steps"])
+    if operation == "planner_training_steps":
+        steps = settings.get("planner_steps", 4)
     works, traces = [], []
     if not is_hw or needs_weights:
         for step in range(steps):
@@ -115,10 +117,15 @@ def run_task(ctx, task, record, output, profile):
             backend = spec.create()
             cleanup = backend.finalize
             backend.initialize(ctx)
-            backend.prepare(works[0])
+            if uses_planner(operation, task["parameters"]):
+                if any(work.route.tokens != works[0].route.tokens for work in works):
+                    raise BenchmarkUnavailable("unsupported", "MoonEP native planner buffer needs the same per-rank shape between steps")
+                backend.prepare_training(works[0])
+            else:
+                backend.prepare(works[0])
             if case.level == "L1" or operation in {"serial_dispatch_gmm", "serial_gmm_combine"}:
                 backend.prepare_communication(works[0])
-            prepared = operator_case(ctx, case, backend, works, traces)
+            prepared = operator_case(ctx, case, backend, works, traces, task["parameters"])
         ctx.synchronize()
         initialization = perf_counter_ns() - initialization_start
         correctness = prepared.validate()
@@ -134,7 +141,7 @@ def run_task(ctx, task, record, output, profile):
             samples = [{"iteration": 0, "latency_ns": initialization, "host_issue_ns": initialization,
                         "host_wait_ns": 0, "output_ready_ns": initialization, "operations": 1}]
         else:
-            samples = measure(ctx, settings, prepared.setup, prepared.call, prepared.wait)
+            samples = measure(ctx, settings, prepared.setup, prepared.call, prepared.wait, prepared.sample_metrics)
         local = {"rank": ctx.rank, "samples": samples, "correctness": correctness,
                  "memory": memory.snapshot(ctx), "initialization_ns": initialization}
         write_json(output / f"rank-{ctx.rank}-samples.json", local)
@@ -161,6 +168,32 @@ def run_task(ctx, task, record, output, profile):
                                       "planner_net_speedup": None}
             if ctx.rank == 0:
                 write_json(output / "routing_trace.json", traces)
+            if uses_planner(operation, task["parameters"]):
+                from metrics.summary import stage_latency
+                check = ranks[0]["correctness"]["steps"]
+                for name in ("planned_receive_rows", "planned_rank_max_mean", "planned_expert_copies",
+                             "planned_redundant_weight_bytes"):
+                    record["load_balance"][name] = [step[name] for step in check]
+                stages = stage_latency(ranks)
+                record["load_balance"].update(
+                    stage_latency=stages,
+                    planner_dispatch_latency_ms=stages.get("planner_dispatch"),
+                    weight_prefetch_latency_ms=stages.get("prefetch_weight"),
+                    gradient_reduce_latency_ms=stages.get("reduce_grad"),
+                    redundant_weight_bytes=max(step["planned_redundant_weight_bytes"] for step in check),
+                )
+                if len(traces) > 1:
+                    record["compute"] = compute(cfg, sum(sum(t["expert_counts"]) for t in traces), operation, p50)
+                    record["throughput"] = throughput(
+                        sum(sum(work.route.tokens) for work in works), ctx.size, p50
+                    )
+            if operation in {"rank_dedup_layer", "server_dedup_layer"}:
+                traffic_config = cfg if uses_planner(operation, task["parameters"]) else {
+                    **cfg, "dedup": {"mode": "none"},
+                }
+                record["load_balance"]["dedup_dispatch_traffic"] = traffic(
+                    traces[0], traffic_config, tokens, backend.spec.traffic_model
+                )
             if not is_hw and len(traces) == 1:
                 uses_bandwidth = case.level == "L1"
                 if uses_bandwidth:
@@ -184,7 +217,10 @@ def run_task(ctx, task, record, output, profile):
                     record["bandwidth"] = bandwidth(volume, p50)
                 else:
                     record["compute"] = compute(cfg, sum(traces[0]["expert_counts"]), operation, p50)
-                record["throughput"] = throughput(sum(tokens), ctx.size, p50)
+                request_count = 2 if operation == "concurrent" else 1
+                record["throughput"] = throughput(sum(tokens) * request_count, ctx.size, p50)
+                if request_count > 1:
+                    record["workload"]["requests_per_sample"] = request_count
         if payload is not None:
             record["bandwidth"] = bandwidth({"unit": "bytes", "scope": "EP group",
                                               "payload_bytes": payload, "source": "collective_payload_model"}, p50)

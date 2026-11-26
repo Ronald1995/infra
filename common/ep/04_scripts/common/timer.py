@@ -4,7 +4,7 @@ from time import perf_counter_ns
 from common.backend import BenchmarkUnavailable
 
 
-def measure(ctx, settings, setup, operation, wait=lambda value: value):
+def measure(ctx, settings, setup, operation, wait=lambda value: value, sample_metrics=lambda value: {}):
     mode = settings["timing"]
     if mode == "device" and ctx.device.type == "cpu":
         raise BenchmarkUnavailable("unsupported", "device event timing requires an NPU")
@@ -41,9 +41,13 @@ def measure(ctx, settings, setup, operation, wait=lambda value: value):
             ready = (completed - started) / repeats
             elapsed = (first.elapsed_time(last) * 1e6 if first is not None
                        else issue if mode == "host_api" else ready)
-            samples.append({
+            sample = {
                 "iteration": i - warmup, "latency_ns": elapsed, "host_issue_ns": issue,
                 "host_wait_ns": (waited - issued) / repeats, "output_ready_ns": ready,
                 "operations": repeats,
-            })
+            }
+            values = [sample_metrics(result) for result in results]
+            if values[0]:
+                sample["stage_ns"] = {key: sum(value[key] for value in values) / repeats for key in values[0]}
+            samples.append(sample)
     return samples

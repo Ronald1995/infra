@@ -116,3 +116,81 @@ def pareto(rows):
                        for speed, memory, task_id in points
                        if not any(s >= speed and m <= memory and (s > speed or m < memory) for s, m, _ in points)]
     return fronts
+
+
+def planner_comparisons(rows):
+    groups = defaultdict(dict)
+    for row in rows:
+        if row["case_id"] != "LAYER-003" or not comparable(row):
+            continue
+        # The cached plan keeps the same replicas and prefetch semantics.
+        key = group_key({**row, "case_parameters": {}}, case=False)
+        groups[(row["run_id"], row["backend_id"], key)][row["case_parameters"]["variant"]] = row
+    points = []
+    for variants in groups.values():
+        if not {"fresh_plan", "cached_plan"} <= variants.keys():
+            continue
+        fresh, cached = variants["fresh_plan"], variants["cached_plan"]
+        fresh_ms, cached_ms = fresh["latency"]["p50"], cached["latency"]["p50"]
+        points.append({
+            "fresh_task": fresh["task_id"], "cached_task": cached["task_id"],
+            "fresh_ms": fresh_ms, "cached_ms": cached_ms,
+            "cached_plan_speedup": fresh_ms / cached_ms,
+            "source": "matched native training cycle measurements",
+        })
+    return points
+
+
+def fixed_owner_comparisons(rows):
+    groups = defaultdict(dict)
+    for row in rows:
+        if row["case_id"] == "LAYER-003" and comparable(row):
+            key = group_key({**row, "case_parameters": {}}, case=False)
+            groups[(row["run_id"], key)][row["case_parameters"]["variant"]] = row
+    points = []
+    for variants in groups.values():
+        if {"fixed_owner", "fresh_plan"} <= variants.keys():
+            native, reference = variants["fresh_plan"], variants["fixed_owner"]
+            points.append({
+                "planner_task": native["task_id"], "fixed_owner_task": reference["task_id"],
+                "planner_ms": native["latency"]["p50"], "fixed_owner_ms": reference["latency"]["p50"],
+                "speedup_vs_fixed_owner_hccl": reference["latency"]["p50"] / native["latency"]["p50"],
+                "planner_backend": native["backend_id"], "fixed_owner_backend": reference["backend_id"],
+            })
+    return points
+
+
+def dedup_comparisons(rows):
+    groups = defaultdict(dict)
+    for row in rows:
+        mode = row["config"]["dedup"]["mode"]
+        if row["case_id"] not in {"COMM-010", "LAYER-005", "LAYER-006"} or mode == "none" or not comparable(row):
+            continue
+        config = {**row["config"], "dedup": {}}
+        key = group_key({**row, "config": config, "case_parameters": {}}, case=False)
+        if row["case_parameters"]["variant"] == "fixed_owner":
+            groups[(row["run_id"], key)][f"fixed_owner_{mode}"] = row
+        else:
+            groups[(row["run_id"], key)][mode] = row
+    points = []
+    for pair in groups.values():
+        for baseline_mode, mode in (("rank", "server"), ("fixed_owner_rank", "rank"),
+                                   ("fixed_owner_server", "server")):
+            if not {baseline_mode, mode} <= pair.keys():
+                continue
+            baseline, native = pair[baseline_mode], pair[mode]
+            baseline_model = baseline["bandwidth"] or baseline["load_balance"].get("dedup_dispatch_traffic", {})
+            native_model = native["bandwidth"] or native["load_balance"].get("dedup_dispatch_traffic", {})
+            baseline_ms, native_ms = baseline["latency"]["p50"], native["latency"]["p50"]
+            baseline_bytes = baseline_model.get("cross_server_payload_bytes")
+            native_bytes = native_model.get("cross_server_payload_bytes")
+            points.append({
+                "level": native["benchmark_level"], "baseline_mode": baseline_mode, "native_mode": mode,
+                "baseline_task": baseline["task_id"], "native_task": native["task_id"],
+                "baseline_ms": baseline_ms, "native_ms": native_ms, "speedup": baseline_ms / native_ms,
+                "baseline_cross_server_bytes": baseline_bytes, "native_cross_server_bytes": native_bytes,
+                "modeled_payload_saving": 1 - native_bytes / baseline_bytes
+                if baseline_bytes and native_bytes is not None else None,
+                "payload_source": "routing_trace_model_of_dispatch",
+            })
+    return points

@@ -47,14 +47,15 @@ def catalog():
         "L4": ("LAYER", [
             ("router_forward", "router_layer"), ("router_training", "router_layer", "moe_backward"),
             ("planner", "dynamic_planner"), ("redundant_experts", "dynamic_planner"),
-            ("rank_dedup_layer", "rank_dedup", "router_layer"),
-            ("server_dedup_layer", "server_dedup", "router_layer"),
+            ("rank_dedup_layer", "rank_dedup", "dedup_training"),
+            ("server_dedup_layer", "server_dedup", "dedup_training"),
             ("trace_replay", "moe_forward"), ("planner_training_steps", "dynamic_planner"),
             ("router_large_training", "router_layer", "moe_backward"),
         ]),
     }
     training = {"backward", "forward_backward", "recompute", "fused_backward",
-                "router_training", "planner_training_steps", "router_large_training"}
+                "router_training", "planner", "redundant_experts", "planner_training_steps",
+                "rank_dedup_layer", "server_dedup_layer", "router_large_training"}
     return {
         case_id: Case(case_id, "L3" if operation == "trace_replay" else level,
                       operation, tuple(capabilities), operation in training)

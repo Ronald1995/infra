@@ -173,6 +173,38 @@ class FusedGMMBackend(AscendEPBackend):
         result = result[order.argsort()].reshape(*work.topk_ids.shape, work.w_down.shape[1])
         return (result * work.topk_weights.unsqueeze(-1)).sum(1)
 
+    def tuned_dispatch(self, work, variant):
+        from deep_ep_experimental.ep_gmm_fused._tiling import default_tiling, validate_tiling
+
+        self.ensure_udma()
+        ctx = self.context
+        hidden = work.hidden_states.shape[-1]
+        columns = 2 * work.w_gate.shape[1]
+        case = {
+            "operator": "all_to_allv_grouped_mat_mul",
+            "shape": {"m": work.topk_ids.numel(), "n": columns, "k": hidden},
+            "expert_num": len(work.route.placement), "world_size": ctx.size, "output_all_to_allv": False,
+        }
+        tiling = default_tiling(case)
+        if variant.startswith("tile_"):
+            tiling.update(zip(("m0", "n0", "k0"), (int(v) for v in variant.split("_")[1:])))
+        else:
+            tiling["self_copy_cores"] = int(variant.rsplit("_", 1)[1])
+        try:
+            tiling = validate_tiling(case["operator"], tiling, **case["shape"], world_size=ctx.size)
+        except ValueError as exc:
+            raise BenchmarkUnavailable("unsupported", f"native tuning contract rejected {variant}: {exc}") from exc
+
+        def execute(value):
+            order, send, recv, counts = self.route(value)
+            x = value.hidden_states[order // value.topk_ids.shape[1]].contiguous()
+            w = ctx.torch.cat((value.w_gate, value.w_up), dim=1).transpose(1, 2).contiguous()
+            return self.demo.alltoallv_gmm(
+                x, w, send, recv, received_rows=sum(counts.tolist()),
+                ep_size=ctx.size, expert_num=case["expert_num"], tiling=tiling,
+            )
+        return execute
+
     def ensure_udma(self):
         if self.layer is not None and not hasattr(self.layer, "release_buffer"):
             self.demo.init_udma_group(group=self.context.ep_group)

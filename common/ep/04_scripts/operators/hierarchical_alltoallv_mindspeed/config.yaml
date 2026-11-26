@@ -1,2 +1,11 @@
 extends: ../../configs/ep8_bf16.yaml
+distributed:
+  ep_size: 16
+  hierarchical_inner_size: 8
+model:
+  num_experts: 48
+topology:
+  server_ids: [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]
+benchmark:
+  levels: [L3]
 operators: [hierarchical_alltoallv_mindspeed]

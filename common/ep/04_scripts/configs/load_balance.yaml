@@ -13,6 +13,7 @@ model:
 workload:
   tokens_per_rank: 4096
   routing: hot_expert
+  router_bias: rotating_hot_expert
   seed: 42
 
 load_balance:
@@ -35,3 +36,4 @@ profiling:
 
 backends:
   - moonep_dynamic_planner
+  - alltoall_hccl

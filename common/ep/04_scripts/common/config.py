@@ -54,6 +54,10 @@ def validate(config):
             require_int(section[key], key)
     for key in ("warmup", "retries"):
         require_int(b[key], key, 0)
+    if "planner_steps" in b:
+        require_int(b["planner_steps"], "benchmark.planner_steps", 2)
+    if "hierarchical_inner_size" in d:
+        require_int(d["hierarchical_inner_size"], "distributed.hierarchical_inner_size", 2)
     require_int(config["profiling"]["warmup"], "profiling.warmup", 0)
     require_int(w["seed"], "seed", 0)
     if m["top_k"] > m["num_experts"] or m["dtype"] not in DTYPES:
@@ -84,6 +88,11 @@ def validate(config):
             raise ValueError(f"{key} must contain one domain identifier per EP rank")
     if w["routing"] not in ROUTINGS:
         raise ValueError(f"unknown routing strategy {w['routing']!r}")
+    router_bias = w.get("router_bias")
+    if router_bias not in (None, "rotating_hot_expert", "remote_rank"):
+        raise ValueError("unknown router logit bias")
+    if router_bias == "remote_rank" and len(set(config["topology"].get("server_ids", ()))) < 2:
+        raise ValueError("remote-rank router logit bias requires at least two server domains")
     if w["routing"] == "real_trace_replay" and not w.get("trace_path"):
         raise ValueError("real_trace_replay requires workload.trace_path")
     if b["timing"] not in TIMINGS or b["rank_reduction"] != "max":

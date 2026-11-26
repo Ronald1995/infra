@@ -47,6 +47,8 @@ def build_parser():
         command.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
         if name in ("resume", "profile"):
             add_launch(command)
+        if name == "profile":
+            command.add_argument("--cases", type=csv_values)
         if name in ("analyze", "report"):
             command.add_argument("--compare-run", action="append", default=[],
                                  help="include another run from the same output root in comparative analysis")
@@ -71,8 +73,8 @@ def doctor():
 
     env = capture(probe_npu=True)
     env["dependencies"] = {name: importlib.util.find_spec(name) is not None
-                           for name in ("torch", "torch_npu", "shmem", "deep_ep", "npu_patch",
-                                        "cann_ops_transformer", "megatron", "fsdp_turbo")}
+                           for name in ("torch", "torch_npu", "shmem", "deep_ep", "npu_patch", "moonep",
+                                        "cann_ops_transformer", "megatron", "mindspeed", "fsdp_turbo")}
     try:
         import torch
         env["gloo_available"] = torch.distributed.is_gloo_available()
@@ -135,6 +137,12 @@ def run_command(args):
         if args.levels and set(args.levels) - set(LEVELS):
             raise ValueError("expected benchmark levels L0 through L4")
         tasks = make_plan(configs, args.operators, args.levels, args.cases, args.command == "baseline")
+        if args.command == "pipeline" and not (args.cases or args.levels) and any(
+            config["device"] == "npu" for config in configs
+        ):
+            public = make_plan([config for config in configs if config["device"] == "npu"], baselines=True)
+            tasks = list({task["task_id"]: task for task in [*tasks, *public]}.values())
+            tasks.sort(key=lambda task: not task["baseline"])
         if not tasks:
             raise ValueError("configuration selected no benchmark cases")
         if args.command != "plan" and args.node_rank:
@@ -152,6 +160,11 @@ def run_command(args):
         manifest = load_json(root / "manifest.json")
     if args.command in {"baseline", "run", "resume", "profile", "pipeline"}:
         status = execute(root, manifest, args, profile=args.command == "profile", resume=args.command == "resume")
+        if args.command == "pipeline" and any(
+            task["config"]["device"] == "npu" and task["config"]["profiling"].get("enabled", False)
+            for task in manifest["tasks"]
+        ):
+            status |= execute(root, manifest, args, profile=True, representative=True)
         if args.command != "pipeline" or args.node_rank != 0:
             return status
     else:
