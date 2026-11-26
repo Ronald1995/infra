@@ -51,6 +51,28 @@ tests all agree on that one word:
 | `external` | a real third-party package or source build this repository installs | yes, from an exact pin |
 | `host` | driver, firmware, CANN toolkit, HCCL/HCOMM, device nodes, deployment state | never: manual step |
 
+`provisioned_by` refines `external`/`host` for the deployment the benchmark actually runs
+on: `container` means the benchmark image provides the component (driver, firmware, CANN,
+HCCL/HCOMM, `torch`/`torch_npu`, `npu-smi`, the Ascend C toolchain). Those entries are
+`verify_only` in the plan — the installer never touches them, the doctor records their
+observed versions, and the requirement files deliberately omit their pins so a
+`pip install -r` cannot overwrite the image's stack. `deployment` is the same idea for a
+component the organisation supplies outside the image (MPI, multi-node env, the
+Triton-distributed build MegaMoE needs).
+
+Two entries that used to be "unpinned, therefore not installable" now carry the exact
+revisions the peer project ascendep tested, together with the install flow of their own
+repositories:
+
+| Dependency | Source | Pin | Install | Why this one |
+|---|---|---|---|---|
+| `fsdp-turbo` | `https://gitcode.com/Ascend/FSDPTurbo` | `474a39a4f367fd740723238ebd3e4695f8c3f26c` | `git clone` + `pip install -e .` | ascendep measured its six `fsdp_turbo` dispatch entries at this revision (with a CANN 9.2.1 patch recorded in `reports/ep2-67/fsdpturbo-cann921.patch`) |
+| `mega-moe` | `https://gitcode.com/jzhoujg/Mega-MoE-TD` | `41d479374004696e21f69f9c72094b1d29941987` | `git clone` + `pip install -e . --no-deps` | the "standalone MegaMoE entry" ascendep names; provides `mega_moe` and `tests/_moe_testkit.py`, which the adapters import |
+| `triton-distributed-ascend` | `https://gitcode.com/Ascend/Triton-distributed-ascend` | none recorded | documented build (CANN >= 9.1, AscendNPU-IR, `pip install ./python`) | MegaMoE compiles through Triton-distributed; without a recorded revision it stays a named blocker, never a guessed pin |
+
+`mega_moe` imports `_moe_testkit` as a top-level module, so the MegaMoE launcher must put
+`<checkout>/tests` on `PYTHONPATH` (`env_vars.MEGAMOE_TESTS_PATH` in the catalog).
+
 `penn513/ascendep` is no longer a dependency. Its adapter tree is vendored, and the
 catalog records it as `vendored-ascendep` with `origin=vendored` in every result
 (`operators/ascendep.py::source_info`). `EP_ASCENDEP_ROOT` survives only as a documented

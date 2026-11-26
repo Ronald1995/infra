@@ -14,8 +14,10 @@
 # Do not run `pip install --upgrade torch_npu`: pip would resolve torch to the
 # newest CPU wheel and break the pairing that manifest.yaml `compatibility`
 # records (cann 8.2.RC1 / torch 2.6.0 / torch_npu 2.6.0.post3).
-torch_npu==2.6.0.post3
 
 # Deliberately absent:
 #   cann-ops-transformer  -> source build (needs CANN + ccec), see dependencies/system/cann.yaml
 #   hccl / hcomm / npu-smi / ccec / msprof / hccl_test -> host components, not wheels
+# torch / torch_npu are provided by the benchmark container image (see
+# dependencies/manifest.yaml, provisioned_by: container). They are intentionally
+# absent here: a pip pin would overwrite the image's stack.

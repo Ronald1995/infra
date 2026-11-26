@@ -222,11 +222,18 @@ def test_every_dependency_is_used_by_something(entries, manifest):
     referenced_by_group = {identifier for identifier, entry in entries.items()
                            if [token for token in doctor.tokens(entry["required_by"])
                                if not token.startswith("operator:")]}
+    operators = set(registry())
     for identifier, entry in entries.items():
         tokens = doctor.tokens(entry["required_by"])
         assert set(token for token in tokens if not token.startswith("operator:")) <= groups, (
             identifier, "unknown capability group")
-        assert (identifier in used or identifier in referenced_by_group), identifier
+        operator_tokens = {token.split(":", 1)[1] for token in tokens
+                           if token.startswith("operator:")}
+        assert operator_tokens <= operators, (identifier, operator_tokens - operators)
+        # A dependency can be a runtime (non-import) requirement of an operator:
+        # Triton-distributed is compiled into MegaMoE's kernels, not imported.
+        assert (identifier in used or identifier in referenced_by_group
+                or operator_tokens), identifier
 
 
 def test_the_operator_dependency_tokens_match_the_closure(manifest, entries):
@@ -303,19 +310,40 @@ def test_an_unpinned_dependency_is_never_scheduled(manifest):
                                               "wheelhouse": None, "check_only": False,
                                               "environments": None})
     blocked = {item["dependency"] for item in plan["blocked"]}
-    assert {"fsdp-turbo", "mega-moe"} <= blocked
+    # Triton-distributed has no recorded revision; it must stay a named blocker.
+    assert "triton-distributed-ascend" in blocked
     scheduled = {step["dependency"] for step in plan["steps"]}
-    assert not ({"fsdp-turbo", "mega-moe"} & scheduled)
+    assert "triton-distributed-ascend" not in scheduled
 
 
-def test_the_torch_npu_wheel_needs_a_source():
+def test_peer_pinned_sources_are_scheduled(manifest):
+    """fsdp_turbo and mega_moe now have the revisions ascendep tested."""
+    plan = dependency_plan.build_plan("all", {"offline": False, "source_cache": "/cache",
+                                              "wheelhouse": None, "check_only": False,
+                                              "environments": None})
+    fetches = {step["dependency"]: step for step in plan["steps"]
+               if step["kind"] == "fetch"}
+    assert {"fsdp-turbo", "mega-moe"} <= set(fetches)
+    assert fetches["fsdp-turbo"]["pin"]["value"] == (
+        "474a39a4f367fd740723238ebd3e4695f8c3f26c")
+    assert fetches["mega-moe"]["pin"]["value"] == (
+        "41d479374004696e21f69f9c72094b1d29941987")
+
+
+def test_container_provisioned_dependencies_are_verify_only(entries):
+    """The image provides the driver/CANN/torch stack; the plan only verifies it."""
     plan = dependency_plan.build_plan("npu", {"offline": False, "source_cache": "/cache",
                                               "wheelhouse": None, "check_only": False,
                                               "environments": None})
-    blocked = {item["dependency"]: item for item in plan["blocked"]}
-    assert "torch-npu" in blocked
-    assert blocked["torch-npu"]["cause"] == "wheel_source"
-    assert blocked["torch-npu"]["wheel_source"]["required"] is True
+    blocked = {item["dependency"] for item in plan["blocked"]}
+    verify_only = {item["dependency"] for item in plan["verify_only"]}
+    assert {"torch", "torch-npu", "npu-driver", "cann-toolkit", "hccl"} <= verify_only
+    assert not ({"torch", "torch-npu"} & blocked)
+    scheduled = {step["dependency"] for step in plan["steps"]}
+    assert not ({"torch", "torch-npu"} & scheduled)
+    for identifier in ("torch", "torch-npu", "npu-driver", "cann-toolkit", "hccl"):
+        assert entries[identifier]["provisioned_by"] == "container"
+        assert entries[identifier]["installable"] is False
 
 
 def test_the_isolated_environment_is_created_before_its_install():

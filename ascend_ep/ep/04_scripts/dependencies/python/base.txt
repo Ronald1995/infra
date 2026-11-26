@@ -17,7 +17,6 @@
 # in npu.txt pairs with exactly this).  The CPU venv has 2.6.0+cpu: PEP 440
 # treats a local version segment as satisfying "==2.6.0", so this single pin
 # covers both wheels.
-torch==2.6.0
 numpy==2.2.6
 PyYAML==6.0.4
 jsonschema==4.26.0
@@ -28,3 +27,6 @@ jsonschema==4.26.0
 # the wheelhouse is tiny.
 pandas==2.2.3
 matplotlib==3.10.9
+# torch / torch_npu are provided by the benchmark container image (see
+# dependencies/manifest.yaml, provisioned_by: container). They are intentionally
+# absent here: a pip pin would overwrite the image's stack.

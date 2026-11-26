@@ -183,12 +183,17 @@ def build_plan(profile, options, root=None):
             spec = entry["install_spec"]
             mode = spec["mode"]
             if mode in ("manual", "none"):
-                if mode == "none" and entry["ownership"] in ("vendored", "in_repo"):
+                if mode == "none" and (entry["ownership"] in ("vendored", "in_repo")
+                                       or entry.get("provisioned_by")):
                     # Nothing to install: the source is here, it only has to be verified.
                     plan["verify_only"].append({
                         "dependency": entry["id"], "environment": environment,
                         "ownership": entry["ownership"],
-                        "reason": entry.get("install_reason") or "already present in this repository",
+                        "provisioned_by": entry.get("provisioned_by"),
+                        "reason": (entry.get("install_reason")
+                                   or ("provisioned by the %s" % entry["provisioned_by"]
+                                       if entry.get("provisioned_by")
+                                       else "already present in this repository")),
                     })
                     plan["steps"].extend(
                         _verify_steps(entry, environment, options, environments))

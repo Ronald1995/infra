@@ -48,6 +48,10 @@ vocabulary:
   - system
   - manual
   - none
+  provisioned_by:
+  - container
+  - deployment
+  - repository
 categories:
   A:
     id: python_base
@@ -452,6 +456,18 @@ compatibility:
     source_url: https://github.com/pytorch/pytorch
     evidence: 'CPU venv used by tests/dependencies: torch 2.6.0+cpu, numpy 2.2.6, PyYAML 6.0.4, jsonschema
       4.26.0, no torch_npu, no CANN.  Every NPU dependency is expected to fail on this host.'
+  - id: cann-9.2-torch-2.10
+    cann: 9.2.1
+    torch: 2.10.0
+    torch_npu: 2.10.0.post4
+    soc:
+    - Ascend910_93
+    - Ascend950
+    status: documented
+    source_url: https://github.com/penn513/ascendep/blob/main/ep/README.md
+    evidence: ascendep recorded a 950DT EP2/EP8 run on CANN 9.2.1, torch 2.10.0+cpu and torch_npu 2.10.0.post4.
+      This repository has not re-verified the triple; the doctor reports an unlisted pairing as skip,
+      never as pass. The benchmark container image defines the actual stack.
   policy:
   - The torch base version is shared by the CPU and NPU paths; only the wheel index and the +cpu local
     tag differ.
@@ -562,12 +578,14 @@ dependencies:
   commit: null
   license: BSD-3-Clause
   optional: false
-  installable: true
-  install_reason: null
-  manual_step: null
+  installable: false
+  install_reason: 'Provided by the benchmark container image (liurong_vllm): the image defines this component
+    together with the CANN/torch stack. Installing it here would overwrite the image''s version and break
+    the pairing the doctor checks.'
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - pip install -r python/base.txt
-  - pip install torch==2.6.0
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: python_module
     module: torch
@@ -591,12 +609,12 @@ dependencies:
     verify: python -c 'import torch; print(torch.__version__)'
   conflicts: []
   install_spec:
-    mode: pip
-    requirements: python/base.txt
-    packages:
-    - torch==2.6.0
-    verify:
-    - python -c "import importlib.metadata as m; print(m.version('torch'))"
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
 - id: numpy
   category: A
   kind: pip
@@ -864,13 +882,10 @@ dependencies:
   install_reason: A driver is kernel code.  It must be installed on the host and cannot be installed,
     upgraded or reloaded from inside a container; pretending otherwise is how a container ends up with
     libascendcl and no devices.
-  manual_step: 'On the host only: install Ascend-hdk-<soc>-npu-driver_<ver>_linux-*.run and the matching
-    firmware, reset the devices, then confirm ``npu-smi info`` lists the chips and /dev/davinci* exists.  Never
-    run this from the container -- scripts/install_deps.sh refuses and prints this step.'
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - 'On the host only: install Ascend-hdk-<soc>-npu-driver_<ver>_linux-*.run and the matching firmware,
-    reset the devices, then confirm ``npu-smi info`` lists the chips and /dev/davinci* exists.  Never
-    run this from the container -- scripts/install_deps.sh refuses and prints this step.'
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: driver
     paths:
@@ -901,12 +916,12 @@ dependencies:
     kind: none
   conflicts: []
   install_spec:
-    mode: manual
-    manual: 'On the host only: install Ascend-hdk-<soc>-npu-driver_<ver>_linux-*.run and the matching
-      firmware, reset the devices, then confirm ``npu-smi info`` lists the chips and /dev/davinci* exists.  Never
-      run this from the container -- scripts/install_deps.sh refuses and prints this step.'
-    verify:
-    - echo 'manual step required; see manual_step'
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
 - id: cann-toolkit
   category: B
   kind: host_provided
@@ -928,11 +943,10 @@ dependencies:
   install_reason: The toolkit is a vendor .run package that installs under /usr/local/Ascend and links
     against the host driver.  Containers inherit it from the host image by bind mount; installing another
     copy inside the container would shadow the host's libascendcl.
-  manual_step: 'On the host: verify the sha256 of Ascend-cann-toolkit_<ver>_linux-<arch>.run for the target
-    SoC, run it with --install, then bind-mount /usr/local/Ascend into the container and ``source /usr/local/Ascend/ascend-toolkit/set_env.sh``.'
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - 'On the host: verify the sha256 of Ascend-cann-toolkit_<ver>_linux-<arch>.run for the target SoC,
-    run it with --install, then bind-mount /usr/local/Ascend into the container and ``source /usr/local/Ascend/ascend-toolkit/set_env.sh``.'
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: cann_home
     version_file: version.cfg
@@ -959,11 +973,12 @@ dependencies:
     kind: none
   conflicts: []
   install_spec:
-    mode: manual
-    manual: 'On the host: verify the sha256 of Ascend-cann-toolkit_<ver>_linux-<arch>.run for the target
-      SoC, run it with --install, then bind-mount /usr/local/Ascend into the container and ``source /usr/local/Ascend/ascend-toolkit/set_env.sh``.'
-    verify:
-    - echo 'manual step required; see manual_step'
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
 - id: torch-npu
   category: B
   kind: pip
@@ -994,12 +1009,14 @@ dependencies:
   commit: null
   license: BSD-3-Clause
   optional: false
-  installable: true
-  install_reason: null
-  manual_step: null
+  installable: false
+  install_reason: 'Provided by the benchmark container image (liurong_vllm): the image defines this component
+    together with the CANN/torch stack. Installing it here would overwrite the image''s version and break
+    the pairing the doctor checks.'
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - pip install -r python/npu.txt --find-links <wheelhouse>
-  - pip install torch_npu==2.6.0.post3
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: python_module
     module: torch_npu
@@ -1026,19 +1043,12 @@ dependencies:
     verify: python -c 'import torch_npu; print(torch_npu.__version__)'
   conflicts: []
   install_spec:
-    mode: pip
-    requirements: python/npu.txt
-    packages:
-    - torch_npu==2.6.0.post3
-    verify:
-    - python -c "import importlib.metadata as m; print(m.version('torch_npu'))"
-    wheel_source:
-      kind: ascend_wheelhouse
-      required: true
-      env_var: EP_ASCEND_WHEEL_INDEX
-      note: torch_npu is not published on PyPI. Pass --wheelhouse with the Ascend wheels, or set EP_ASCEND_WHEEL_INDEX
-        to the index that serves the pinned torch/torch_npu/CANN triple. The installer refuses to fall
-        back to PyPI.
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
 - id: cann-ops-transformer
   category: B
   kind: native_build
@@ -1112,11 +1122,10 @@ dependencies:
   installable: false
   install_reason: libhccl.so is part of the CANN toolkit.  Copying a single .so between hosts produces
     ABI drift against libascendcl; the fix is to install or upgrade CANN on the host.
-  manual_step: Install or upgrade the CANN toolkit on the host, re-source set_env.sh on every rank, and
-    confirm libhccl.so resolves (LD_LIBRARY_PATH must contain $ASCEND_HOME_PATH/lib64).
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - Install or upgrade the CANN toolkit on the host, re-source set_env.sh on every rank, and confirm libhccl.so
-    resolves (LD_LIBRARY_PATH must contain $ASCEND_HOME_PATH/lib64).
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: shared_library
     names:
@@ -1144,11 +1153,27 @@ dependencies:
     kind: none
   conflicts: []
   install_spec:
-    mode: manual
-    manual: Install or upgrade the CANN toolkit on the host, re-source set_env.sh on every rank, and confirm
-      libhccl.so resolves (LD_LIBRARY_PATH must contain $ASCEND_HOME_PATH/lib64).
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
+  source_install:
+    url: https://gitcode.com/cann/hccl
+    tag_source: https://gitcode.com/cann/release-management
+    why: HCCL ships inside the CANN toolkit; a source build is only needed when the container's HCCL must
+      be replaced. Pick the tag that matches the installed CANN release (see release-management) instead
+      of master.
+    steps:
+    - git clone https://gitcode.com/cann/hccl.git
+    - git -C hccl checkout tags/<tag matching the installed CANN release>
+    - cd hccl && bash build.sh
+    - install the produced package per docs/zh/build/build.md
+    documentation: https://gitcode.com/cann/hccl/blob/master/docs/zh/build/build.md
     verify:
-    - echo 'manual step required; see manual_step'
+    - python -c "import torch_npu; print(torch_npu.__file__)"
+    - ldconfig -p | grep libhccl
 - id: npu-smi
   category: B
   kind: binary
@@ -1163,11 +1188,10 @@ dependencies:
   installable: false
   install_reason: npu-smi is installed by the NPU driver package under /usr/local/Ascend/driver/tools.  It
     is a host tool with no pip equivalent.
-  manual_step: Install the NPU driver on the host; npu-smi arrives with it.  Inside the container it is
-    visible only if /usr/local/Ascend/driver is bind-mounted.
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - Install the NPU driver on the host; npu-smi arrives with it.  Inside the container it is visible only
-    if /usr/local/Ascend/driver is bind-mounted.
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: binary
     binary: npu-smi
@@ -1196,11 +1220,12 @@ dependencies:
     kind: none
   conflicts: []
   install_spec:
-    mode: manual
-    manual: Install the NPU driver on the host; npu-smi arrives with it.  Inside the container it is visible
-      only if /usr/local/Ascend/driver is bind-mounted.
-    verify:
-    - echo 'manual step required; see manual_step'
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
 - id: ascendc-toolchain
   category: B
   kind: host_provided
@@ -1215,11 +1240,10 @@ dependencies:
   installable: false
   install_reason: ccec (the Ascend C compiler) ships inside the CANN toolkit under compiler/ccec_compiler/bin.  There
     is no standalone package, and a mismatched compiler produces kernels the runtime rejects at load time.
-  manual_step: Install the CANN toolkit on the host, source set_env.sh, then verify ``ccec --version``
-    resolves.  Custom Ascend C builds (ops-transformer, ASC-COMM) cannot run without it.
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - Install the CANN toolkit on the host, source set_env.sh, then verify ``ccec --version`` resolves.  Custom
-    Ascend C builds (ops-transformer, ASC-COMM) cannot run without it.
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: toolchain
     binaries:
@@ -1249,11 +1273,12 @@ dependencies:
     kind: none
   conflicts: []
   install_spec:
-    mode: manual
-    manual: Install the CANN toolkit on the host, source set_env.sh, then verify ``ccec --version`` resolves.  Custom
-      Ascend C builds (ops-transformer, ASC-COMM) cannot run without it.
-    verify:
-    - echo 'manual step required; see manual_step'
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
 - id: hcomm
   category: C
   kind: host_provided
@@ -1269,13 +1294,10 @@ dependencies:
   installable: false
   install_reason: HCOMM is the channel/engine layer below HCCL and arrives with the CANN toolkit.  It
     has no independent release artifact, so there is nothing to install separately.
-  manual_step: Install or upgrade the CANN toolkit on the host and re-source set_env.sh. The UB channel
-    families the L0 transport cases name (AivUrmaChannel, AicpuTsUrmaChannel, CcuUrmaChannel) are created
-    by this library, so a missing libhcomm.so makes every URMA/UB case unobservable.
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - Install or upgrade the CANN toolkit on the host and re-source set_env.sh. The UB channel families
-    the L0 transport cases name (AivUrmaChannel, AicpuTsUrmaChannel, CcuUrmaChannel) are created by this
-    library, so a missing libhcomm.so makes every URMA/UB case unobservable.
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: shared_library
     names:
@@ -1303,12 +1325,12 @@ dependencies:
     kind: none
   conflicts: []
   install_spec:
-    mode: manual
-    manual: Install or upgrade the CANN toolkit on the host and re-source set_env.sh. The UB channel families
-      the L0 transport cases name (AivUrmaChannel, AicpuTsUrmaChannel, CcuUrmaChannel) are created by
-      this library, so a missing libhcomm.so makes every URMA/UB case unobservable.
-    verify:
-    - echo 'manual step required; see manual_step'
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
 - id: shmem
   category: C
   kind: native_build
@@ -1793,7 +1815,7 @@ dependencies:
 - id: fsdp-turbo
   category: C
   kind: python_import
-  version: unpinned
+  version: 474a39a
   required_by:
   - operator:allgather_fsdpturbo
   - operator:alltoall_fsdpturbo
@@ -1803,18 +1825,16 @@ dependencies:
   - operator:mc2_fsdpturbo
   - operator:megamoe_fsdpturbo
   source_url: https://gitcode.com/Ascend/FSDPTurbo
-  commit: null
-  license: See the MindSpeed FSDPTurbo release (Ascend); verify in the checkout
+  commit: 474a39a4f367fd740723238ebd3e4695f8c3f26c
+  license: Apache-2.0 (FSDPTurbo README; verify LICENSE in the checkout)
   optional: false
-  installable: false
-  install_reason: The `fsdp_turbo` package ships with the MindSpeed FSDPTurbo release (Ascend/FSDPTurbo),
-    but this repository has not recorded the commit that matches the installed MindSpeed/CANN pairing.
-    An unpinned checkout is not something automation may install.
-  manual_step: Install the FSDPTurbo revision that matches the installed MindSpeed (pip install -e <FSDPTurbo
-    checkout>), then record that commit in dependencies/manifest.yaml so the pin becomes reproducible.
+  installable: true
+  install_reason: null
+  manual_step: null
   install:
-  - Install the FSDPTurbo revision that matches the installed MindSpeed (pip install -e <FSDPTurbo checkout>),
-    then record that commit in dependencies/manifest.yaml so the pin becomes reproducible.
+  - git clone https://gitcode.com/Ascend/FSDPTurbo <source-cache>/FSDPTurbo
+  - git -C <source-cache>/FSDPTurbo checkout 474a39a4f367fd740723238ebd3e4695f8c3f26c
+  - pip install -e .
   check:
     type: python_module
     module: fsdp_turbo
@@ -1827,42 +1847,51 @@ dependencies:
   - Ascend910_93
   supported_cann:
   - 8.2.RC1
-  notes: 'Evidence: the adapters import fsdp_turbo.distributed.expert_parallel.dispatcher_all_gather /
-    dispatcher_chunkmoe / dispatcher_mega_moe / domino_dispatcher, and the MindSpeed FSDPTurbo documentation
-    publishes the same module layout (fsdp_turbo/distributed/expert_parallel/...). The earlier mapping
-    to penn513/ascendep was an attribution error: the ascendep checkout imported the package, it did not
-    provide it.'
+  notes: 'Pin and install flow come from the peer project ascendep, which measured the six fsdp_turbo
+    dispatch entries this benchmark adapts: ascendep/ep/README.md records commit 474a39a4f367fd740723238ebd3e4695f8c3f26c
+    for its 950DT EP2 runs together with a CANN 9.2.1 adaptation patch (reports/ep2-67/fsdpturbo-cann921.patch).
+    The install flow is FSDPTurbo''s own README: git clone, `pip install -e .`. FSDPTurbo''s install guide
+    (docs/zh/training/install_guide.md) lists the CANN/torch_npu pairing; when the container''s CANN/torch_npu
+    differ from that pairing the patch is required, and the adapters must be re-validated instead of assumed.'
   ownership: external
   environment: base
   modules:
   - fsdp_turbo
   pin:
-    kind: none
+    kind: commit
+    value: 474a39a4f367fd740723238ebd3e4695f8c3f26c
+    verify: git rev-parse HEAD
   conflicts: []
   install_spec:
-    mode: manual
-    manual: Install the FSDPTurbo revision that matches the installed MindSpeed (pip install -e <FSDPTurbo
-      checkout>), then record that commit in dependencies/manifest.yaml so the pin becomes reproducible.
+    mode: source
+    source:
+      url: https://gitcode.com/Ascend/FSDPTurbo
+      directory: FSDPTurbo
+      submodules: false
+      pin:
+        kind: commit
+        value: 474a39a4f367fd740723238ebd3e4695f8c3f26c
+    steps:
+    - run: pip install -e .
     verify:
-    - echo 'manual step required; see manual_step'
+    - python -c "import fsdp_turbo; print(fsdp_turbo.__file__)"
 - id: mega-moe
   category: C
   kind: python_import
-  version: unpinned
+  version: 41d4793
   required_by:
   - operator:megamoe_td
-  source_url: provided by the deployment (see notes)
-  commit: null
-  license: Not declared upstream (ascendep research checkout)
+  source_url: https://gitcode.com/jzhoujg/Mega-MoE-TD
+  commit: 41d479374004696e21f69f9c72094b1d29941987
+  license: Apache-2.0 (Mega-MoE-TD README; verify LICENSE in the checkout)
   optional: false
-  installable: false
-  install_reason: '`mega_moe` and `_moe_testkit` are imported by the megamoe_td vendored demo and are
-    not published as a package; the test tree that provides them is not identified in this repository.'
-  manual_step: Provide the MegaMoE test tree (modules `mega_moe` and `_moe_testkit`) on PYTHONPATH from
-    the deployment that owns it, or measure the CANN MegaMoE path instead (operator megamoe_cann).
+  installable: true
+  install_reason: null
+  manual_step: null
   install:
-  - Provide the MegaMoE test tree (modules `mega_moe` and `_moe_testkit`) on PYTHONPATH from the deployment
-    that owns it, or measure the CANN MegaMoE path instead (operator megamoe_cann).
+  - git clone https://gitcode.com/jzhoujg/Mega-MoE-TD <source-cache>/Mega-MoE-TD
+  - git -C <source-cache>/Mega-MoE-TD checkout 41d479374004696e21f69f9c72094b1d29941987
+  - pip install -e . --no-deps
   check:
     type: python_module
     module: mega_moe
@@ -1875,24 +1904,38 @@ dependencies:
   - Ascend910_93
   supported_cann:
   - 8.2.RC1
-  notes: 'The `mega_moe` name had three different sources in the old catalog. They are now separated:
-    cann_ops_transformer.ops.mega_moe (megamoe_cann, declared by cann-ops-transformer), deep_ep_experimental.megamoe
-    (megamoe_lueelu, declared by deep-ep-experimental) and the test tree this entry names (megamoe_td
-    only).'
+  notes: ascendep/ep/README.md names 41d479374004696e21f69f9c72094b1d29941987 as the standalone MegaMoE
+    entry used by its 950DT EP2 runs; that entry is the Mega-MoE-TD project (src/mega_moe with MegaMoEFunction/FusedMoEForward/MoEForwardConfig,
+    tests/_moe_testkit.py). `pip install -e . --no-deps` is its documented install; the hardware stack
+    (CANN, Triton-distributed, ACLSHMEM) is deployment-provided by design. The adapters import `_moe_testkit`
+    as a top-level module, so the launcher must also put <checkout>/tests on PYTHONPATH (env_vars.MEGAMOE_TESTS_PATH).
   ownership: external
   environment: base
   modules:
   - mega_moe
   - _moe_testkit
   pin:
-    kind: none
+    kind: commit
+    value: 41d479374004696e21f69f9c72094b1d29941987
+    verify: git rev-parse HEAD
   conflicts: []
   install_spec:
-    mode: manual
-    manual: Provide the MegaMoE test tree (modules `mega_moe` and `_moe_testkit`) on PYTHONPATH from the
-      deployment that owns it, or measure the CANN MegaMoE path instead (operator megamoe_cann).
+    mode: source
+    source:
+      url: https://gitcode.com/jzhoujg/Mega-MoE-TD
+      directory: Mega-MoE-TD
+      submodules: false
+      pin:
+        kind: commit
+        value: 41d479374004696e21f69f9c72094b1d29941987
+    subdirectories:
+    - tests
+    steps:
+    - run: pip install -e . --no-deps
     verify:
-    - echo 'manual step required; see manual_step'
+    - python -c "import mega_moe; print(mega_moe.__file__)"
+    env_vars:
+      MEGAMOE_TESTS_PATH: <source-cache>/Mega-MoE-TD/tests
 - category: C
   kind: python_import
   version: 24ff84d
@@ -2487,13 +2530,10 @@ dependencies:
   installable: false
   install_reason: Device node ownership is created by the kernel driver and the container runtime.  chmod/chown
     from inside the container does not survive a driver reset, and there is nothing to install.
-  manual_step: 'On the host: add the container user to the HwHiAiUser group (``usermod -aG HwHiAiUser
-    <user>``), re-login, and start the container with --device /dev/davinci*:/dev/davinci* (or the Ascend
-    container runtime flags).  Then confirm the device nodes are readable and writable by the run user.'
+  manual_step: 'Nothing to install: the container image provides it. If the doctor reports a mismatch,
+    fix the image tag, not this repository.'
   install:
-  - 'On the host: add the container user to the HwHiAiUser group (``usermod -aG HwHiAiUser <user>``),
-    re-login, and start the container with --device /dev/davinci*:/dev/davinci* (or the Ascend container
-    runtime flags).  Then confirm the device nodes are readable and writable by the run user.'
+  - container image provides it; verify with `python -m scripts.doctor`
   check:
     type: device_node
     patterns:
@@ -2525,12 +2565,12 @@ dependencies:
     kind: none
   conflicts: []
   install_spec:
-    mode: manual
-    manual: 'On the host: add the container user to the HwHiAiUser group (``usermod -aG HwHiAiUser <user>``),
-      re-login, and start the container with --device /dev/davinci*:/dev/davinci* (or the Ascend container
-      runtime flags).  Then confirm the device nodes are readable and writable by the run user.'
-    verify:
-    - echo 'manual step required; see manual_step'
+    mode: none
+    provisioned_by: container
+    verify: []
+    note: 'provisioned by the benchmark container image (liurong_vllm): the image defines the driver/firmware/CANN/torch/torch_npu
+      stack; this repository verifies the observed versions and never installs or upgrades them'
+  provisioned_by: container
 - id: msprof
   category: E
   kind: binary
@@ -2702,6 +2742,56 @@ dependencies:
       verify ``ccec --version``.  This is the documented blocker for the ASC-COMM kernel build.
     verify:
     - echo 'manual step required; see manual_step'
+- id: triton-distributed-ascend
+  category: C
+  kind: native_build
+  version: unpinned
+  ownership: external
+  environment: base
+  modules:
+  - triton_dist
+  pin:
+    kind: none
+    value: null
+    verify: null
+  license: Apache-2.0 (repository LICENSE)
+  source_url: https://gitcode.com/Ascend/Triton-distributed-ascend
+  commit: null
+  required_by:
+  - operator:megamoe_td
+  optional: false
+  installable: false
+  install_reason: MegaMoE needs the Triton-distributed compiler/runtime and ACLSHMEM, but ascendep does
+    not record a Triton-distributed revision, and this repository will not invent one. The build also
+    needs LLVM/AscendNPU-IR.
+  manual_step: If the container does not already provide triton_dist, build it from https://gitcode.com/Ascend/Triton-distributed-ascend
+    following its README (CANN >= 9.1, requirements.txt, AscendNPU-IR, then TRITON_USE_ASCEND=ON TRITON_BUILD_WITH_CLANG_LLD=ON
+    TRITON_BUILD_PROTON=OFF TRITON_BUILD_LITTLE_KERNEL=OFF pip install ./python --no-build-isolation),
+    record the commit here, and re-run the doctor.
+  manual_step_owner: deployment
+  install_spec:
+    mode: manual
+    manual: deployment-provided; see manual_step
+    verify:
+    - python -c "import triton_dist; print(triton_dist.__file__)"
+  install:
+  - build per https://gitcode.com/Ascend/Triton-distributed-ascend
+  check:
+    type: python_module
+    module: triton_dist
+    import: false
+  runtime_paths:
+  - <site-packages>/triton_dist
+  supported_soc:
+  - Ascend950
+  supported_cann:
+  - 9.1.0
+  - 9.2.1
+  conflicts: []
+  notes: 'MegaMoE''s kernels are compiled through Triton-distributed; without it the mega_moe import succeeds
+    but execution fails. Declared so the blocker has a name and a documented build path instead of looking
+    like a missing wheel. commit is null on purpose: ascendep does not record a Triton-distributed revision,
+    and guessing one would be worse than asking for the image''s build.'
 ownership:
   model: in_repo | vendored | external | host; see dependencies/README.md
   note: No dependency may be satisfied by an unmanaged external checkout at run time. The vendored ascendep

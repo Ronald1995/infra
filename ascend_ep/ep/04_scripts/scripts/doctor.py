@@ -100,6 +100,8 @@ REQUIRED_KEYS = (
     "runtime_paths", "supported_soc", "supported_cann", "notes",
     "ownership", "environment", "modules", "pin", "install_spec", "conflicts",
 )
+#: Who provisions a dependency when this repository must not install it.
+PROVISIONED_BY = ("container", "deployment")
 #: Directory holding the isolated dependency environments.
 ENVIRONMENT_ROOT = "dependencies/environments"
 SOC_PATTERN = re.compile(r"Ascend[\s_-]?(\d{3,4}\w*)", re.IGNORECASE)
@@ -1222,7 +1224,8 @@ def _validate_pin(identifier, entry, errors):
         if not pin.get("resolve"):
             errors.append(f"{identifier}: a release_tag pin must declare how the commit is resolved")
     elif kind == "pip":
-        if not entry.get("install_spec", {}).get("requirements"):
+        if not entry.get("install_spec", {}).get("requirements") \
+                and not entry.get("provisioned_by"):
             errors.append(f"{identifier}: a pip pin must name its requirement file")
     elif kind == "in_repo":
         if not str(entry.get("source_url") or "").startswith(("baselines/", "kernels/", "launchers/")):
@@ -1254,7 +1257,7 @@ def _validate_install_spec(identifier, entry, root, errors):
             errors.append(f"{identifier}: source install_spec needs source.pin")
         if not spec.get("steps"):
             errors.append(f"{identifier}: source install_spec needs steps")
-    if not spec.get("verify"):
+    if not spec.get("verify") and mode not in ("none", "manual"):
         errors.append(f"{identifier}: install_spec needs a verify step")
     if entry.get("installable") and mode in ("manual", "none"):
         errors.append(f"{identifier}: installable but install_spec.mode is {mode}")
@@ -1345,7 +1348,8 @@ def validate_manifest(data, root=None):
                 errors.append(f"{identifier}: host_provided without manual_step")
             if not entry.get("manual_step_owner"):
                 errors.append(f"{identifier}: host_provided without manual_step_owner")
-        if entry.get("kind") == "pip" and entry.get("installable") is not True:
+        if entry.get("kind") == "pip" and entry.get("installable") is not True \
+                and not entry.get("provisioned_by"):
             errors.append(f"{identifier}: kind pip must be installable")
         if entry.get("installable") is True and entry.get("kind") == "host_provided":
             errors.append(f"{identifier}: host_provided cannot be installable")
@@ -1363,6 +1367,16 @@ def validate_manifest(data, root=None):
                 errors.append(f"{identifier}: a vendored dependency must use the vendored_source check")
             if entry.get("installable"):
                 errors.append(f"{identifier}: a vendored tree is present, not installed")
+        provisioned = entry.get("provisioned_by")
+        if provisioned is not None:
+            if provisioned not in PROVISIONED_BY:
+                errors.append(f"{identifier}: invalid provisioned_by {provisioned!r}")
+            if entry.get("installable"):
+                errors.append(f"{identifier}: a {provisioned}-provisioned dependency "
+                              f"cannot be installed by this repository")
+            if entry.get("install_spec", {}).get("mode") not in ("none", "manual"):
+                errors.append(f"{identifier}: a {provisioned}-provisioned dependency must "
+                              f"install with mode none")
         if ownership == "external" and entry.get("installable"):
             if entry.get("install_spec", {}).get("mode") not in ("pip", "source", "system"):
                 errors.append(

@@ -66,14 +66,16 @@ def test_every_requirement_pin_has_a_matching_catalog_entry(manifest, entries):
             constraint = str(entries[identifier]["version"] or "")
             assert constraint.lstrip("=") == version, (
                 f"{identifier}: manifest version {constraint!r} does not match the pin {raw!r}")
-    assert pinned >= 7, "the pinned requirements disappeared from the catalog"
+    assert pinned >= 5, "the pinned requirements disappeared from the catalog"
 
 
 def test_base_requirements_are_the_cpu_minimum(entries):
     pins, _ = doctor.parse_requirements(DEPENDENCIES / "python" / "base.txt")
     names = {doctor.normalize_name(name) for name, _, _ in pins}
-    assert {"torch", "numpy", "pyyaml", "jsonschema"} <= names
-    # Nothing NPU-specific and nothing host-provided may leak into the offline CPU file.
+    assert {"numpy", "pyyaml", "jsonschema"} <= names
+    # torch / torch_npu are provisioned by the benchmark container image, so a pip
+    # pin here would overwrite the image's stack (see manifest.provisioned_by).
+    assert "torch" not in names
     assert "torch-npu" not in names
     for name in names:
         identifier = distribution_index(entries).get(name)
@@ -81,16 +83,16 @@ def test_base_requirements_are_the_cpu_minimum(entries):
         assert entries[identifier]["category"] == "A", identifier
 
 
-def test_npu_requirements_only_contain_pip_entries(entries):
-    index = distribution_index(entries)
+def test_npu_requirements_point_at_the_container_stack(entries):
+    """torch_npu is container-provided, so npu.txt must not pin a wheel."""
     pins, _ = doctor.parse_requirements(DEPENDENCIES / "python" / "npu.txt")
-    assert pins, "npu.txt must pin the torch_npu wheel"
-    for name, _, _ in pins:
-        identifier = index.get(doctor.normalize_name(name))
-        assert identifier is not None
+    assert pins == [], "the container provides torch_npu; a pin would overwrite it"
+    text = (DEPENDENCIES / "python" / "npu.txt").read_text(encoding="utf-8")
+    assert "container" in text.lower()
+    for identifier in ("torch-npu", "torch"):
+        assert entries[identifier]["provisioned_by"] == "container"
         assert entries[identifier]["kind"] == "pip"
-        assert entries[identifier]["installable"] is True
-        assert entries[identifier]["category"] == "B"
+        assert entries[identifier]["installable"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +101,12 @@ def test_npu_requirements_only_contain_pip_entries(entries):
 def test_pip_entries_are_installable_and_host_entries_are_not(entries):
     for identifier, entry in entries.items():
         if entry["kind"] == "pip":
-            assert entry["installable"] is True, f"{identifier}: a pip dependency must be installable"
+            if entry.get("provisioned_by"):
+                # The container image provides it; installing it here would
+                # overwrite the image's stack.
+                assert entry["installable"] is False, identifier
+            else:
+                assert entry["installable"] is True, f"{identifier}: a pip dependency must be installable"
         if entry["kind"] == "host_provided":
             assert entry["installable"] is False, f"{identifier}: a host component cannot be installed here"
         if entry["installable"] is True:

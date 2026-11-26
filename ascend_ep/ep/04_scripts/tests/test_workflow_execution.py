@@ -156,7 +156,7 @@ def test_scenario_e_installable_and_host_dependencies_are_separated(workflow):
     prompt = "完成完整 Benchmark，如果缺少依赖就尝试安装，允许网络"
     final, ctx, fake = workflow(prompt, devices=128, checks=_mixed_checks())
     report = json.loads((ctx.output / "dependency_report.json").read_text(encoding="utf-8"))
-    assert [record["id"] for record in report["installable"]] == ["torch"]
+    assert [record["id"] for record in report["installable"]] == ["numpy"]
     assert [record["id"] for record in report["host"]] == ["npu-driver"]
     install = final.phases["dependency_install"]
     assert install.status in ("passed", "partial")
@@ -281,8 +281,10 @@ def _missing_torch():
     return [
         {"id": "python", "status": "pass", "category": "A", "detail": "python 3.10.8",
          "suggested_action": "none", "blocking_for": ["reporting"], "evidence": {}},
-        {"id": "torch", "status": "fail", "category": "A", "detail": "torch is absent",
-         "suggested_action": "install torch==2.6.0",
+        # numpy is a real pip-installable item; torch/torch_npu are provided by the
+        # benchmark container image and must never be "installable" here.
+        {"id": "numpy", "status": "fail", "category": "A", "detail": "numpy is absent",
+         "suggested_action": "install numpy==2.2.6",
          "blocking_for": ["l0_transport", "operator:alltoall_hccl"], "evidence": {}},
     ]
 
@@ -291,8 +293,10 @@ def _mixed_checks():
     return [
         {"id": "python", "status": "pass", "category": "A", "detail": "python 3.10.8",
          "suggested_action": "none", "blocking_for": ["reporting"], "evidence": {}},
-        {"id": "torch", "status": "fail", "category": "A", "detail": "torch is absent",
-         "suggested_action": "install torch==2.6.0",
+        # numpy is a real pip-installable item; torch/torch_npu are provided by the
+        # benchmark container image and must never be "installable" here.
+        {"id": "numpy", "status": "fail", "category": "A", "detail": "numpy is absent",
+         "suggested_action": "install numpy==2.2.6",
          "blocking_for": ["l0_transport", "operator:alltoall_hccl"], "evidence": {}},
         {"id": "npu-driver", "status": "fail", "category": "B",
          "detail": "the driver is not installed", "suggested_action": "ask the host owner",

@@ -24,7 +24,7 @@ Two rules make the procedure reproducible:
 | Python 3.10-3.12 | the framework pins | `python -V` |
 | git, a C++17 compiler, cmake, make | source builds (SHMEM, DeepEP, DeepGEMM, ...) | `git --version && g++ --version` |
 | network access **or** a source cache + wheelhouse | step 3 | see below |
-| the Ascend `torch_npu` wheel | it is **not** on PyPI | `ls /data/ascend-wheels | grep torch_npu` |
+| the container image (or a wheelhouse on a bare host) | `torch_npu` is not on PyPI | `python -c "import torch_npu; print(torch_npu.__version__)"` |
 
 Record the observed triple -- it determines every wheel and every source pin:
 
@@ -38,6 +38,34 @@ python -c "import torch, torch_npu; print(torch.__version__, torch_npu.__version
 The catalog's known-good triples live in `dependencies/manifest.yaml` under
 `compatibility.rows` (CANN, torch, torch_npu, SoC). If your triple is not listed, the doctor
 reports the pairing as `skip` -- an unknown pairing is never a pass.
+
+## 0.5 The container-provided stack
+
+The benchmark container image (`liurong_vllm`) provides the driver, firmware, CANN,
+HCCL/HCOMM, `npu-smi`, the Ascend C toolchain and the `torch`/`torch_npu` wheels. Those
+entries are declared `provisioned_by: container` in `dependencies/manifest.yaml`:
+
+* the installer never installs or upgrades them (they are `verify_only` in the plan, and
+  their requirement pins were removed from `python/base.txt` / `python/npu.txt` so a `pip
+  install -r` cannot overwrite the image's stack);
+* the doctor still probes them, records the observed versions and warns when the image's
+  triple differs from the pairing the catalog pins. A mismatch is an image-tag problem, not
+  something this repository patches.
+
+`EP_ASCEND_WHEEL_INDEX` / `--wheelhouse` are only needed on a host that is *not* the
+container (or when the image intentionally omits a wheel). ASC-COMM kernels, the
+`msprof`-based profiling tools beyond the image, MPI and the multi-node env remain host
+blockers with their manual step.
+
+If HCCL itself must be rebuilt from source (for example to test a CANN patch), the
+supported path is the CANN HCCL repository at the tag matching the installed CANN release,
+documented in `hccl.source_install` in the catalog:
+
+```sh
+git clone https://gitcode.com/cann/hccl.git
+git -C hccl checkout tags/<tag matching the installed CANN release>   # see cann/release-management
+cd hccl && bash build.sh      # flags: docs/zh/build/build.md in that repository
+```
 
 ## 1. Get the code
 

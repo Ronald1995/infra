@@ -96,8 +96,10 @@ def _missing_torch():
     return [
         {"id": "python", "status": "pass", "category": "A", "detail": "python 3.10.8",
          "suggested_action": "none", "blocking_for": ["reporting"], "evidence": {}},
-        {"id": "torch", "status": "fail", "category": "A", "detail": "torch is absent",
-         "suggested_action": "install torch==2.6.0",
+        # numpy is a real pip-installable item; torch/torch_npu are provided by the
+        # benchmark container image and must never be "installable" here.
+        {"id": "numpy", "status": "fail", "category": "A", "detail": "numpy is absent",
+         "suggested_action": "install numpy==2.2.6",
          "blocking_for": ["l0_transport", "operator:alltoall_hccl"], "evidence": {}},
     ]
 
