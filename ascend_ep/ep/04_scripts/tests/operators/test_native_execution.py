@@ -23,10 +23,11 @@ from common.config import load_configs
 from common.registry import ROOT, registry
 from common.scheduler import make_plan
 
-#: Representative cases: one dispatch, one dispatch+combine round trip, and a full
-#: MoE forward+backward. Between them they cover the L1 and L3 timed blocks and the
-#: dispatch/combine/GMM validators.
-CASES = ("COMM-001", "COMM-004", "MOE-003")
+#: Representative cases, one per timed block the adapters share: L1 dispatch and
+#: dispatch+combine, L2 serial fusion on both sides of the expert matmul, and a full
+#: L3 MoE forward+backward. Between them they exercise the dispatch, combine, GMM and
+#: MoE validators.
+CASES = ("COMM-001", "COMM-004", "FUSE-001", "FUSE-003", "MOE-003")
 
 
 def cpu_capable():
@@ -163,6 +164,6 @@ def test_npu_only_adapters_are_blocked_not_passed():
 def test_a_plan_never_reports_a_pass_before_execution():
     config = load_configs(ROOT / "configs/smoke_cpu.yaml")
     tasks = make_plan(config, operators=cpu_capable(), levels=["L1", "L2", "L3"],
-                      cases=["COMM-001", "COMM-004", "MOE-003"])
+                      cases=list(CASES))
     assert tasks
     assert all(task["status"] != "passed" for task in tasks)
