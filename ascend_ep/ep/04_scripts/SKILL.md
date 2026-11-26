@@ -158,7 +158,9 @@ drops a requirement:
 | `exhaustive` | full plus the legacy alias identifiers as their own tasks | deep parameter study |
 
 `--execution-profile` selects it for one invocation; the plan's own `profile:` is the
-default. The manifest records the resolved profile, so a `smoke` run can never be
+default. A request may set `scope.execution_profile` explicitly (the workflow passes it
+to the plan), and the interpreter only recognises the words `smoke`, `core` and
+`exhaustive` (plus `冒烟`): a vague phrase never narrows the matrix silently. The manifest records the resolved profile, so a `smoke` run can never be
 reported as benchmark coverage.
 
 Before delivering, verify the four coverage numbers from `analysis/results.json`

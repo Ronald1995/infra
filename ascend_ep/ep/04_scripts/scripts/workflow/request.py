@@ -60,6 +60,10 @@ class RequestError(ValueError):
 class Scope:
     ep_sizes: list = field(default_factory=list)
     levels: list = field(default_factory=list)
+    #: ``smoke`` / ``core`` / ``full`` / ``exhaustive``; empty means "the plan's own
+    #: profile".  The workflow passes it to the plan expansion so a request can ask for
+    #: a narrowed execution without pretending the matrix changed.
+    execution_profile: str = ""
     suites: list = field(default_factory=list)
     operators: object = "all"
     cases: list = field(default_factory=list)
@@ -67,7 +71,8 @@ class Scope:
     def as_dict(self):
         return {"ep_sizes": list(self.ep_sizes), "levels": list(self.levels),
                 "suites": list(self.suites), "operators": self.operators,
-                "cases": list(self.cases)}
+                "cases": list(self.cases),
+                "execution_profile": self.execution_profile}
 
 
 @dataclass
@@ -432,6 +437,14 @@ def interpret(prompt, root=None):
     if levels:
         request.scope.levels = levels
         request.sources["levels"] = "prompt"
+    # Only explicit profile wording sets it: a profile narrows the execution, so it
+    # must never be inferred from a vague word like "quick".
+    for word, profile in (("exhaustive", "exhaustive"), ("smoke", "smoke"),
+                          ("冒烟", "smoke"), ("core", "core")):
+        if word in lowered:
+            request.scope.execution_profile = profile
+            request.sources["execution_profile"] = f"prompt:{word}"
+            break
     if has(_CPU_WORDS):
         request.environment.device = "cpu"
         request.sources["device"] = "prompt"

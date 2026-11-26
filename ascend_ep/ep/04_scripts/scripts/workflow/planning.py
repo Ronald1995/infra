@@ -85,6 +85,9 @@ def narrowed_plan(ctx, ep_sizes=None):
     spec["levels"] = list(ctx.request.scope.levels)
     spec["suites"] = list(ctx.request.scope.suites)
     spec["operators"] = ctx.request.scope.operators
+    profile = getattr(ctx.request.scope, "execution_profile", "")
+    if profile:
+        spec["profile"] = profile
     if ctx.request.scope.cases:
         spec["cases"] = list(ctx.request.scope.cases)
     for key in ("base_config",):
@@ -121,6 +124,9 @@ def scope_args(ctx):
         argv += ["--cases", ",".join(request.scope.cases)]
     if isinstance(request.scope.operators, list):
         argv += ["--operators", ",".join(request.scope.operators)]
+    profile = getattr(request.scope, "execution_profile", "")
+    if profile:
+        argv += ["--execution-profile", profile]
     return argv
 
 

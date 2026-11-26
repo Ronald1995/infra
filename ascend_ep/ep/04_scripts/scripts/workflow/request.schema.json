@@ -27,6 +27,10 @@
           "type": "array", "items": {"type": "integer", "minimum": 1},
           "description": "Empty = the plan's declared EP sizes."
         },
+        "execution_profile": {
+          "enum": ["", "smoke", "core", "full", "exhaustive"],
+          "description": "How much of the declared matrix this run executes; empty = the plan's own profile."
+        },
         "levels": {
           "type": "array", "items": {"enum": ["L0", "L1", "L2", "L3", "L4"]},
           "description": "Empty = the plan's declared levels."
