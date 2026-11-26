@@ -968,128 +968,40 @@ BF16、FP8 等不同 dtype 应定义不同的误差容忍范围，并基于参�
 
 这才是分层 Benchmark 相比现有完整 MoE 耗时测试最有价值的地方：不仅能够排名，还能够逐步排除不同的性能瓶颈。
 
-## 九、测试脚本目录设计
+## 九、测试脚本目录与入口
 
-结合前面讨论的 `infra/common/ep/` 目录，建议将详细测试设计放入 `03_benchmark`，具体实现放入 `04_scripts`。
+[专题索引](../README.md) 连接硬件架构、算子实现、测量规范、归档和专项分析。可执行项目位于 `ascend_ep/ep/04_scripts/`。
 
 ```text
-infra/common/ep/
-│
-├── 03_benchmark/
-│   ├── ep_benchmark_design.md
-│   ├── ep_benchmark_methodology.md
-│   ├── ep_benchmark_metrics.md
-│   └── ep_benchmark_testcases.md
-│
-├── 04_scripts/
-│   ├── README.md
-│   ├── run_benchmark.py
-│   │
-│   ├── configs/
-│   │   ├── ep8_baseline.yaml
-│   │   ├── large_token_training.yaml
-│   │   ├── high_throughput.yaml
-│   │   ├── weak_scaling.yaml
-│   │   ├── strong_scaling.yaml
-│   │   ├── topology.yaml
-│   │   ├── load_balance.yaml
-│   │   ├── dedup.yaml
-│   │   └── overlap.yaml
-│   │
-│   ├── workloads/
-│   │   ├── tensors.py
-│   │   ├── routing_balanced.py
-│   │   ├── routing_random.py
-│   │   ├── routing_hotspot.py
-│   │   ├── routing_locality.py
-│   │   ├── routing_dedup.py
-│   │   └── routing_trace.py
-│   │
-│   ├── backends/
-│   │   ├── base.py
-│   │   ├── registry.py
-│   │   ├── hccl/
-│   │   ├── deepep/
-│   │   ├── moonep/
-│   │   ├── cann_mc2/
-│   │   ├── megamoe/
-│   │   └── frameworks/
-│   │
-│   ├── benchmarks/
-│   │   ├── l0_hardware.py
-│   │   ├── l1_communication.py
-│   │   ├── l2_fused.py
-│   │   ├── l3_expert.py
-│   │   └── l4_moe_layer.py
-│   │
-│   ├── metrics/
-│   │   ├── latency.py
-│   │   ├── bandwidth.py
-│   │   ├── throughput.py
-│   │   ├── flops.py
-│   │   ├── overlap.py
-│   │   ├── load_balance.py
-│   │   ├── scalability.py
-│   │   └── memory.py
-│   │
-│   ├── validation/
-│   │   ├── reference.py
-│   │   ├── forward.py
-│   │   ├── backward.py
-│   │   └── routing.py
-│   │
-│   ├── profiling/
-│   │   ├── collector.py
-│   │   ├── parser.py
-│   │   ├── communication.py
-│   │   └── overlap.py
-│   │
-│   ├── reports/
-│   │   ├── schema.py
-│   │   ├── aggregate.py
-│   │   └── generate_report.py
-│   │
-│   ├── launchers/
-│   │   ├── run_ep8.sh
-│   │   ├── run_ep64.sh
-│   │   └── run_ep128.sh
-│   │
-│   └── tests/
-│
-└── 05_results/
-    ├── ep_benchmark_ep8.md
-    ├── ep_benchmark_ep64_ep128.md
-    └── raw/
+ascend_ep/
+├── ep.md                  # 算子调研总览
+└── ep/
+    ├── 03_benchmark/      # 方法与用例矩阵
+    ├── 04_scripts/
+    │   ├── run_benchmark.py  # 计划、运行、恢复、Profiling、分析和报告
+    │   ├── configs/          # 基线、EP 规模和专项配置
+    │   ├── launchers/        # EP8、EP64 和 EP128 启动脚本
+    │   ├── common/           # 调度、Workload、路由、校验、分布式执行和计时
+    │   ├── benchmarks/       # L0 硬件和 L1–L4 算子测点
+    │   ├── baselines/        # 通信、专家计算及硬件基线
+    │   ├── operators/        # Registry、能力及每个算子的原生适配
+    │   ├── schemas/          # 配置和结果格式
+    │   ├── metrics/          # 公共指标
+    │   ├── profiling/        # Trace 采集、解析及重叠分析
+    │   ├── analysis/         # 比较、融合、去重、负载和扩展性分析
+    │   ├── reporting/        # 报告和图表
+    │   └── tests/            # 公共框架测试及可选 NPU 验收
+    └── 05_results/raw/       # 按运行 ID 归档样本与报告
 ```
 
-测试脚本通过 Backend Registry 管理能力，通过 Workload Generator 统一构造输入，通过 Benchmark Runner 控制测试范围，Metrics 模块负责公共指标计算。
-
-例如最终期望支持如下命令：
+从 `ascend_ep/ep/04_scripts/` 执行以下命令。安装方法和多机参数见 [脚本使用说明](../04_scripts/README.md)。
 
 ```bash
-# EP8 完整基线
-python run_benchmark.py \
-    --config configs/ep8_baseline.yaml
-
-# EP128 纯通信对比
-python run_benchmark.py \
-    --config configs/high_throughput.yaml \
-    --ep-size 128 \
-    --level L1 \
-    --backends deepep_ascend,moonep,mc2_dispatch_cann
-
-# 通算融合对比
-python run_benchmark.py \
-    --config configs/overlap.yaml \
-    --level L2,L3
-
-# 动态专家负载均衡专项测试
-python run_benchmark.py \
-    --config configs/load_balance.yaml \
-    --ep-size 128
+python run_benchmark.py baseline --config configs/ep8_bf16.yaml --levels L1,L2
+python run_benchmark.py plan --config configs/ep128_bf16.yaml --levels L1
+python run_benchmark.py run --config configs/overlap.yaml
+python run_benchmark.py run --config configs/load_balance.yaml
 ```
-
-这些是建议的 CLI 接口设计，不是当前仓库已经具备的可执行命令。
 
 ## 十、最终报告及算子评价体系
 

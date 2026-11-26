@@ -2,6 +2,17 @@
 
 [EP 总览及算子索引](../ep.md) 按具体后端列出实现入口和支持情况。专题按硬件原理、实现、测试、结果和分析的阅读顺序组织。
 
+| 目录 | 作用 |
+| --- | --- |
+| `01_architecture/` | 说明卡内和跨机链路、通信原语与物理拓扑，为后端实现提供硬件背景。 |
+| `02_implementations/` | 对照各后端的通信、计算融合、路由与前反向实现。 |
+| `03_benchmark/` | 定义 L0–L4 的计时边界、输入、正确性要求、指标和用例矩阵。 |
+| `04_scripts/` | 通过统一 CLI 将配置、公共基线和原生算子适配编排成可执行测点。 |
+| `05_results/` | 归档计划、配置与环境快照、原始样本、正确性、Profiling 及报告。 |
+| `06_analysis/` | 基于结果分析带宽、通算重叠、负载与去重、扩展效率和后端适用范围。 |
+
+执行时，`04_scripts/configs/` 选择用例和算子，`common/` 统一构造输入、路由和分布式任务。`benchmarks/` 调用 `baselines/` 或 `operators/` 执行测点，写入 `05_results/raw/<run-id>/`。`metrics/`、`profiling/`、`analysis/` 和 `reporting/` 将样本和 Trace 转为指标与报告。关于可执行目录和入口见 [Benchmark 方法与入口](03_benchmark/ep_benchmark_methodology.md#九测试脚本目录与入口)。
+
 ## 01 通信架构
 
 - [通信硬件与数据路径](01_architecture/ep_comm_hardware.md)
@@ -13,6 +24,7 @@
 - [DeepEP-Ascend 与 ElasticBuffer](02_implementations/deepep_ascend.md)
 - [MoonEP](02_implementations/moonep.md)
 - [MegaMoE](02_implementations/megamoe.md)
+- [Lueelu MegaMoE 通信与架构](02_implementations/lueelu_megamoe.md)
 - [CANN MC2](02_implementations/cann_mc2.md)
 - [HCCL EP](02_implementations/hccl_ep.md)
 - [框架 EP](02_implementations/framework_ep.md)
@@ -41,3 +53,5 @@
 - [通信带宽](06_analysis/ep_bandwidth_analysis.md)
 - [规模扩展](06_analysis/ep_scalability_analysis.md)
 - [后端选型](06_analysis/ep_backend_selection.md)
+
+旧入口 [ep_comm_hardware.md](ep_comm_hardware.md) 和 [lueelu_megamoe.md](lueelu_megamoe.md) 指向对应的分类文档。
