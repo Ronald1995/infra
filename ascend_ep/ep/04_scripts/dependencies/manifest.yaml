@@ -468,6 +468,19 @@ compatibility:
     evidence: ascendep recorded a 950DT EP2/EP8 run on CANN 9.2.1, torch 2.10.0+cpu and torch_npu 2.10.0.post4.
       This repository has not re-verified the triple; the doctor reports an unlisted pairing as skip,
       never as pass. The benchmark container image defines the actual stack.
+  - id: cann-9.0-container
+    cann: 9.0.0
+    torch: unverified
+    torch_npu: unverified
+    soc:
+    - Ascend910_93
+    - Ascend950
+    status: documented
+    source_url: local container probe (docs/container_probe.md)
+    evidence: The liurong_vllm container reports CANN 9.0.0 (/usr/local/Ascend/cann-9.0.0) and npu-smi
+      25.5.1, but no torch / torch_npu for its default interpreter and no system python 3.10-3.12. The
+      doctor records the observed triple; this repository has not run the benchmark on that image, so
+      the pairing is documented, not verified.
   policy:
   - The torch base version is shared by the CPU and NPU paths; only the wheel index and the +cpu local
     tag differ.

@@ -67,6 +67,19 @@ git -C hccl checkout tags/<tag matching the installed CANN release>   # see cann
 cd hccl && bash build.sh      # flags: docs/zh/build/build.md in that repository
 ```
 
+### The deployment container (liurong_vllm)
+
+`docs/container_probe.md` records what that image actually exposes: CANN 9.0.0,
+`npu-smi` 25.5.1, a Debian 10 userland with only `python3.7` in `/usr/bin`, and no
+`torch`/`torch_npu` reachable from the default `python3`. Before an NPU run:
+
+1. start from an interpreter that has `torch`/`torch_npu` (the image's own venv/conda
+   environment, or a wheelhouse install) and that is 3.10-3.12;
+2. `source /usr/local/Ascend/ascend-toolkit/set_env.sh` explicitly (the image's
+   `.bashrc` currently reports it missing at login even though the file exists);
+3. run `python -m scripts.doctor --profile all` and read the observed triple. The
+   catalog documents CANN 9.0.0 as a pairing it has *not* verified on that image.
+
 ## 1. Get the code
 
 ```sh
