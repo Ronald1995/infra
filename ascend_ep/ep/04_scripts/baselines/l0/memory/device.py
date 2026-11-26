@@ -7,7 +7,6 @@ count identical, so the two bandwidth curves are directly comparable.
 import torch
 
 from baselines.l0.contract import Prepared
-from baselines.l0.verification.path_verifier import Evidence
 from baselines.l0.verification.vocabulary import requested
 from common.validation import CorrectnessError
 
@@ -18,7 +17,7 @@ def prepare(ctx, case, size, params):
     strided = case.id == "MEM-004"
     result = torch.empty_like(value)
     request = requested(backend="torch_memory", operation="copy",
-                        execution_resource="HOST_CPU", transport_protocol="auto")
+                        transport_protocol="auto")
 
     if strided:
         def run():
@@ -43,8 +42,6 @@ def prepare(ctx, case, size, params):
     payload = {"per_rank_bytes": size * 2, "global_bytes": size * 2 * ctx.size,
                "unit": "bytes", "scope": "per_rank_and_global", "direction": "bidirectional",
                "definition": "logical read + write bytes of one copy"}
-    evidence = [Evidence(source="native_descriptor",
-                         claim={"execution_resource": "HOST_CPU"},
-                         detail="torch_npu copy_ on the default stream")]
-    return Prepared(run=run, validate=validate, request=request, evidence=evidence,
-                    payload=payload)
+    # A torch copy is not evidence about which engine executed it; the record
+    # stays unverified unless profiling names the kernel.
+    return Prepared(run=run, validate=validate, request=request, payload=payload)
