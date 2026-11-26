@@ -206,3 +206,18 @@ reporting/report.py         orchestration: coverage -> charts -> specialty -> ma
 
 `schemas/__init__.py` owns the status vocabulary, the status buckets and the initial result
 record.
+
+## Coverage metrics and capability gaps (section 2.8 / 2.9)
+
+The coverage chapter reports four numbers separately -- planning, execution,
+correctness and verified performance -- because a mechanism without an implementation
+can plan 100% and still never reach verified coverage. `not_applicable` leaves the
+execution denominator; `unverified`, `blocked_topology`, `not_run` and the failure
+statuses lower the number they belong to.
+
+Section 2.9 groups every point whose status means "this capability is not available
+here" (`not_implemented`, `unsupported`, `blocked_topology`, `dependency_missing`,
+`environment_unavailable`, `source_unavailable`, `unverified`) by status and recorded
+reason, with counts and examples. It states explicitly that `unverified` does not count
+as verified coverage, and when nothing was missing it says so instead of leaving an
+empty table.

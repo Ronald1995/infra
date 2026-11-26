@@ -34,7 +34,79 @@ def render(ctx):
     lines += _case_backend_matrix(ctx)
     lines += ["### 2.7 Variant coverage", ""]
     lines += _variant_coverage(ctx)
+    lines += ["### 2.8 Coverage metrics", ""]
+    lines += coverage_metrics_lines(ctx)
+    lines += ["### 2.9 Capability gaps", ""]
+    lines += gap_lines(ctx)
     return lines
+
+
+#: Statuses that mean "this capability is not available here", with their class.
+GAP_STATUSES = ("not_implemented", "unsupported", "blocked_topology", "dependency_missing",
+                "environment_unavailable", "source_unavailable", "unverified")
+
+
+def _pct(value):
+    if value is None:
+        return "n/a"
+    return f"{value:.1%}"
+
+
+def coverage_metrics_lines(ctx):
+    """The four coverage numbers, kept apart on purpose."""
+    metrics = ((getattr(ctx, "analysis", None) or {}).get("coverage_metrics") or None)
+    if not metrics:
+        return ["_No coverage metrics were computed for this run (no manifest was found "
+                "next to the results). Planning, execution, correctness and verified "
+                "coverage are therefore not reported._", ""]
+    rows = [
+        ("Planning", _pct(metrics.get("planning_coverage")),
+         f"{metrics.get('present', 0)} / {metrics.get('planned', 0)} planned",
+         "the matrix contains the requirement"),
+        ("Execution", _pct(metrics.get("execution_coverage")),
+         f"{metrics.get('executed', 0)} / {metrics.get('applicable', 0)} applicable",
+         "the run reached it (`not_applicable` leaves the denominator)"),
+        ("Correctness", _pct(metrics.get("correctness_pass_rate")),
+         f"{metrics.get('correct', 0)} / {metrics.get('executed', 0)} executed",
+         "the measurement passed its checks"),
+        ("Verified performance", _pct(metrics.get("verified_performance_coverage")),
+         f"{metrics.get('verified', 0)} / {metrics.get('applicable', 0)} applicable",
+         "the mechanism was proven, not a fallback or `unverified`"),
+    ]
+    lines = [*F.table(("Metric", "Value", "Counts", "What it means"), rows), ""]
+    breakdown = metrics.get("status_breakdown") or {}
+    if breakdown:
+        lines += ["Status breakdown: " + ", ".join(f"`{name}`={count}"
+                                                   for name, count in breakdown.items()
+                                                   if count), ""]
+    if metrics.get("missing_count"):
+        lines += [f"{metrics['missing_count']} planned requirement(s) have no result record; "
+                  "they stay in the execution denominator.", ""]
+    return lines
+
+
+def gap_lines(ctx):
+    """Capabilities this run could not exercise, grouped by status with a reason."""
+    rows = [row for row in (getattr(ctx, "rows", ()) or ())
+            if (row.get("status") or "") in GAP_STATUSES]
+    if not rows:
+        return ["_No capability gap was recorded in this run._", ""]
+    grouped = {}
+    for row in rows:
+        status = row.get("status")
+        reason = (row.get("error_reason") or row.get("reason") or "").strip()
+        key = (status, reason or "no reason recorded")
+        grouped.setdefault(key, []).append(row)
+    table_rows = []
+    for (status, reason), items in sorted(grouped.items(), key=lambda item: item[0]):
+        examples = sorted({f"{item.get('case_id')}/{item.get('backend_id') or item.get('operator')}"
+                           for item in items})
+        shown = ", ".join(examples[:4]) + (" ..." if len(examples) > 4 else "")
+        table_rows.append((f"`{status}`", str(len(items)), shown, reason[:160]))
+    return [*F.table(("Status", "Points", "Examples", "Reason"), table_rows),
+            "",
+            "`unverified` means the measurement ran but the mechanism was not proven; it "
+            "does not count as verified coverage.", ""]
 
 
 def common_status_rows():
