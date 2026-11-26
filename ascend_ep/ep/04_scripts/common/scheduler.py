@@ -17,7 +17,9 @@ from common.cases import L0_PARAMETERS, canonical_cases, catalog, l0_family
 from common.registry import check_constraints, registry
 from common.suites import select as select_suite_cases, suite as suite_of
 from common.storage import fingerprint
-from common.variants import message_sizes, parameter_problems, task_parameters, variants_for
+from common.variants import (TRANSPORT_DISABLED, message_sizes, policy_problem,
+                             structural_problem, task_parameters, transport_gate,
+                             transport_mechanism, variants_for)
 
 FIXED_OWNER = "fixed_owner"
 FIXED_OWNER_CASES = {"LAYER-003", "LAYER-005", "LAYER-006"}
@@ -88,11 +90,17 @@ def status_for(spec, case, cfg, baseline=False):
     if layer_dedup is not None and layer_dedup != cfg["dedup"]["mode"]:
         return "not_applicable", f"this case measures {layer_dedup} dedup; the plan selects dedup.mode={cfg['dedup']['mode']}"
     if case.id == "LAYER-007" and cfg["workload"]["routing"] != "real_trace_replay":
-        return "not_run", "L3 replay requires a real_trace_replay workload"
+        # The case measures replay of a real trace.  A configuration without a
+        # trace does not select the test condition, so it is not a gap in the
+        # execution: it is `not_applicable` and the reason says why.
+        return "not_applicable", ("L3 replay needs a real_trace_replay workload; this "
+                                  "configuration does not select one")
     if case.id in {"COMM-012", "LAYER-003", "LAYER-004", "LAYER-008"} and not cfg["load_balance"]["enabled"]:
-        return "not_run", "choose a load_balance configuration that enables the planner"
+        return "not_applicable", ("the planner is disabled in this configuration; the "
+                                  "load_balance suite measures this case with "
+                                  "load_balance.enabled=true")
     if case.level == "L4" and cfg["workload"]["routing"] == "real_trace_replay":
-        return "not_run", "replay is measured in LAYER-007 with the L3 boundary"
+        return "not_applicable", "replay is measured in LAYER-007 with the L3 boundary"
     if cfg["benchmark"].get("phase") == "forward" and case.training:
         return "not_applicable", "forward-only configuration selects a training case"
     if case.level == "L1" and spec.id == "mc2_dispatch_cann":
@@ -210,16 +218,36 @@ def make_plan(configs, operators=None, levels=None, cases=None, baselines=False,
                 if spec is None and case.level != "L0":
                     continue
                 status, reason = status_for(spec, case, cfg, baselines) if spec else ("not_run", None)
+                if case.level == "L0" and case.category == "transport":
+                    # `benchmark.transport.enabled` decides whether the mechanism
+                    # may execute at all.  The case stays in the manifest as an
+                    # explicit `not_applicable`; it never falls back to another
+                    # mechanism and never produces executable parameter variants.
+                    gate = transport_gate(case, settings)
+                    if gate:
+                        status, reason = gate
                 parameter_sets = _parameters_for(case, cfg, ep_size, op_id, status, reason)
                 for params in parameter_sets:
                     case_status, case_reason = status, reason
-                    problem = parameter_problems(case, params, ep_size)
-                    if problem and not case_reason:
-                        case_status, case_reason = "unsupported", problem
+                    if params.get(TRANSPORT_DISABLED):
+                        case_status, case_reason = "not_applicable", params.get("reason")
+                    if case_reason is None:
+                        # An impossible parameter set is a property of the plan
+                        # itself, so it is reported before the hardware verdict.
+                        problem = structural_problem(case, params, ep_size)
+                        if problem:
+                            case_status, case_reason = problem
                     if case.level == "L0" and case_reason is None:
+                        # Hardware capability is checked before the topology
+                        # constraints: an unsupported mechanism stays
+                        # `unsupported` even when the peer policy is N/A too.
                         derived_status, derived_reason = _l0_status(case, params, matrix)
-                        if derived_status:
+                        if derived_status and derived_status != "not_run":
                             case_status, case_reason = derived_status, derived_reason
+                    if case_reason is None:
+                        problem = policy_problem(case, params, ep_size, cfg)
+                        if problem:
+                            case_status, case_reason = problem
                     identity = _identity(cfg, case.id, op_id, params)
                     task_id = f"{case.id}-{fingerprint(identity)[:16]}"
                     if task_id in tasks:
@@ -256,7 +284,13 @@ def _parameters_for(case, cfg, ep_size, op_id, status, reason):
     if status not in (None, "not_run") or reason is not None:
         if case.level != "L0":
             return [{"variant": "default", "message_bytes": None}]
-        return [{"variant": "default", "message_bytes": message_sizes(case, settings)[0]}]
+        params = {"variant": "default", "message_bytes": message_sizes(case, settings)[0]}
+        mechanism = transport_mechanism(case)
+        if mechanism:
+            # Keep the mechanism on the record so a `not_applicable` L0 task
+            # still names the transport path it would have exercised.
+            params["mechanism"] = mechanism
+        return [params]
     if case.level == "L0":
         return task_parameters(case, "hardware", settings, ep_size)
     variants = (FIXED_OWNER,) if fixed_owner else variants_for(case)
@@ -264,7 +298,14 @@ def _parameters_for(case, cfg, ep_size, op_id, status, reason):
 
 
 def merge_tasks(store, tasks):
-    """Merge per-suite expansions, keeping one task per identical point."""
+    """Merge per-suite expansions, keeping one task per identical point.
+
+    Two suites that produce the *same* work collapse into one task and keep the
+    union of their ``suite_ids``/composition points, so de-duplication never loses
+    which suites asked for the measurement.  Tasks whose configuration or
+    parameters differ keep distinct task IDs because the identity is part of the
+    hash: ``decode`` and ``prefill`` are different work, not a duplicate.
+    """
     for task in tasks:
         key = task["task_id"]
         if key in store:
@@ -272,6 +313,9 @@ def merge_tasks(store, tasks):
             previous["suite_ids"] = sorted(set(previous["suite_ids"]) | set(task["suite_ids"]))
             previous["config_source"] = sorted(set(previous.get("config_source") or ()) |
                                                set(task.get("config_source") or ()))
+            points = set(previous.get("plan_points") or ()) | set(task.get("plan_points") or ())
+            if points:
+                previous["plan_points"] = sorted(points)
             continue
         store[key] = task
     return store

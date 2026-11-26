@@ -214,20 +214,30 @@ def _severity(status):
 
 def plan_summary(tasks, matrix):
     sizes = matrix.get("selected_ep_sizes") or matrix.get("ep_sizes") or []
-    print(f"plan: {matrix.get('name')}  EP sizes: {', '.join(map(str, sizes))}")
+    print(f"plan: {matrix.get('name')}  mode: {matrix.get('mode', 'catalog')}  "
+          f"EP sizes: {', '.join(map(str, sizes))}")
+    print(f"suites ({len(matrix.get('suites') or [])}): {', '.join(matrix.get('suites') or [])}")
     print(f"cases: {len({task['case_id'] for task in tasks})}  tasks: {len(tasks)}")
     for size in sizes:
         subset = [task for task in tasks if task["ep_size"] == size]
         counts = {}
         for task in subset:
             counts[task["status"]] = counts.get(task["status"], 0) + 1
+        levels = {task["level"] for task in subset}
         detail = ", ".join(f"{name}={count}" for name, count in
                            sorted(counts.items(), key=lambda item: _severity(item[0])))
-        print(f"  EP{size}: {len(subset)} tasks ({detail})")
+        suites = {suite for task in subset for suite in task.get("suite_ids", ())}
+        print(f"  EP{size}: {len(subset)} tasks, {len(levels)} levels, {len(suites)} suites "
+              f"({detail})")
     known = matrix.get("catalog") or {}
     aliases = matrix.get("case_aliases") or {}
     if known:
         print(f"catalog: {len(known)} cases ({len(aliases)} legacy aliases resolved)")
+    topology = matrix.get("topology") or {}
+    for size, record in sorted(topology.items(), key=lambda item: str(item[0])):
+        print(f"  topology EP{size}: source={record.get('source')} "
+              f"verified={record.get('verified')} servers={record.get('servers')} "
+              f"supernodes={record.get('supernodes')}")
 
 
 def run_command(args):

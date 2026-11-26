@@ -8,6 +8,12 @@
 完整矩阵，默认覆盖 EP8/EP64/EP128 与 L0～L4 全部 Catalog。设计细节见
 [测试矩阵设计](docs/benchmark_matrix.md)。
 
+默认 Plan 是 **Full Matrix**（`plan.mode: full_matrix`）：`all` 展开完整 Catalog，其余 15 个专项
+Suite（hardware/memory/transport/collectives/overlap/decode/prefill/training_tail/high_throughput/
+strong_scaling/weak_scaling/topology/load_balance/dedup/quantized）各自加载专项配置。完全相同的点
+去重为同一个 task 并保留全部 `suite_ids`；参数不同的点保持独立。`plan.mode: catalog` 是旧语义
+（`all` 只用 Base 配置），未声明 `mode` 的旧 Plan 仍然按 catalog 运行。
+
 ```sh
 # 完整计划：只生成 Manifest，不执行
 python run_benchmark.py plan --plan configs/benchmark_plan.yaml
@@ -27,20 +33,32 @@ python run_benchmark.py run --plan configs/benchmark_plan_smoke_cpu.yaml \
   --cases COMM-001,COMM-004,COMM-005,MOE-003,LAYER-002 --operators alltoall_hccl
 ```
 
+Full Matrix 的 Manifest 较大（默认约 18k 个 task，`manifest.json` 约 120 MB，因为每个 task 都带完整
+生效配置）；`resolved_config.yaml` 已按配置指纹去重。只做某一维度核验时用 `--ep-size` / `--suite` /
+`--levels` / `--cases` 缩小展开范围。
+
 分层规则：
 
 - `configs/base_benchmark.yaml`：全局共享的测试定义（层级、消息大小候选池、L0 sweep、验证策略、固定计算 Shape）。
 - `configs/ep{8,64,128}_bf16.yaml`：只描述 EP 环境（EP/TP、模型、专家数、拓扑来源），**不再决定 Case 范围**。
-- `configs/{suite}.yaml`：只描述场景（workload、`benchmark` 维度、operators）；plan 组合时不会覆盖 EP 环境字段。
+- `configs/{suite}.yaml`：只描述场景（workload、`benchmark` 维度、operators）；plan 组合时不会覆盖 EP 环境字段，`matrix` 条目也只能改变场景（唯一例外是 scaling 显式声明的 `model.num_experts`）。
 - `common/variants.py`：Case-specific 参数变体（不是全维度笛卡尔积）。
 
-每个 task 保留 `config_source`、`config_fingerprint`、`ep_size`、`suite_ids`，不支持的组合保留
-`unsupported / dependency_missing / not_implemented / not_applicable` 状态与原因。
+`benchmark.transport.enabled` 真正决定 LINK-* 是否可执行：未启用的机制仍保留在 Manifest 中，但
+状态是 `not_applicable` 并写明原因；显式空列表表示不启用任何机制，未配置（`null`）保持旧的
+"全部允许" 语义。`same_server` / `cross_server` 需要显式 Rank→Server 映射，没有可用 Peer 时同样
+是 `not_applicable`，不会回退成普通 Peer。
+
+每个 task 保留 `config_source`、`config_fingerprint`、`ep_size`、`suite_ids`、`plan_points`，不支持的
+组合保留 `unsupported / dependency_missing / not_implemented / not_applicable` 状态与原因。
 `HW-007/HW-008/HW-009/HW-012` 是 `LINK-012/LINK-013/MEM-001/OVERLAP-001` 的 legacy alias，默认
 不重复生成 task，但在 `manifest.matrix.case_index` 与覆盖率报告中显式记录。
 
 执行后生成 `reports/coverage_matrix.{md,csv,json}`、`case_operator_coverage.csv`、
-`operator_coverage.md`、`ep_size_comparison.md` 和 `l0_scaleout.md`；`run` 命令也会写入覆盖率报告。
+`variant_coverage.{md,csv}`、`operator_coverage.md`、`ep_size_comparison.md` 和 `l0_scaleout.md`；
+`run` 命令也会写入覆盖率报告。`ep_summary.json` 给出每个 EP 的 `completion_status` 与互斥状态桶
+（`passed/failed/unsupported/not_applicable/dependency_missing/environment_unavailable/not_run`），
+`not_run` 永远不会被当成通过，Full Matrix 默认 `execution.require_complete_execution: true`。
 
 ## L0 硬件基线
 

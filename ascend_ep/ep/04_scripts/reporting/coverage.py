@@ -21,6 +21,12 @@ NOT_RUN_STATUSES = {"not_run", "not_applicable", "unsupported", "dependency_miss
                     "environment_unavailable", "source_unavailable", "not_implemented"}
 FAILED_STATUSES = {"runtime_failed", "correctness_failed", "timeout", "oom"}
 
+#: L0 parameters that are displayed as their own column in the scale-out report.
+#: They are a *presentation* subset: grouping always uses the full parameter
+#: fingerprint, so a case-specific parameter can never be merged away.
+SCALEOUT_COLUMNS = ("variant", "peer_policy", "peer_count", "outstanding", "message_bytes",
+                    "accelerator", "shape_mode", "compute", "mode", "cores", "quiet_mode")
+
 
 def _severity(status):
     return SEVERITY.index(status) if status in SEVERITY else -1
@@ -242,41 +248,180 @@ def ep_size_comparison(rows, manifest):
     return {"groups": output, "excluded": excluded}
 
 
+def _observed_mechanism(row):
+    """``(mechanism, source)`` for one L0 row.
+
+    ``observed`` wins: the runtime answer is the only evidence of what was
+    actually exercised.  A row without an observation (for example a
+    ``not_applicable`` cross-server point) falls back to the *requested*
+    mechanism, which keeps the N/A next to the measurements of the same case.
+    """
+    observed = (row.get("observed") or {}).get("transport_protocol")
+    if observed:
+        return observed, "observed"
+    requested = (row.get("case_parameters") or {}).get("mechanism")
+    return (requested, "requested") if requested else (None, None)
+
+
 def l0_scaleout(rows):
-    """L0 hardware scale-out: the same case/mechanism/size at each EP size."""
+    """L0 hardware scale-out: one row per *complete* parameter variant.
+
+    Grouping uses the whole case-parameter dictionary (fingerprint), plus the case,
+    category and observed execution mechanism.  Nothing about a variant is
+    inferred from a subset of keys: ``ring``/``same_server``/``cross_server``,
+    ``device``/``host``, ``gmm``/``dgrad``/``wgrad`` and ``fixed``/``workload``
+    therefore never collapse into one line.  Two different tasks at the same EP
+    size are reported as ambiguous instead of one silently overwriting the other.
+    """
     groups = defaultdict(list)
     for row in rows:
         if row["benchmark_level"] != "L0":
             continue
         parameters = row.get("case_parameters") or {}
-        key = (row["case_id"], row.get("category"),
-               (row.get("observed") or {}).get("transport_protocol"),
+        mechanism, _source = _observed_mechanism(row)
+        key = (row["case_id"], row.get("category"), mechanism,
                (row.get("observed") or {}).get("execution_resource"),
-               parameters.get("message_bytes"), parameters.get("outstanding"),
-               parameters.get("peer_count"), parameters.get("accelerator"))
+               fingerprint(parameters))
         groups[key].append(row)
     output = []
-    for (case_id, category, mechanism, resource, message_bytes, outstanding, peer_count,
-         accelerator), group in sorted(groups.items(), key=lambda item: str(item[0])):
-        points = []
-        for row in sorted(group, key=_ep_size):
+    for (case_id, category, mechanism, resource, parameter_fingerprint), group in sorted(
+            groups.items(), key=lambda item: str(item[0])):
+        parameters = dict(group[0].get("case_parameters") or {})
+        mechanism_source = next((source for row in group
+                                 for value, source in (_observed_mechanism(row),) if value == mechanism),
+                                None)
+        observed_mechanisms = sorted({value for row in group
+                                      for value, _source in (_observed_mechanism(row),)
+                                      if value and (row.get("observed") or {}).get("transport_protocol")})
+        by_ep_size = defaultdict(list)
+        for row in group:
+            by_ep_size[_ep_size(row)].append(row)
+        points, ambiguous = [], []
+        for size, same in sorted(by_ep_size.items()):
+            task_ids = sorted({row["task_id"] for row in same})
+            if len(task_ids) > 1:
+                ambiguous.append({
+                    "ep_size": size, "task_ids": task_ids,
+                    "reason": ("distinct tasks share the same case parameters but different "
+                               "configurations; the point is not collapsed into one value")})
+                continue
+            row = min(same, key=lambda item: item["task_id"])
             latency = row.get("latency") or {}
             bandwidth = row.get("bandwidth") or {}
             points.append({
-                "ep_size": _ep_size(row), "task_id": row["task_id"],
-                "status": row["status"],
+                "ep_size": size, "task_id": row["task_id"], "status": row["status"],
+                "reason": row.get("error_reason"),
                 "verification": ((row.get("verification") or {}).get("status") or "unverified"),
                 "p50": latency.get("p50"),
                 "bandwidth_GBps": bandwidth.get("payload_bandwidth_GBps"),
                 "payload_bytes": bandwidth.get("payload_bytes"),
             })
-        output.append({"case_id": case_id, "category": category, "mechanism": mechanism,
-                       "execution_resource": resource, "message_bytes": message_bytes,
-                       "outstanding": outstanding, "peer_count": peer_count,
-                       "accelerator": accelerator, "points": points,
-                       "comparable": len({point["ep_size"] for point in points
-                                          if point["verification"] == "verified"}) >= 2})
+        conflict = len(observed_mechanisms) > 1
+        verified_sizes = {point["ep_size"] for point in points
+                          if point["verification"] == "verified" and point["status"] == "passed"}
+        entry = {
+            "case_id": case_id, "category": category,
+            "mechanism": mechanism, "mechanism_source": mechanism_source,
+            "observed_mechanisms": observed_mechanisms, "mechanism_conflict": conflict,
+            "execution_resource": resource,
+            "parameter_fingerprint": parameter_fingerprint,
+            "parameters": parameters,
+            "points": points, "ambiguous": ambiguous,
+            "comparable": bool(not conflict and not ambiguous and len(verified_sizes) >= 2),
+        }
+        for name in SCALEOUT_COLUMNS:
+            entry[name] = parameters.get(name)
+        if conflict:
+            entry["reason"] = ("observed transport mechanism differs across EP sizes; the "
+                               "rows are kept separate")
+        elif ambiguous:
+            entry["reason"] = "several tasks share these parameters at one EP size"
+        else:
+            entry["reason"] = None
+        output.append(entry)
+    output.sort(key=lambda item: (item["case_id"], str(item["variant"]),
+                                  str(item["peer_policy"]), str(item["message_bytes"]),
+                                  str(item["accelerator"]), item["parameter_fingerprint"]))
     return output
+
+
+def task_matrix(rows, manifest):
+    """``EP Size x Case x Operator x Variant``: planned tasks against results.
+
+    The manifest is the single source of expected tasks, so a variant that never
+    produced a result is reported as ``missing`` with its exact ``task_id``
+    instead of disappearing from the report.  Results that are not in the manifest
+    are reported as orphans, and a case the plan expected but that has no task at
+    all is listed explicitly.
+    """
+    by_id = {row["task_id"]: row for row in rows}
+    planned = manifest.get("tasks") or []
+    cells, seen = [], set()
+    for task in planned:
+        seen.add(task["task_id"])
+        parameters = task.get("parameters") or {}
+        row = by_id.get(task["task_id"])
+        cells.append({
+            "ep_size": task.get("ep_size") or task["config"]["distributed"]["ep_size"],
+            "level": task["level"], "case_id": task["case_id"], "operator": task["backend_id"],
+            "variant": parameters.get("variant"),
+            "parameter_fingerprint": fingerprint(parameters),
+            "parameters": parameters,
+            "suite_ids": list(task.get("suite_ids") or ()),
+            "task_id": task["task_id"],
+            "planned_status": task["status"],
+            "planned_reason": task.get("reason"),
+            "status": row["status"] if row else "missing",
+            "reason": (row.get("error_reason") if row else
+                       "no result record for a planned task"),
+        })
+    summary = defaultdict(lambda: {"planned": 0, "measured": 0, "missing": 0, "failed": 0,
+                                   "unsupported": 0, "not_applicable": 0, "not_run": 0,
+                                   "blocked": 0, "variants": set()})
+    for cell in cells:
+        entry = summary[(cell["ep_size"], cell["case_id"], cell["operator"])]
+        entry["planned"] += 1
+        entry["variants"].add(cell["variant"] or "default")
+        status = cell["status"]
+        if status == "passed":
+            entry["measured"] += 1
+        elif status == "missing":
+            entry["missing"] += 1
+        elif status in FAILED_STATUSES:
+            entry["failed"] += 1
+        elif status in ("dependency_missing", "environment_unavailable", "source_unavailable"):
+            entry["blocked"] += 1
+        elif status == "unsupported":
+            entry["unsupported"] += 1
+        elif status == "not_applicable":
+            entry["not_applicable"] += 1
+        else:
+            entry["not_run"] += 1
+    summary_rows = [{
+        "ep_size": ep_size, "case_id": case_id, "operator": operator,
+        "planned": entry["planned"], "measured": entry["measured"],
+        "missing": entry["missing"], "failed": entry["failed"],
+        "unsupported": entry["unsupported"], "not_applicable": entry["not_applicable"],
+        "blocked": entry["blocked"], "not_run": entry["not_run"],
+        "variants": sorted(entry["variants"]),
+        "accounted": (entry["measured"] + entry["missing"] + entry["failed"]
+                      + entry["unsupported"] + entry["not_applicable"] + entry["blocked"]
+                      + entry["not_run"]),
+    } for (ep_size, case_id, operator), entry in sorted(summary.items())]
+    expected_cases = set((manifest.get("matrix") or {}).get("expected_cases") or ())
+    present_cases = {task["case_id"] for task in planned}
+    return {
+        "cells": cells,
+        "summary": summary_rows,
+        "orphans": sorted(row["task_id"] for row in rows if row["task_id"] not in seen),
+        "cases_without_tasks": sorted(expected_cases - present_cases),
+        "totals": {
+            "planned": len(planned), "results": len(rows),
+            "matched": sum(1 for cell in cells if cell["status"] != "missing"),
+            "missing": sum(1 for cell in cells if cell["status"] == "missing"),
+            "measured": sum(1 for cell in cells if cell["status"] == "passed"),
+        },
+    }
 
 
 def write(root, manifest, rows):
@@ -297,9 +442,13 @@ def write(root, manifest, rows):
     cells = case_operator_matrix(rows)
     comparison = ep_size_comparison(rows, manifest) if want_comparison else {"groups": []}
     scaleout = l0_scaleout(rows)
+    variants = task_matrix(rows, manifest)
     write_json(destination / "coverage_matrix.json", {
         "schema_version": 1, "run_id": manifest["run_id"], "ep_sizes": sizes,
+        "topology": _matrix(manifest).get("topology") or {},
+        "execution": _matrix(manifest).get("execution") or {},
         "cases": cases, "operators": operators, "case_operator": cells,
+        "case_operator_variant": variants,
         "ep_size_comparison": comparison, "l0_scaleout": scaleout,
     })
     with (destination / "case_operator_coverage.csv").open("w", encoding="utf-8",
@@ -309,8 +458,18 @@ def write(root, manifest, rows):
         for cell in cells:
             writer.writerow([cell["ep_size"], cell["case_id"], cell["operator"],
                              cell["status"], cell["tasks"], cell["reason"]])
+    with (destination / "variant_coverage.csv").open("w", encoding="utf-8",
+                                                    newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["ep_size", "level", "case_id", "operator", "variant", "task_id",
+                         "planned_status", "status", "reason", "parameter_fingerprint"])
+        for cell in variants["cells"]:
+            writer.writerow([cell["ep_size"], cell["level"], cell["case_id"], cell["operator"],
+                             cell["variant"], cell["task_id"], cell["planned_status"],
+                             cell["status"], cell["reason"], cell["parameter_fingerprint"]])
     written = {"json": destination / "coverage_matrix.json",
-               "case_operator": destination / "case_operator_coverage.csv"}
+               "case_operator": destination / "case_operator_coverage.csv",
+               "variant_csv": destination / "variant_coverage.csv"}
 
     status_counts = defaultdict(lambda: defaultdict(int))
     for record in cases:
@@ -390,28 +549,108 @@ def write(root, manifest, rows):
                              "| case | operator | reason |", "| --- | --- | --- |"]
         for group in excluded:
             comparison_lines.append(f"| {group['case_id']} | {group['operator']} | {group['reason']} |")
-    comparison_lines += ["", "## L0 scale-out", "",
-                         "| case | mechanism | bytes | peers | " +
-                         " | ".join(f"EP{size}" for size in sizes) + " |",
-                         "| --- | --- | --- | --- | " + " | ".join("---" for _ in sizes) + " |"]
-    for entry in scaleout:
-        points = {point["ep_size"]: point for point in entry["points"]}
-        comparison_lines.append(
-            "| {case} | {mechanism} | {size} | {peers} | ".format(
-                case=entry["case_id"], mechanism=entry["mechanism"],
-                size=entry["message_bytes"], peers=entry["peer_count"])
-            + " | ".join(_format_scaleout(points.get(size)) for size in sizes) + " |")
     comparison_lines += ["", "`unverified` L0 rows are listed for visibility but are not used for "
-                             "mechanism comparison.", ""]
+                             "mechanism comparison.", "",
+                             "The per-variant L0 scale-out table is in `l0_scaleout.md`.", ""]
     if want_comparison:
         (destination / "ep_size_comparison.md").write_text("\n".join(comparison_lines),
                                                            encoding="utf-8")
-        (destination / "l0_scaleout.md").write_text(
-            "\n".join(comparison_lines[comparison_lines.index("## L0 scale-out"):]) + "\n",
-            encoding="utf-8")
         written["comparison"] = destination / "ep_size_comparison.md"
+        (destination / "l0_scaleout.md").write_text(
+            _scaleout_report(manifest, scaleout, sizes), encoding="utf-8")
         written["l0_scaleout"] = destination / "l0_scaleout.md"
+    (destination / "variant_coverage.md").write_text(
+        _variant_report(manifest, variants), encoding="utf-8")
+    written["variants"] = destination / "variant_coverage.md"
     return written
+
+
+def _scaleout_report(manifest, scaleout, sizes):
+    """Markdown for ``l0_scaleout.md``: one line per complete parameter variant."""
+    lines = [f"# L0 scale-out {manifest['run_id']}", "",
+             "One row per case **and complete parameter variant**. The grouping key is the case, "
+             "the observed transport mechanism, the execution resource and the fingerprint of "
+             "every case parameter, so `ring`/`same_server`/`cross_server`, `device`/`host`, "
+             "`gmm`/`dgrad`/`wgrad` and `fixed`/`workload` stay separate lines. "
+             "`N/A` keeps the reason (for example an EP group without a cross-server peer) and "
+             "`-` means the variant was not planned at that EP size.", "",
+             "| case | variant | peer policy | mechanism | resource | message bytes | outstanding "
+             "| peers | " + " | ".join(f"EP{size}" for size in sizes) + " |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | "
+             + " | ".join("---" for _ in sizes) + " |"]
+    for entry in scaleout:
+        points = {point["ep_size"]: point for point in entry["points"]}
+        ambiguous = {item["ep_size"] for item in entry["ambiguous"]}
+        cells = []
+        for size in sizes:
+            if size in ambiguous:
+                cells.append("ambiguous")
+            else:
+                cells.append(_format_scaleout(points.get(size)))
+        lines.append(
+            "| {case} | {variant} | {peer_policy} | {mechanism} | {resource} | {bytes} "
+            "| {outstanding} | {peers} | ".format(
+                case=entry["case_id"], variant=entry.get("variant"),
+                peer_policy=entry.get("peer_policy"), mechanism=entry["mechanism"],
+                resource=entry.get("execution_resource"), bytes=entry.get("message_bytes"),
+                outstanding=entry.get("outstanding"), peers=entry.get("peer_count"))
+            + " | ".join(cells) + " |")
+    problems = [entry for entry in scaleout
+                if entry["mechanism_conflict"] or entry["ambiguous"]]
+    if problems:
+        lines += ["", "## Unmatched variants", "",
+                  "| case | variant | reason | EP sizes |", "| --- | --- | --- | --- |"]
+        for entry in problems:
+            sizes_text = ", ".join(f"EP{size}" for size in
+                                   sorted({item["ep_size"] for item in entry["ambiguous"]}))
+            lines.append("| {case} | {variant} | {reason} | {sizes} |".format(
+                case=entry["case_id"], variant=entry.get("variant"),
+                reason=entry["reason"], sizes=sizes_text or "all"))
+    lines += ["", "`unverified` rows are kept for visibility but are not used for mechanism "
+                  "comparison; only `verified` rows with at least two EP sizes are comparable.", ""]
+    return "\n".join(lines)
+
+
+def _variant_report(manifest, variants):
+    """Markdown for ``variant_coverage.md``: planned x measured per variant."""
+    lines = [f"# Case x operator x variant coverage {manifest['run_id']}", "",
+             "The manifest is the single source of expected tasks. `missing` means a planned "
+             "variant produced no result record; it is never counted as passed. The exact "
+             "`task_id` of every gap is listed below.", ""]
+    totals = variants["totals"]
+    lines += [f"- planned tasks: {totals['planned']}",
+              f"- result records: {totals['results']}",
+              f"- matched: {totals['matched']}",
+              f"- missing: {totals['missing']}",
+              f"- measured (`passed`): {totals['measured']}", ""]
+    if variants["cases_without_tasks"]:
+        lines += ["Expected cases without any task: "
+                  + ", ".join(variants["cases_without_tasks"]), ""]
+    if variants["orphans"]:
+        lines += ["Result records that are not in the manifest: "
+                  + ", ".join(variants["orphans"][:50]), ""]
+    lines += ["| EP | case | operator | variants | planned | measured | missing | failed "
+              "| unsupported | not_applicable | blocked | not_run |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for entry in variants["summary"]:
+        lines.append("| EP{ep_size} | {case_id} | {operator} | {variants} | {planned} "
+                     "| {measured} | {missing} | {failed} | {unsupported} | {not_applicable} "
+                     "| {blocked} | {not_run} |".format(
+                         **{**entry, "variants": len(entry["variants"])}))
+    missing = {}
+    for cell in variants["cells"]:
+        if cell["status"] != "missing":
+            continue
+        key = (cell["ep_size"], cell["case_id"], cell["operator"])
+        missing.setdefault(key, []).append((cell["variant"], cell["task_id"]))
+    if missing:
+        lines += ["", "## Missing variants", "",
+                  "| EP | case | operator | variant | task_id |", "| --- | --- | --- | --- | --- |"]
+        for (size, case_id, operator), items in sorted(missing.items()):
+            for variant, task_id in items[:20]:
+                lines.append(f"| EP{size} | {case_id} | {operator} | {variant} | `{task_id}` |")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def case_operator_matrix(rows):
@@ -445,10 +684,12 @@ def _format_point(point):
 
 
 def _format_scaleout(point):
+    """Format one EP cell of the scale-out table, keeping the reason of a gap."""
     if point is None:
         return "-"
     if point["status"] != "passed":
-        return point["status"]
+        reason = point.get("reason")
+        return f"{point['status']} ({reason})" if reason else point["status"]
     rate = point.get("bandwidth_GBps")
     return f"{rate:.3g} GB/s ({point['verification']})" if rate is not None else "passed"
 

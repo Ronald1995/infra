@@ -18,6 +18,17 @@ from schemas import RETRYABLE, result
 
 DEFAULT_OUTPUT = ROOT.parent / "05_results" / "raw"
 
+#: Mutually exclusive, exhaustive status buckets used by ``ep_summary.json``.
+#: Their counts always sum to the number of planned tasks, so a run can never
+#: lose a task or count one twice.
+FAILED_STATUSES = ("runtime_failed", "correctness_failed", "timeout", "oom")
+BLOCKED_STATUSES = ("dependency_missing", "environment_unavailable", "source_unavailable")
+COMPLETION_BUCKETS = ("passed", "failed", "unsupported", "not_applicable", "not_implemented",
+                      *BLOCKED_STATUSES, "not_run")
+#: A task is complete once its outcome is a real terminal state.  ``not_run`` is
+#: the absence of an outcome, not a pass and not a failure.
+TERMINAL_BUCKETS = tuple(bucket for bucket in COMPLETION_BUCKETS if bucket != "not_run")
+
 
 def checked_id(run_id):
     if not run_id or not all(c.isascii() and (c.isalnum() or c in "-_") for c in run_id):
@@ -385,28 +396,110 @@ def execute(root, manifest, args, profile=False, resume=False, representative=Fa
                 stopped = True
                 break
     if not profile:
-        _write_ep_summary(root, manifest)
+        summary = _write_ep_summary(root, manifest)
+        if summary["completion_status"] != "complete":
+            print("completion: incomplete; "
+                  f"{summary['planned_tasks'] - summary['completed_tasks']} task(s) never "
+                  "reached a terminal status (see ep_summary.json)", flush=True)
+            if summary["require_complete_execution"]:
+                failed = True
     if stopped:
         print("fail_fast stopped the run after the first failing case", flush=True)
     return 1 if failed else 0
 
 
+def status_bucket(status):
+    """Map any result status onto exactly one completion bucket."""
+    if status in FAILED_STATUSES:
+        return "failed"
+    return status if status in COMPLETION_BUCKETS else "not_run"
+
+
+def _empty_bucket_counts():
+    return {bucket: 0 for bucket in COMPLETION_BUCKETS}
+
+
+def _summarize(tasks, status_of):
+    """Count planned / completed / executed tasks with mutually exclusive buckets."""
+    counts = _empty_bucket_counts()
+    statuses = {}
+    planned = completed = 0
+    unresolved = []
+    for task in tasks:
+        planned += 1
+        status = status_of(task)
+        statuses[status] = statuses.get(status, 0) + 1
+        bucket = status_bucket(status)
+        counts[bucket] += 1
+        if bucket == "not_run":
+            unresolved.append(task["task_id"])
+        else:
+            completed += 1
+    total = sum(counts.values())
+    return {
+        "planned_tasks": planned,
+        # `tasks` / `statuses` keep the pre-existing ep_summary.json shape
+        # readable for older consumers.
+        "tasks": planned,
+        "completed_tasks": completed,
+        "completion_status": "complete" if completed == planned else "incomplete",
+        **counts,
+        "statuses": dict(sorted(statuses.items())),
+        "executed": counts["passed"] + counts["failed"],
+        "blocked": sum(counts[status] for status in BLOCKED_STATUSES),
+        "unexecuted": counts["not_run"],
+        "unresolved_tasks": unresolved,
+        "consistency": {"planned_tasks": planned, "sum_of_buckets": total,
+                        "consistent": total == planned},
+    }
+
+
 def _write_ep_summary(root, manifest):
-    """Aggregate one run per EP size; a failure in one EP never hides the others."""
-    summary = {}
+    """Aggregate one run per EP size and decide whether it is complete.
+
+    Every planned task resolves to exactly one bucket.  ``not_run`` means the
+    expected measurement never happened, so it can neither be a pass nor a
+    failure: the run is reported as ``incomplete``.  ``unsupported`` and
+    ``not_applicable`` are terminal and keep the plan complete while staying out
+    of the passed count; ``dependency_missing`` / ``environment_unavailable`` are
+    counted as blocked, never as successful measurements.
+    """
+    require = bool(((manifest.get("matrix") or {}).get("execution") or {})
+                   .get("require_complete_execution", False))
+    grouped = {}
     for task in manifest["tasks"]:
         size = task.get("ep_size") or task["config"]["distributed"]["ep_size"]
-        entry = summary.setdefault(str(size), {
-            "ep_size": size, "tasks": 0, "statuses": {},
-            "levels": sorted({task["level"] for task in manifest["tasks"]
-                              if (task.get("ep_size") or task["config"]["distributed"]["ep_size"]) == size}),
-        })
+        grouped.setdefault(size, []).append(task)
+
+    def status_of(task):
         location = result_path(root, task)
-        status = load_json(location)["status"] if location.is_file() else task["status"]
-        entry["tasks"] += 1
-        entry["statuses"][status] = entry["statuses"].get(status, 0) + 1
-    write_json(root / "ep_summary.json", {"schema_version": 1, "run_id": manifest["run_id"],
-                                          "ep_sizes": summary})
+        return load_json(location)["status"] if location.is_file() else task["status"]
+
+    summary = {}
+    for size, tasks in sorted(grouped.items()):
+        entry = _summarize(tasks, status_of)
+        entry["ep_size"] = size
+        entry["levels"] = sorted({task["level"] for task in tasks})
+        entry["missing_records"] = [task["task_id"] for task in tasks
+                                    if not result_path(root, task).is_file()]
+        summary[str(size)] = entry
+    overall = _summarize([task for tasks in grouped.values() for task in tasks], status_of)
+    payload = {
+        "schema_version": 1, "run_id": manifest["run_id"],
+        "require_complete_execution": require,
+        # The vocabulary the counts are built from, recorded next to the numbers.
+        "terminal_buckets": list(TERMINAL_BUCKETS),
+        **overall,
+        "ep_sizes": summary,
+    }
+    write_json(root / "ep_summary.json", payload)
     for size, entry in sorted(summary.items(), key=lambda item: int(item[0])):
-        counts = ", ".join(f"{name}={count}" for name, count in sorted(entry["statuses"].items()))
-        print(f"EP{size}: {entry['tasks']} tasks ({counts})", flush=True)
+        counts = ", ".join(f"{bucket}={count}" for bucket, count in
+                           ((bucket, entry[bucket]) for bucket in COMPLETION_BUCKETS) if count)
+        print(f"EP{size}: {entry['planned_tasks']} tasks, {entry['completion_status']} "
+              f"(executed={entry['executed']} blocked={entry['blocked']} "
+              f"unexecuted={entry['unexecuted']}) {counts}", flush=True)
+    print(f"completion: {overall['completion_status']} "
+          f"({overall['completed_tasks']}/{overall['planned_tasks']} tasks terminal, "
+          f"require_complete_execution={require})", flush=True)
+    return payload

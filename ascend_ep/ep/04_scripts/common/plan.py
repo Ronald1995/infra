@@ -12,6 +12,7 @@ Parameter Variant``.  Nothing about the case scope is duplicated in the EP size
 files: they only describe the environment, so EP8, EP64 and EP128 are guaranteed
 to run the same catalog.
 """
+from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,11 +28,22 @@ from common.storage import fingerprint
 from common.suites import apply_scaling, normalize, select
 
 PLAN_SCHEMA_VERSION = 1
+#: ``catalog``     every canonical case once, under the base configuration.  This
+#:                 is the historical behaviour and stays the default for old
+#:                 plan files that do not declare a mode.
+#: ``full_matrix`` the complete catalog **plus** every listed specialised suite,
+#:                 each expanded with its own scenario configuration.  Identical
+#:                 tasks are de-duplicated, different parameters are not.
+PLAN_MODES = ("catalog", "full_matrix")
+DEFAULT_MODE = "catalog"
 DEFAULT_EXECUTION = {
     "fail_fast": False,
     "continue_on_unsupported": True,
     "continue_on_error": True,
     "run_ep_sizes_sequentially": True,
+    # Full Matrix turns this on: every planned task must reach a terminal status
+    # before the run may be reported as complete.  `not_run` is never a pass.
+    "require_complete_execution": False,
 }
 DEFAULT_REPORT = {
     "compare_ep_sizes": True,
@@ -72,6 +84,7 @@ class BenchmarkPlan:
     levels: list
     suites: list
     aliases: str = "dedupe"
+    mode: str = DEFAULT_MODE
     base_config: Path | None = None
     ep_configs: dict = field(default_factory=dict)
     suite_configs: dict = field(default_factory=dict)
@@ -99,6 +112,7 @@ class BenchmarkPlan:
         return {
             "schema_version": PLAN_SCHEMA_VERSION,
             "name": self.name,
+            "mode": self.mode,
             "path": _relative(self.path),
             "ep_sizes": list(self.ep_sizes),
             "levels": list(self.levels),
@@ -107,6 +121,7 @@ class BenchmarkPlan:
             "aliases": self.aliases,
             "execution": dict(self.execution),
             "report": dict(self.report),
+            "topology_pattern": dict(self.topology),
             "config_sources": {
                 "base": _relative(self.base_config) if self.base_config else None,
                 "ep": {str(size): _relative(self.ep_config(size)) for size in self.ep_sizes},
@@ -164,6 +179,14 @@ def load_plan(path):
         raise ValueError("plan suites must be a non-empty list")
     suites = list(dict.fromkeys(normalize(item) for item in suites))
 
+    mode = spec.get("mode", DEFAULT_MODE)
+    if mode not in PLAN_MODES:
+        raise ValueError(f"plan mode must be one of {PLAN_MODES}")
+    if mode == "full_matrix" and "all" not in suites:
+        raise ValueError(
+            "a full_matrix plan must list the `all` suite: `all` expands the complete case "
+            "catalog and every other suite adds its specialised scenario configuration")
+
     operators = spec.get("operators", "all")
     if operators != "all" and not isinstance(operators, list):
         raise ValueError("plan operators must be 'all' or a list of operator IDs")
@@ -201,31 +224,103 @@ def load_plan(path):
     for key in ("server_size", "supernode_size"):
         if key in topology and (type(topology[key]) is not int or topology[key] < 1):
             raise ValueError(f"plan topology.{key} must be a positive integer")
+    for key in ("rank_to_server", "server_to_supernode"):
+        if key in topology and not isinstance(topology[key], (list, dict)):
+            raise ValueError(f"plan topology.{key} must be a list or a mapping")
+    if "verified" in topology and not isinstance(topology["verified"], bool):
+        raise ValueError("plan topology.verified must be a boolean")
 
     return BenchmarkPlan(
         path=path, name=str(spec.get("name") or path.stem), ep_sizes=list(ep_sizes),
         operators=operators, levels=list(levels), suites=suites, aliases=aliases,
-        base_config=base, ep_configs=ep_configs, suite_configs=suite_configs,
+        mode=mode, base_config=base, ep_configs=ep_configs, suite_configs=suite_configs,
         execution=execution, report=report, cases=list(cases), topology=topology)
 
 
-def _apply_topology(plan, config, ep_size):
-    """Derive the rank-to-server map from the plan pattern when none is given.
+def _rank_domains(value, size, name):
+    """Normalise one rank->domain declaration to a list with one entry per rank.
 
-    Topology is environment data: the EP configuration or the plan supplies it,
-    and the map always has exactly one entry per rank.  The synthetic map is only
-    used when a configuration does not carry an explicit one.
+    Accepts ``[domain per rank]``, ``{rank: domain}`` and ``{domain: [ranks]}`` so
+    a deployment can paste whichever form it already has.  A map that does not
+    cover every rank exactly once is rejected instead of being padded.
     """
-    pattern = plan.topology or {}
-    server_size = pattern.get("server_size")
-    if server_size:
-        topology = dict(config.get("topology") or {})
-        topology.setdefault("server_ids", [rank // server_size for rank in range(ep_size)])
-        supernode_size = pattern.get("supernode_size")
-        if supernode_size:
-            topology.setdefault("supernode_ids", [rank // supernode_size for rank in range(ep_size)])
-        config = {**config, "topology": topology}
-    return config
+    if isinstance(value, dict):
+        if all(isinstance(item, (list, tuple)) for item in value.values()):
+            mapping = {}
+            for domain, ranks in value.items():
+                for rank in ranks:
+                    mapping[int(rank)] = domain
+        else:
+            mapping = {int(rank): domain for rank, domain in value.items()}
+        if sorted(mapping) != list(range(size)):
+            raise ValueError(f"topology {name} must map every one of the {size} ranks")
+        return [mapping[rank] for rank in range(size)]
+    if isinstance(value, (list, tuple)):
+        if len(value) != size:
+            raise ValueError(f"topology {name} must contain one domain per rank ({size})")
+        return list(value)
+    raise ValueError(f"topology {name} must be a list or a mapping")
+
+
+def _apply_topology(plan, config, ep_size):
+    """Compose the rank-to-server and server-to-supernode map for one EP point.
+
+    Resolution order, highest first:
+
+    1. the EP environment configuration (``topology.server_ids``) -- the
+       deployment's own map, which the plan must never overwrite;
+    2. an explicit plan map (``topology.rank_to_server`` / ``server_to_supernode``);
+    3. the plan *pattern* (``server_size`` / ``supernode_size``), derived.
+
+    The last one is a synthetic layout, so it is recorded with
+    ``source: plan`` and ``verified: false``.  Reporting never claims a derived
+    map is physically verified; a real map sets ``verified: true`` itself.
+    """
+    pattern = dict(plan.topology or {})
+    topology = dict(config.get("topology") or {})
+    source = topology.get("source")
+    verified = bool(topology.get("verified", False))
+    server_ids = topology.get("server_ids")
+    supernode_ids = topology.get("supernode_ids")
+
+    if server_ids is not None:
+        server_ids = _rank_domains(server_ids, ep_size, "server_ids")
+        source = source or "environment"
+    elif pattern.get("rank_to_server") is not None:
+        server_ids = _rank_domains(pattern["rank_to_server"], ep_size, "rank_to_server")
+        source = "explicit"
+        verified = verified or bool(pattern.get("verified", False))
+    elif pattern.get("server_size"):
+        server_size = pattern["server_size"]
+        server_ids = [rank // server_size for rank in range(ep_size)]
+        source = "plan"
+        verified = False
+
+    if supernode_ids is not None:
+        supernode_ids = _rank_domains(supernode_ids, ep_size, "supernode_ids")
+    elif pattern.get("server_to_supernode") and server_ids is not None:
+        mapping = pattern["server_to_supernode"]
+        missing = sorted({domain for domain in server_ids
+                          if domain not in mapping and str(domain) not in mapping})
+        if missing:
+            raise ValueError(
+                f"topology server_to_supernode does not cover server(s) {', '.join(map(str, missing))}")
+        supernode_ids = [mapping.get(domain, mapping.get(str(domain))) for domain in server_ids]
+    elif pattern.get("supernode_size"):
+        supernode_size = pattern["supernode_size"]
+        supernode_ids = [rank // supernode_size for rank in range(ep_size)]
+
+    if server_ids is None and supernode_ids is None:
+        # Nothing was declared: keep the topology empty and make the absence
+        # explicit so a cross-server comparison cannot silently run.
+        return {**config, "topology": {**topology, "source": "unavailable", "verified": False}}
+    composed = {**topology, "source": source or "unavailable", "verified": verified}
+    if server_ids is not None:
+        composed["server_ids"] = server_ids
+        composed["server_size"] = max(Counter(server_ids).values())
+    if supernode_ids is not None:
+        composed["supernode_ids"] = supernode_ids
+    return {**config, "topology": composed}
 
 
 def _adapt_router_bias(config):
@@ -304,15 +399,22 @@ class PlanRun:
         data = self.plan.metadata()
         selected_eps = sorted({point.ep_size for point in self.points})
         selected_suites = list(dict.fromkeys(point.suite for point in self.points))
+        suite_tasks = {}
+        for task in self.tasks:
+            for label in task.get("plan_points") or (task.get("plan_point"),):
+                suite_tasks[label] = suite_tasks.get(label, 0) + 1
         data.update({
             "declared_ep_sizes": list(self.plan.ep_sizes),
             "declared_suites": list(self.plan.suites),
             "ep_sizes": selected_eps,
             "suites": selected_suites,
+            "topology": {str(ep): _topology_summary(self.points, ep) for ep in selected_eps},
             "config_points": [
                 {"ep_size": point.ep_size, "suite": point.suite,
                  "sources": [_relative(item) for item in point.sources],
                  "notes": list(point.notes),
+                 "topology": _topology_record(point.config),
+                 "task_count": suite_tasks.get(f"EP{point.ep_size}/{point.suite}", 0),
                  "fingerprint": point.fingerprint}
                 for point in self.points
             ],
@@ -328,6 +430,26 @@ class PlanRun:
             "case_index": case_index(self.tasks),
         })
         return data
+
+
+def _topology_record(config):
+    topology = config.get("topology") or {}
+    return {"source": topology.get("source", "unavailable"),
+            "verified": bool(topology.get("verified", False)),
+            "server_size": topology.get("server_size"),
+            "servers": len(set(topology.get("server_ids") or ())),
+            "supernodes": len(set(topology.get("supernode_ids") or ()))}
+
+
+def _topology_summary(points, ep_size):
+    """One topology record per EP size; contradictory maps are reported."""
+    records = [_topology_record(point.config) for point in points if point.ep_size == ep_size]
+    unique = {fingerprint(record): record for record in records}
+    if len(unique) == 1:
+        return next(iter(unique.values()))
+    return {"source": "conflicting",
+            "verified": all(record["verified"] for record in unique.values()),
+            "variants": [record for record in unique.values()]}
 
 
 def expand(plan, ep_sizes=None, suites=None, levels=None, cases=None, operators=None,
@@ -346,9 +468,11 @@ def expand(plan, ep_sizes=None, suites=None, levels=None, cases=None, operators=
                           cases=cases, suites=[point.suite],
                           aliases=aliases or plan.aliases)
         sources = [_relative(item) for item in point.sources]
+        label = f"EP{point.ep_size}/{point.suite}"
         for task in tasks:
             task["config_source"] = list(sources)
-            task["plan_point"] = f"EP{point.ep_size}/{point.suite}"
+            task["plan_point"] = label
+            task["plan_points"] = [label]
         merge_tasks(store, tasks)
     ordered = sorted(store.values(),
                      key=lambda task: (task["ep_size"], task["level"], task["case_id"],
@@ -364,9 +488,13 @@ def matrix_metadata(tasks, ep_sizes=None, suites=None, levels=None):
     sizes = sorted(ep_sizes or {task["ep_size"] for task in tasks})
     suite_ids = list(dict.fromkeys(
         suite for task in tasks for suite in task.get("suite_ids", ())))
+    topologies = {}
+    for task in tasks:
+        topologies.setdefault(task["ep_size"], _topology_record(task["config"]))
     return {
         "schema_version": PLAN_SCHEMA_VERSION,
         "name": "single-configuration",
+        "mode": "catalog",
         "path": None,
         "ep_sizes": sizes,
         "levels": list(levels or sorted({task["level"] for task in tasks})),
@@ -375,6 +503,7 @@ def matrix_metadata(tasks, ep_sizes=None, suites=None, levels=None):
         "aliases": "dedupe",
         "execution": dict(DEFAULT_EXECUTION),
         "report": dict(DEFAULT_REPORT),
+        "topology": {str(ep): record for ep, record in sorted(topologies.items())},
         "config_sources": {},
         "catalog": {
             case_id: {"level": case.level, "category": case.category,

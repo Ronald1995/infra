@@ -12,6 +12,11 @@ ROUTINGS = (
 )
 DTYPES = {"float32": 4, "float16": 2, "bfloat16": 2}
 TIMINGS = ("output_ready", "host_api", "device", "async", "throughput", "cold_start")
+L0_MECHANISMS = ("ub_memory", "urma", "ub_ctp", "ub_rtp", "roce", "hccs", "uboe",
+                 "shmem_mte", "shmem_udma")
+L0_ACCELERATORS = ("default", "host_ts", "aicpu_ts", "aiv", "aiv_only", "ccu_ms",
+                   "ccu_sched", "aicpu", "ccu_ms_only", "ccu_sched_only")
+PEER_POLICIES = ("ring", "same_server", "cross_server")
 DEFAULT = {
     "schema_version": 1, "device": "npu", "suite_id": "baseline",
     "distributed": {"ep_size": 1, "tp_size": 1, "timeout_seconds": 180},
@@ -23,7 +28,13 @@ DEFAULT = {
                   "retries": 0, "task_timeout_seconds": 3600,
                   "message_bytes": [4096], "outstanding": [1], "peer_counts": [],
                   "cores": [1], "quiet_modes": [0], "transport_mode": "write",
-                  "transport": {"enabled": [], "library": None, "peer_policy": "ring"},
+                  # Every mechanism is enabled by default, which is the legacy
+                  # "no filter" behaviour.  An explicit subset restricts the LINK
+                  # cases; an explicit `[]` disables all transport mechanisms and
+                  # makes the scheduler report every LINK case as `not_applicable`.
+                  # `null` is still accepted and means the same as the default.
+                  "transport": {"enabled": list(L0_MECHANISMS), "library": None,
+                                "peer_policy": "ring"},
                   "execution": {"modes": ["default"]},
                   "compute": {"fixed_shape": {"m": 8192, "k": 7168, "n": 3072, "groups": 8}},
                   "verification": {"enabled": True, "require_verified_for_comparison": True,
@@ -117,12 +128,6 @@ def validate(config):
     return config
 
 
-L0_MECHANISMS = ("ub_memory", "urma", "ub_ctp", "ub_rtp", "roce", "hccs", "uboe",
-                 "shmem_mte", "shmem_udma")
-L0_ACCELERATORS = ("default", "host_ts", "aicpu_ts", "aiv", "aiv_only", "ccu_ms",
-                   "ccu_sched", "aicpu", "ccu_ms_only", "ccu_sched_only")
-PEER_POLICIES = ("ring", "same_server", "cross_server")
-
 #: Sections that describe the EP environment rather than a suite scenario.  A
 #: suite configuration may not override them when it is merged into a benchmark
 #: plan, otherwise ``decode.yaml`` would silently drag EP8's model into EP64.
@@ -130,6 +135,12 @@ ENVIRONMENT_SECTIONS = frozenset({
     "schema_version", "extends", "matrix", "device", "distributed", "model",
     "topology", "launch",
 })
+
+#: ``matrix`` entries are meant to vary a *scenario* (token count, dedup mode,
+#: planner phase).  When a plan composes them they may not smuggle the EP
+#: environment back in, with one deliberate exception: strong/weak scaling is
+#: defined in terms of the expert count, so ``model.num_experts`` stays legal.
+MATRIX_MODEL_OVERRIDES = frozenset({"num_experts"})
 
 
 def validate_l0(settings):
@@ -148,9 +159,12 @@ def validate_l0(settings):
     if any(value <= 0 for value in settings["outstanding"]):
         raise ValueError("benchmark.outstanding entries must be positive")
     transport = settings.get("transport") or {}
-    enabled = transport.get("enabled") or []
-    if not isinstance(enabled, list) or set(enabled) - set(L0_MECHANISMS):
-        raise ValueError(f"benchmark.transport.enabled must be a subset of {L0_MECHANISMS}")
+    enabled = transport.get("enabled")
+    # ``None`` keeps the legacy meaning ("no explicit subset, every mechanism is
+    # allowed"); an explicit empty list is a real decision and disables transport.
+    if enabled is not None and (not isinstance(enabled, list)
+                               or set(enabled) - set(L0_MECHANISMS)):
+        raise ValueError(f"benchmark.transport.enabled must be null or a subset of {L0_MECHANISMS}")
     execution = settings.get("execution") or {}
     modes = execution.get("modes") or []
     if not isinstance(modes, list) or set(modes) - set(L0_ACCELERATORS):
@@ -205,25 +219,64 @@ def load_configs(path, ancestry=()):
     return [validate(merge(merge(DEFAULT, raw), item)) for item in matrix]
 
 
+def suite_scenario(raw):
+    """Strip the EP environment from one suite configuration.
+
+    A suite file is written as a complete configuration (``extends: ep8_bf16.yaml``)
+    so it can still be used with ``--config``.  A benchmark plan only takes its
+    scenario sections; EP size, TP size, device, model shape, rank mapping and
+    launch environment stay owned by the EP size configuration.
+    """
+    return {key: deepcopy(value) for key, value in raw.items()
+            if key not in ENVIRONMENT_SECTIONS}
+
+
+def matrix_overlay(item):
+    """Sanitise one ``matrix`` entry before it is merged into a plan point.
+
+    ``matrix`` entries vary a scenario, not an environment.  ``distributed`` is
+    read only to route the entry to one EP size (see
+    :func:`load_suite_overlays`); ``device``, ``topology`` and ``launch`` are
+    dropped, and ``model`` keeps nothing but the expert count that strong/weak
+    scaling is defined by.
+    """
+    clean = {}
+    for key, value in item.items():
+        if key == "model" and isinstance(value, dict):
+            value = {name: deepcopy(setting) for name, setting in value.items()
+                     if name in MATRIX_MODEL_OVERRIDES}
+            if not value:
+                continue
+        elif key in ENVIRONMENT_SECTIONS:
+            continue
+        if key == "backends":
+            key = "operators"
+        clean[key] = deepcopy(value)
+    return clean
+
+
 def load_suite_overlays(path, ep_size=None):
     """Return the suite-scoped layers declared by one configuration file.
 
-    A suite file is written as a complete configuration so it can still be used
-    with ``--config``.  When a benchmark plan composes it, only the *scenario*
-    sections survive: EP size, device, model and topology belong to the EP size
-    configuration and are never taken from a suite file.  A ``matrix`` list is
-    expanded into one layer per point, and scaling matrices are filtered to the
-    requested EP size.
+    Only the *scenario* sections survive: EP size, device, model and topology
+    belong to the EP size configuration and are never taken from a suite file,
+    not even through a ``matrix`` entry.  A ``matrix`` list is expanded into one
+    layer per point, and scaling matrices are filtered to the requested EP size
+    (``distributed.ep_size`` is a selector here, not an override).
     """
     path = Path(path).resolve()
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError("configuration must be a YAML mapping")
+    if "plan" in raw:
+        raise ValueError(
+            f"{path.name} is a benchmark plan; register it as a suite with --plan, not as a "
+            "suite_configs entry")
     raw.pop("extends", None)
     matrix = raw.pop("matrix", [{}]) or [{}]
     if not isinstance(matrix, list) or any(not isinstance(item, dict) for item in matrix):
         raise ValueError("matrix must be a list of configuration overrides")
-    base = {key: value for key, value in raw.items() if key not in ENVIRONMENT_SECTIONS}
+    base = suite_scenario(raw)
     if "backends" in base:
         base["operators"] = base.pop("backends")
     if base.get("workload", {}).get("routing") == "hot_expert":
@@ -233,5 +286,5 @@ def load_suite_overlays(path, ep_size=None):
         declared = (item.get("distributed") or {}).get("ep_size")
         if declared is not None and ep_size is not None and declared != ep_size:
             continue
-        points.append(merge(base, item))
+        points.append(merge(base, matrix_overlay(item)))
     return points or [base]

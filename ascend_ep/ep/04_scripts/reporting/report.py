@@ -120,6 +120,7 @@ def report(root, manifest, rows, analysis):
         file.write("\n## Coverage and EP comparison\n\n")
         for label, key in (("Case coverage matrix", "coverage"),
                            ("Case x operator coverage", "case_operator"),
+                           ("Case x operator x variant coverage", "variants"),
                            ("Operator coverage", "operators"),
                            ("EP size comparison", "comparison"),
                            ("L0 scale-out", "l0_scaleout")):

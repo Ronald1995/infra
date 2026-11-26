@@ -1,16 +1,27 @@
 """Case-specific parameter variants.
 
 Parameter Variant is its own layer so ``scheduler.py`` never grows a table of
-magic numbers.  Two rules keep the matrix honest and small:
+magic numbers.  Three rules keep the matrix honest and small:
 
 1. A variant is *case specific*.  Message size, peer count and shape mode are
    selected per case from a shared candidate pool instead of taking a Cartesian
    product over every dimension of every case.
 2. A variant that is structurally impossible (an AllToAll message that does not
-   divide the EP group, a peer count beyond the available peers) is returned with
-   an explicit status and reason; it is never dropped.
+   divide the EP group, a peer count beyond the available peers, a cross-server
+   policy on a single-server EP group) is reported with an explicit status and
+   reason; it is never dropped and never silently replaced by another variant.
+3. A mechanism that the configuration disables
+   (``benchmark.transport.enabled``) never produces an executable variant: the
+   case stays in the manifest as ``not_applicable`` instead of disappearing.
 """
+from collections import Counter
+
 from common.cases import L0_PARAMETERS, catalog, l0_family
+from common.config import PEER_POLICIES
+
+#: Marker carried by a parameter set that must not be executed because its
+#: transport mechanism is disabled by the configuration.
+TRANSPORT_DISABLED = "transport_disabled"
 
 #: Named variants for cases whose operation has several distinct kernels/stages.
 CASE_VARIANTS = {
@@ -56,6 +67,65 @@ COMPUTE_SHAPE_MODES = ("fixed", "workload")
 def variants_for(case):
     """Named variants for ``case``; ``("default",)`` when it has none."""
     return CASE_VARIANTS.get(case.id, ("default",))
+
+
+def transport_mechanism(case):
+    """The transport mechanism a ``LINK-*`` case drives, or ``None`` off-transport."""
+    if l0_family(case) != "transport":
+        return None
+    return L0_PARAMETERS.get(case.alias_of or case.id, {}).get("mechanism")
+
+
+def transport_availability(case, settings):
+    """Return ``(allowed, mechanism, reason)`` for one transport case.
+
+    ``benchmark.transport.enabled`` is the single source of truth: a mechanism
+    that is not listed may not produce an executable task.  ``None`` keeps the
+    legacy meaning ("no subset chosen -> every mechanism allowed") and an
+    explicit empty list disables all transport mechanisms.
+    """
+    mechanism = transport_mechanism(case)
+    if mechanism is None:
+        return True, None, None
+    enabled = (settings.get("transport") or {}).get("enabled")
+    if enabled is None or mechanism in enabled:
+        return True, mechanism, None
+    return False, mechanism, (
+        f"transport mechanism {mechanism!r} is not enabled by benchmark.transport.enabled")
+
+
+def transport_gate(case, settings):
+    """``(status, reason)`` when ``case`` may not execute at this configuration."""
+    allowed, _mechanism, reason = transport_availability(case, settings)
+    return None if allowed else ("not_applicable", reason)
+
+
+def peer_candidates(size, policy="ring", server_ids=None):
+    """Smallest number of peers every rank can reach under ``policy``.
+
+    The planner uses the most constrained rank, so a peer sweep is only runnable
+    when *every* rank can satisfy it; the executor applies the same rule per rank.
+    """
+    if policy not in PEER_POLICIES:
+        return 0
+    if policy == "ring":
+        return max(size - 1, 0)
+    if not server_ids or len(server_ids) != size:
+        return 0
+    counts = Counter(server_ids)
+    if policy == "same_server":
+        return max(min(counts.values()) - 1, 0)
+    return max(size - max(counts.values()), 0)
+
+
+def topology_domains(config):
+    """The explicit rank-to-server map, or ``None`` when it is absent/incomplete."""
+    topology = (config or {}).get("topology") or {}
+    server_ids = topology.get("server_ids")
+    if not isinstance(server_ids, list):
+        return None
+    size = ((config or {}).get("distributed") or {}).get("ep_size")
+    return server_ids if size is None or len(server_ids) == size else None
 
 
 def _window(family, case_id):
@@ -119,6 +189,12 @@ def select_peers_rotation():
 
 
 def _transport_sets(case, settings, size, variant, ep_size):
+    allowed, mechanism, reason = transport_availability(case, settings)
+    if not allowed:
+        # Defensive: ``task_parameters`` already collapses a disabled mechanism to
+        # one explicit parameter set, so no caller can turn it into variants.
+        return [{TRANSPORT_DISABLED: True, "variant": variant, "message_bytes": size,
+                 "mechanism": mechanism, "reason": reason}]
     static = dict(L0_PARAMETERS.get(case.id, {}))
     outstanding = [int(value) for value in settings.get("outstanding") or [1]]
     transport = settings.get("transport") or {}
@@ -197,30 +273,78 @@ def l0_parameter_sets(case, settings, size, variant, ep_size, matrix=None):
     return [{"variant": variant, "message_bytes": size}]
 
 
-def parameter_problems(case, params, ep_size):
-    """Structural constraints that make one parameter set unrunnable.
+def structural_problem(case, params, ep_size):
+    """``(status, reason)`` for an arithmetic constraint of the parameter set.
 
-    Returns a reason string or ``None``.  These are checked before a task is
-    handed to a worker so the manifest says *why* a point is unsupported.
+    A message that does not divide the group or a peer count larger than the EP
+    group is impossible regardless of hardware, so it is reported as
+    ``unsupported`` before any capability is consulted.
     """
-    size = params.get("message_bytes")
-    if case.id in ALLTOALL_CASES and isinstance(size, int) and size % ep_size:
-        return f"AllToAll message_bytes={size} must divide EP{ep_size}"
+    if isinstance(params.get("message_bytes"), int) and case.id in ALLTOALL_CASES:
+        size = params["message_bytes"]
+        if size % ep_size:
+            return "unsupported", f"AllToAll message_bytes={size} must divide EP{ep_size}"
     peer_count = params.get("peer_count")
     if isinstance(peer_count, int) and peer_count and peer_count > ep_size - 1:
-        return f"peer_count={peer_count} exceeds the {ep_size - 1} peers of EP{ep_size}"
+        return "unsupported", f"peer_count={peer_count} exceeds the {ep_size - 1} peers of EP{ep_size}"
     return None
+
+
+def policy_problem(case, params, ep_size, config=None):
+    """``(status, reason)`` when the topology cannot satisfy the peer policy.
+
+    ``same_server`` / ``cross_server`` need an explicit rank-to-server map; a
+    policy with no candidate peer (or fewer candidates than requested) is
+    ``not_applicable`` with the reason, never a quiet fallback to plain peers.
+    """
+    policy = params.get("peer_policy")
+    if policy not in ("same_server", "cross_server"):
+        return None
+    peer_count = params.get("peer_count")
+    domains = topology_domains(config)
+    if domains is None:
+        return "not_applicable", (
+            f"{policy} peer selection requires an explicit rank-to-server topology for "
+            f"EP{ep_size}; the plan carries no complete map")
+    available = peer_candidates(ep_size, policy, domains)
+    if not available:
+        label = "cross-server" if policy == "cross_server" else "same-server"
+        return "not_applicable", f"no {label} peer available at EP{ep_size}"
+    if isinstance(peer_count, int) and peer_count and peer_count > available:
+        return "not_applicable", (
+            f"peer_count={peer_count} exceeds the {available} available {policy} peers "
+            f"at EP{ep_size}")
+    return None
+
+
+def parameter_availability(case, params, ep_size, config=None):
+    """Return ``(status, reason)`` for an unrunnable parameter set, else ``None``."""
+    return structural_problem(case, params, ep_size) or policy_problem(
+        case, params, ep_size, config)
+
+
+def parameter_problems(case, params, ep_size, config=None):
+    """Reason string for one unrunnable parameter set, or ``None``."""
+    problem = parameter_availability(case, params, ep_size, config)
+    return problem[1] if problem else None
 
 
 def task_parameters(case, backend_id, settings, ep_size):
     """All parameter dictionaries for one (case, operator) pair.
 
     L0 cases ignore the operator dimension, so ``backend_id`` is only used to
-    decide whether operator variants apply at all.
+    decide whether operator variants apply at all.  A disabled transport
+    mechanism collapses to a single explicit parameter set: the case must stay in
+    the manifest, but it may not fan out into executable variants.
     """
     entry = catalog()[case.id]
     if entry.level != "L0":
         return [{"variant": variant, "message_bytes": None} for variant in variants_for(entry)]
+    if l0_family(entry) == "transport":
+        allowed, mechanism, reason = transport_availability(entry, settings)
+        if not allowed:
+            return [{TRANSPORT_DISABLED: True, "variant": "default",
+                     "message_bytes": None, "mechanism": mechanism, "reason": reason}]
     result = []
     for size in message_sizes(entry, settings):
         for variant in variants_for(entry):

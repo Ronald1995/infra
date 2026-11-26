@@ -1,9 +1,17 @@
 # Unified EP benchmark plan.
 #
 # One plan -> EP8 x EP64 x EP128 manifest covering every case in the catalog and
-# every registered EP operator.  Each EP size loads its own environment file, but
-# the case scope, levels and parameters come from this plan, so the three EP
-# sizes cannot drift apart.
+# every registered EP operator.
+#
+# Mode:
+#   full_matrix  `all` expands the complete case catalog under the shared base
+#                configuration, and every listed specialised suite adds its own
+#                scenario configuration (workload, dimensions, planner/dedup
+#                state).  Identical tasks are de-duplicated and keep the union of
+#                their `suite_ids`; tasks whose parameters differ stay distinct.
+#   catalog      legacy mode: each listed suite expands on its own, `all` uses
+#                the base configuration only.  It stays the default for plan
+#                files that do not declare a mode.
 #
 # CLI:
 #   python run_benchmark.py plan  --plan configs/benchmark_plan.yaml
@@ -16,10 +24,31 @@ schema_version: 1
 
 plan:
   name: ep-l0-l4-matrix
+  mode: full_matrix
   ep_sizes: [8, 64, 128]
   operators: all
   levels: [L0, L1, L2, L3, L4]
-  suites: [all]
+  # `all` = the complete case catalog under the base configuration.
+  # Every other entry loads its specialised scenario configuration, so decode,
+  # prefill, training tail, high throughput, scaling, topology, load balance,
+  # dedup and quantized all contribute their own parameter matrix.
+  suites:
+    - all
+    - hardware
+    - memory
+    - transport
+    - collectives
+    - overlap
+    - decode
+    - prefill
+    - training_tail
+    - high_throughput
+    - strong_scaling
+    - weak_scaling
+    - topology
+    - load_balance
+    - dedup
+    - quantized
   # `dedupe` keeps the legacy L0 IDs (HW-007/HW-008/HW-009/HW-012) out of the
   # task list because their canonical case is already covered.  Use `run` to
   # execute them as their own task.
@@ -32,9 +61,9 @@ plan:
     8: ep8_bf16.yaml
     64: ep64_bf16.yaml
     128: ep128_bf16.yaml
-  # Layer 3: scenario layer for focused `--suite` runs.  The `all` expansion
-  # uses the base configuration so one case keeps one parameter definition
-  # across EP sizes.
+  # Layer 3: scenario layer.  A suite file only contributes scenario sections;
+  # EP size, TP size, device, model shape and rank mapping stay owned by the EP
+  # environment above (see common/config.py::suite_scenario).
   suite_configs:
     hardware: hardware.yaml
     memory: memory.yaml
@@ -55,9 +84,16 @@ plan:
   # Rank-to-server map used when an EP environment file does not carry one.
   # 8 ranks per server, 16 ranks per supernode: EP8 is one board, EP64 spans 8
   # servers, EP128 spans 16 servers / 8 supernodes.
+  #
+  # This is a *derived* layout, not a discovered one: every composed point records
+  # `topology.source: plan` and `verified: false`.  Paste a real map as
+  # `rank_to_server: [...]` (one entry per rank, or {domain: [ranks]}) plus
+  # `server_to_supernode: {...}` and set `verified: true` once it was read from
+  # the actual deployment.  A map supplied by the EP environment file always wins.
   topology:
     server_size: 8
     supernode_size: 16
+    verified: false
 
 execution:
   # A failing case never stops the remaining cases of the same EP size, and a
@@ -66,6 +102,10 @@ execution:
   continue_on_unsupported: true
   continue_on_error: true
   run_ep_sizes_sequentially: true
+  # Full Matrix: every planned task must reach an explicit terminal status.
+  # `not_run` is not a pass and makes the run report `completion_status:
+  # incomplete` instead of a silent success.
+  require_complete_execution: true
 
 report:
   compare_ep_sizes: true

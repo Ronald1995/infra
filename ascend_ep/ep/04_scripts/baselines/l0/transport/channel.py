@@ -19,7 +19,7 @@ falls back to another engine or protocol.
 import base64
 
 from baselines.l0.contract import Prepared
-from baselines.l0.transport import bridge
+from baselines.l0.transport import bridge, peers
 from baselines.l0.transport.common import profiles
 from baselines.l0.verification.path_verifier import Evidence
 from baselines.l0.verification.vocabulary import requested
@@ -161,32 +161,18 @@ def prepare(ctx, case, size, params):
 def _peers(ctx, params):
     """Resolve the destination peers for this rank.
 
-    ``peer_count=0`` means every other rank.  The selection is deterministic and
-    topologically stable: ``same_server``/``cross_server`` restrict the candidate
-    set using the configured rank-to-server map, and the list is rotated by the
-    rank so a fixed peer count does not always pick the lowest rank IDs (which
-    would mean a different link type at EP8 and EP128).
+    The policy is resolved by :mod:`baselines.l0.transport.peers`: ``ring`` uses a
+    rank rotation, ``same_server``/``cross_server`` restrict the candidate set to
+    the configured rank-to-server map, and a policy the topology cannot satisfy
+    raises ``BenchmarkUnavailable`` instead of falling back to plain peers.
     """
-    limit = int(params.get("peer_count") or 0)
-    policy = params.get("peer_policy") or "ring"
-    ranks = [rank for rank in range(ctx.size) if rank != ctx.rank]
-    if policy in ("same_server", "cross_server"):
-        domains = (ctx.config.get("topology") or {}).get("server_ids")
-        if domains and len(domains) == ctx.size:
-            home = domains[ctx.rank]
-            same = [rank for rank in ranks if domains[rank] == home]
-            other = [rank for rank in ranks if domains[rank] != home]
-            chosen = same if policy == "same_server" else other
-            if chosen:
-                ranks = chosen
-    if ranks:
-        offset = (int(params.get("rank_offset") or ctx.rank)) % len(ranks)
-        ranks = ranks[offset:] + ranks[:offset]
-    if limit:
-        ranks = ranks[:limit]
-    if not ranks:
-        raise BenchmarkUnavailable("unsupported", "no destination peer is available")
-    return ranks
+    return peers.select(
+        ctx.size, ctx.rank,
+        policy=params.get("peer_policy") or "ring",
+        peer_count=params.get("peer_count") or 0,
+        domains=peers.server_ids(ctx.config, ctx.size),
+        rank_offset=params.get("rank_offset"),
+    )
 
 
 def _link_protocols(graph, rank):

@@ -90,16 +90,28 @@ def write(root, manifest, rows, capabilities=None):
               f"- packages: {device['packages']}", ""]
     sizes = sorted({point["ep_size"] for point in measured if point["ep_size"]})
     if len(sizes) > 1:
+        topologies = (manifest.get("matrix") or {}).get("topology") or {}
         lines += ["## 2. EP size coverage", "",
                   "L0 is a shared hardware baseline, not an operator case, so every EP size runs "
-                  "the same case catalog once.", "",
-                  "| EP | tasks | passed | verified |", "| --- | --- | --- | --- |"]
+                  "the same case catalog once. The topology source is recorded explicitly: a map "
+                  "derived from a `server_size` pattern is `verified=false` and must not be read "
+                  "as a discovered physical layout.", "",
+                  "| EP | tasks | passed | verified | topology source | topology verified "
+                  "| servers | supernodes |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- |"]
         for size in sizes:
             subset = [point for point in measured if point["ep_size"] == size]
-            lines.append("| EP{size} | {tasks} | {passed} | {verified} |".format(
-                size=size, tasks=len(subset),
-                passed=sum(1 for point in subset if point["status"] == "passed"),
-                verified=sum(1 for point in subset if point["verification"] == "verified")))
+            topology = topologies.get(str(size)) or {}
+            lines.append("| EP{size} | {tasks} | {passed} | {verified} | {source} | {checked} "
+                         "| {servers} | {supernodes} |".format(
+                             size=size, tasks=len(subset),
+                             passed=sum(1 for point in subset if point["status"] == "passed"),
+                             verified=sum(1 for point in subset
+                                          if point["verification"] == "verified"),
+                             source=topology.get("source", "unavailable"),
+                             checked=topology.get("verified", False),
+                             servers=topology.get("servers", "-"),
+                             supernodes=topology.get("supernodes", "-")))
         lines += ["", "EP scale-out per mechanism and message size is in `l0_scaleout.md`.", ""]
     matrix = capabilities or {}
     if matrix:

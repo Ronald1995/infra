@@ -4,15 +4,18 @@ Everything here is mock/offline.  No NPU is touched, so nothing in this file is 
 hardware performance result; the fixtures are explicitly marked as overrides.
 """
 import json
+from types import SimpleNamespace
 
 import jsonschema
 import pytest
 
 from baselines.l0.topology import capabilities, discovery
+from baselines.l0.transport import peers
 from baselines.l0.verification import path_verifier, vocabulary
+from common.backend import BenchmarkUnavailable
 from common.cases import L0_PARAMETERS, catalog, l0_family
 from common.config import DEFAULT, load_configs, merge, validate
-from common.controller import results
+from common.controller import create_manifest, execute, result_path, results
 from common.registry import ROOT
 from common.scheduler import make_plan
 from schemas import result
@@ -102,9 +105,18 @@ def test_plan_expands_dimensions_and_marks_unsupported(monkeypatch):
     tasks = make_plan([config], cases=["LINK-001", "LINK-003", "LINK-013"])
     link1 = [task for task in tasks if task["case_id"] == "LINK-001"]
     assert {task["parameters"]["outstanding"] for task in link1} == {1, 4}
+    # A plain configuration carries no rank-to-server map, so the topology-aware
+    # policies are explicitly not applicable instead of silently degrading to
+    # intra-server peers.
+    ring = [task for task in link1 if task["parameters"]["peer_policy"] == "ring"]
+    assert ring and all(task["status"] == "not_run" for task in ring)
+    topology_aware = [task for task in link1
+                      if task["parameters"]["peer_policy"] in ("same_server", "cross_server")]
+    assert topology_aware
+    assert all(task["status"] == "not_applicable" for task in topology_aware)
+    assert all("topology" in task["reason"] for task in topology_aware)
     unsupported = [task for task in tasks if task["case_id"] == "LINK-003"]
     assert unsupported and all(task["status"] == "unsupported" for task in unsupported)
-    assert all(task["status"] == "not_run" for task in link1)
 
 
 def test_plan_execution_sweeps_accelerator(monkeypatch):
@@ -196,3 +208,198 @@ def test_l0_report_separates_verification(tmp_path):
     text = (tmp_path / "reports/l0_report.md").read_text(encoding="utf-8")
     assert "verified=1" in text and "unverified=1" in text
     assert "Only `verified` rows may be compared" in text
+
+# ------------------------------------------------- transport mechanism gate ---
+
+def _transport_config(enabled, ep_size=8, **benchmark):
+    """A validated transport configuration with an explicit enabled-mechanism list.
+
+    A rank-to-server map is supplied so the topology-aware peer policies are
+    testable: EP8 is one server, EP64/EP128 span several.
+    """
+    config = load_configs(ROOT / "configs/transport.yaml")[0]
+    server_size = 8
+    topology = {"server_ids": [rank // server_size for rank in range(ep_size)]}
+    config = merge(config, {"distributed": {"ep_size": ep_size},
+                            "topology": topology,
+                            "workload": {"tokens_per_rank": 128},
+                            "benchmark": {"transport": {"enabled": enabled}, **benchmark}})
+    return validate(config)
+
+
+@pytest.fixture()
+def capability_override(monkeypatch):
+    monkeypatch.setenv("EP_L0_CAPABILITIES", "")
+    monkeypatch.setattr(discovery, "load", lambda *args, **kwargs: capabilities.discover(
+        {}, override=OVERRIDE))
+
+
+def test_transport_enabled_filters_cases(capability_override):
+    config = _transport_config(["ub_memory"])
+    tasks = make_plan([config], cases=["LINK-001", "LINK-002"])
+    link1 = [task for task in tasks if task["case_id"] == "LINK-001"]
+    link2 = [task for task in tasks if task["case_id"] == "LINK-002"]
+    # The enabled mechanism keeps its normal parameter variants.
+    ring = [task for task in link1 if task["parameters"]["peer_policy"] == "ring"]
+    assert ring and all(task["status"] == "not_run" for task in ring)
+    assert len({task["parameters"]["peer_count"] for task in ring}) == 4
+    # The disabled mechanism produces no executable task at all.
+    assert link2 and all(task["status"] != "not_run" for task in link2)
+
+
+def test_disabled_transport_is_not_applicable(capability_override):
+    config = _transport_config(["ub_memory"])
+    tasks = make_plan([config], cases=["LINK-002"])
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task["status"] == "not_applicable"
+    assert "urma" in task["reason"]
+    assert "benchmark.transport.enabled" in task["reason"]
+    # The case is still in the manifest: it is reported, not deleted.
+    assert task["case_id"] == "LINK-002"
+    assert task["parameters"]["mechanism"] == "urma"
+
+
+def test_disabled_transport_never_executes(tmp_path, monkeypatch, capability_override):
+    config = _transport_config(["ub_memory"])
+    tasks = make_plan([config], cases=["LINK-002"])
+    launched = []
+
+    def launch(*args, **kwargs):
+        launched.append(args)
+        raise AssertionError("a disabled transport case must not be launched")
+
+    import common.controller
+    monkeypatch.setattr(common.controller, "launch_worker", launch)
+    root, manifest = create_manifest(tmp_path, tasks, "disabled-transport")
+    assert execute(root, manifest, SimpleNamespace(nnodes=1, node_rank=0)) == 0
+    assert launched == []
+    record = json.loads(result_path(root, tasks[0]).read_text(encoding="utf-8"))
+    assert record["status"] == "not_applicable"
+    assert "benchmark.transport.enabled" in record["error_reason"]
+
+
+def test_empty_transport_enabled_disables_all_transport(capability_override):
+    config = _transport_config([])
+    tasks = make_plan([config], cases=["LINK-001", "LINK-002", "LINK-013"])
+    assert tasks
+    assert all(task["status"] == "not_applicable" for task in tasks)
+    assert all("not enabled" in task["reason"] for task in tasks)
+    # An unset list keeps the legacy meaning: no subset was chosen, so the
+    # mechanism is allowed.  The explicit empty list stays a real decision.
+    legacy = validate(merge(config, {"benchmark": {"transport": {"enabled": None}}}))
+    allowed = make_plan([legacy], cases=["LINK-001"])
+    assert allowed and any(task["status"] == "not_run" for task in allowed)
+
+
+def test_non_transport_l0_cases_are_unaffected(capability_override):
+    config = _transport_config([])
+    tasks = make_plan([config], cases=["MEM-001", "HW-001", "HW-010", "EXEC-001", "OVERLAP-001"])
+    assert tasks
+    assert not any("transport mechanism" in (task["reason"] or "") for task in tasks)
+    assert {task["case_id"] for task in tasks} == {
+        "MEM-001", "HW-001", "HW-010", "EXEC-001", "OVERLAP-001"}
+    # Their own dimension sweeps are untouched by the transport gate.
+    memory = [task for task in tasks if task["case_id"] == "MEM-001"]
+    assert {task["parameters"]["message_bytes"] for task in memory} == {
+        4096, 65536, 1048576, 16777216, 268435456, 1073741824}
+    assert {task["parameters"]["shape_mode"] for task in tasks
+            if task["case_id"] == "HW-010"} == {"fixed", "workload"}
+
+
+# ------------------------------------------------------- transport peers ------
+
+def _domains(ep_size, server_size=8):
+    return [rank // server_size for rank in range(ep_size)]
+
+
+def test_cross_server_without_remote_peer_is_not_applicable():
+    with pytest.raises(BenchmarkUnavailable) as failure:
+        peers.select(8, 0, policy="cross_server", domains=_domains(8))
+    assert failure.value.status == "not_applicable"
+    assert "cross-server" in str(failure.value)
+    # Every rank of a single-server group is refused, at any peer count.
+    for rank in range(8):
+        with pytest.raises(BenchmarkUnavailable):
+            peers.select(8, rank, policy="cross_server", domains=_domains(8), peer_count=0)
+
+
+def test_same_server_without_topology_is_not_applicable():
+    for policy in ("same_server", "cross_server"):
+        with pytest.raises(BenchmarkUnavailable) as failure:
+            peers.select(8, 0, policy=policy, domains=None)
+        assert failure.value.status == "not_applicable"
+        assert "topology" in str(failure.value)
+    # An incomplete map is as unusable as a missing one.
+    with pytest.raises(BenchmarkUnavailable):
+        peers.select(8, 0, policy="same_server", domains=[0] * 4)
+
+
+def test_peer_selection_does_not_fallback():
+    domains = _domains(8)
+    with pytest.raises(BenchmarkUnavailable):
+        peers.select(8, 0, policy="cross_server", domains=domains, peer_count=0)
+    # An unknown policy is refused, never treated as `ring`.
+    with pytest.raises(BenchmarkUnavailable):
+        peers.select(8, 0, policy="auto", domains=domains)
+    # A topology-aware policy never widens to intra-server peers either: EP64
+    # cross-server peers are all outside rank 0's server, EP8 has none.
+    cross = peers.select(64, 0, policy="cross_server", domains=_domains(64), peer_count=0)
+    assert len(cross) == 56 and all(rank >= 8 for rank in cross)
+
+
+def test_peer_count_cannot_exceed_policy_candidates():
+    domains = _domains(64)
+    with pytest.raises(BenchmarkUnavailable) as failure:
+        peers.select(64, 0, policy="same_server", domains=domains, peer_count=8)
+    assert "exceeds" in str(failure.value)
+    assert len(peers.select(64, 0, policy="same_server", domains=domains, peer_count=7)) == 7
+    assert len(peers.select(64, 0, policy="same_server", domains=domains, peer_count=0)) == 7
+
+
+def test_ring_peer_selection_is_deterministic():
+    for ep_size in (8, 64, 128):
+        domains = _domains(ep_size)
+        for rank in (0, 1, ep_size - 1):
+            first = peers.select(ep_size, rank, "ring", 4, domains)
+            assert first == peers.select(ep_size, rank, "ring", 4, domains)
+            assert len(first) == len(set(first)) == 4
+            assert rank not in first
+        assert len(peers.select(ep_size, 0, "ring", 0, domains)) == ep_size - 1
+
+
+def test_peer_selection_matches_the_topology():
+    expected = {
+        8: {"same_server": 7, "cross_server": 0, "ring": 7},
+        64: {"same_server": 7, "cross_server": 56, "ring": 63},
+        128: {"same_server": 7, "cross_server": 120, "ring": 127},
+    }
+    for ep_size, counts in expected.items():
+        domains = _domains(ep_size)
+        for policy, count in counts.items():
+            if policy == "cross_server" and count == 0:
+                with pytest.raises(BenchmarkUnavailable):
+                    peers.select(ep_size, 0, policy=policy, domains=domains)
+                continue
+            selected = peers.select(ep_size, 0, policy=policy, domains=domains, peer_count=0)
+            assert len(selected) == count, (ep_size, policy)
+            if policy == "same_server":
+                assert all(rank < 8 for rank in selected)
+            if policy == "cross_server":
+                assert all(rank >= 8 for rank in selected)
+
+
+def test_channel_peer_helper_delegates_to_the_policy():
+    """The L0 driver uses the same policy; it never resolves peers on its own."""
+    pytest.importorskip("torch")  # the native driver imports the tensor runtime
+    from baselines.l0.transport import channel
+
+    ctx = SimpleNamespace(size=16, rank=3,
+                          config={"distributed": {"ep_size": 16},
+                                  "topology": {"server_ids": _domains(16)}})
+    ring = channel._peers(ctx, {"peer_count": 4})
+    assert len(ring) == 4 and ctx.rank not in ring
+    assert ring == peers.select(16, 3, "ring", 4, _domains(16))
+    with pytest.raises(BenchmarkUnavailable):
+        channel._peers(SimpleNamespace(size=8, rank=0, config={"topology": {}}),
+                       {"peer_count": 0, "peer_policy": "cross_server"})
