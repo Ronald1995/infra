@@ -77,6 +77,7 @@ def _library(config=None):
                                             ctypes.c_char_p, ctypes.c_uint32]
     library.l0_session_channels.restype = ctypes.c_int
     library.l0_session_transfer.argtypes = [ctypes.c_int64, ctypes.c_int, ctypes.c_char_p,
+                                            ctypes.c_uint32, ctypes.c_uint32,
                                             ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64,
                                             ctypes.c_char_p, ctypes.c_uint32]
     library.l0_session_transfer.restype = ctypes.c_int
@@ -187,8 +188,10 @@ class Session:
             self.peers = result.get("peers", [])
         return result
 
-    def transfer(self, peer_index, mode, local_offset, remote_offset, bytes_):
+    def transfer(self, peer_index, mode, local_mem_index, remote_mem_index,
+                 local_offset, remote_offset, bytes_):
         return self._json(self.library.l0_session_transfer, int(peer_index), mode.encode(),
+                          int(local_mem_index), int(remote_mem_index),
                           int(local_offset), int(remote_offset), int(bytes_))
 
     def thread_alloc(self, engine, notify=4):

@@ -644,6 +644,7 @@ L0_API int l0_session_channels(int64_t handle, const char* engineName, const cha
  * one the runtime accepted so the caller can report the real submission path.
  */
 L0_API int l0_session_transfer(int64_t handle, int peerIndex, const char* mode,
+                               uint32_t localMemIndex, uint32_t remoteMemIndex,
                                uint64_t localOffset, uint64_t remoteOffset, uint64_t bytes,
                                char* buffer, uint32_t capacity)
 {
@@ -659,9 +660,12 @@ L0_API int l0_session_transfer(int64_t handle, int peerIndex, const char* mode,
     if (peer.remoteAddrs.empty() || session->localMems.empty()) {
         return CopyOut("{\"ok\":false,\"reason\":\"no registered remote memory\"}", buffer, capacity);
     }
-    void* remote = reinterpret_cast<void*>(peer.remoteAddrs[0] + remoteOffset);
+    if (localMemIndex >= session->localMems.size() || remoteMemIndex >= peer.remoteAddrs.size()) {
+        return CopyOut("{\"ok\":false,\"reason\":\"memory index out of range\"}", buffer, capacity);
+    }
+    void* remote = reinterpret_cast<void*>(peer.remoteAddrs[remoteMemIndex] + remoteOffset);
     void* local = reinterpret_cast<void*>(
-        reinterpret_cast<uintptr_t>(session->localMems[0].addr) + localOffset);
+        reinterpret_cast<uintptr_t>(session->localMems[localMemIndex].addr) + localOffset);
     int32_t result = -1;
     std::string submission;
     if (strcmp(mode, "read") == 0) {

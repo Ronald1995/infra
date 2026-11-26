@@ -94,6 +94,15 @@ def prepare(ctx, case, size, params):
         chunks = max(1, min(outstanding, max(1, size // CHUNK_BYTES)))
         per_chunk = max(1, size // chunks)
         peers = [(index, entry["rank"]) for index, entry in enumerate(acquired["peers"])]
+        # Each peer exposes its registered buffers by tag; address the peer's
+        # destination buffer, not whichever buffer happened to be listed first.
+        remote_index = {}
+        for entry in acquired["peers"]:
+            memories = entry.get("remote_mems") or []
+            remote_index[entry["rank"]] = next(
+                (position for position, memory in enumerate(memories)
+                 if memory.get("tag") == "dst"),
+                1 if len(memories) > 1 else 0)
     except BaseException:
         for closing in reversed(stack):
             closing()
@@ -110,6 +119,7 @@ def prepare(ctx, case, size, params):
                 if length <= 0:
                     break
                 answer = session.transfer(peer_index, params.get("mode", "write"),
+                                          0, remote_index[peer_rank],
                                           offset, remote_offset + offset, length)
                 if not answer.get("ok"):
                     raise RuntimeError(f"transfer to rank {peer_rank} failed: {answer}")
