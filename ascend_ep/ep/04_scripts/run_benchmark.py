@@ -30,6 +30,10 @@ def build_parser():
     listing = commands.add_parser("list")
     listing.add_argument("--capabilities", action="store_true")
     commands.add_parser("doctor")
+    capability = commands.add_parser("capabilities", help="print the L0 capability matrix")
+    capability.add_argument("--config", type=Path)
+    capability.add_argument("--matrix", type=Path, help="use a recorded matrix instead of probing")
+    capability.add_argument("--json", action="store_true")
     for name in ("plan", "run", "baseline", "pipeline"):
         command = commands.add_parser(name)
         command.add_argument("--config", type=Path, required=True)
@@ -109,6 +113,12 @@ def run_command(args):
         return 0
     if args.command == "doctor":
         doctor()
+        return 0
+    if args.command == "capabilities":
+        from baselines.l0.topology import discovery
+        cfg = load_configs(args.config)[0] if args.config else None
+        matrix = discovery.load(cfg, override_path=args.matrix)
+        print(discovery.dump(matrix) if args.json else discovery.describe(matrix))
         return 0
     if args.command == "_worker":
         from common.runner import execute_worker

@@ -1,0 +1,21 @@
+# Collective baseline: torch HCCL (HW-001..HW-006) and the native HCCL test tool
+# (EXEC-001..EXEC-006) swept over accelerator modes.  Modes are validated against
+# the installed tool's --help before a task is generated.
+extends: ep8_bf16.yaml
+suite_id: collectives
+benchmark:
+  levels: [L0]
+  warmup: 5
+  iterations: 20
+  message_bytes: [4096, 65536, 1048576, 4194304, 16777216, 67108864]
+  execution:
+    modes: [default, aicpu_ts, aiv, aiv_only, ccu_sched]
+  native_hccl:
+    # Point this at the built CANN oam-tools hccl_test directory or a single
+    # binary; without it EXEC-* reports dependency_missing.
+    binary: null
+    launcher: null
+    mpi: true
+  verification:
+    enabled: true
+    require_verified_for_comparison: true

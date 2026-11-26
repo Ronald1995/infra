@@ -1,7 +1,7 @@
 """Construct a bounded, dependency-free benchmark manifest."""
 from copy import deepcopy
 
-from common.cases import catalog
+from common.cases import L0_PARAMETERS, catalog, l0_family
 from common.registry import check_constraints, registry
 from common.storage import fingerprint
 
@@ -34,6 +34,76 @@ CASE_VARIANTS = {
 FIXED_OWNER = "fixed_owner"
 FIXED_OWNER_CASES = {"LAYER-003", "LAYER-005", "LAYER-006"}
 
+
+
+def _l0_matrix(cfg, cases):
+    """Load the capability matrix once when an L0 family needs it."""
+    if not any(case.level == "L0" and case.category in ("transport", "execution") for case in cases):
+        return None
+    try:
+        from baselines.l0.topology import discovery
+        return discovery.load(cfg)
+    except Exception as exc:  # discovery must never stop the rest of L0
+        return {"schema_version": 1, "source": "unavailable", "error": str(exc),
+                "channels": [], "engines": [], "accelerators": []}
+
+
+def _l0_status(case, params, matrix):
+    """Return ``(status, reason)`` for one L0 parameter set from the matrix."""
+    if matrix is None:
+        return None, None
+    from baselines.l0.topology import capabilities as capability_table
+    if case.category == "transport":
+        mechanism = L0_PARAMETERS.get(case.id, {}).get("mechanism")
+        resource = params.get("execution_resource") or L0_PARAMETERS.get(case.id, {}).get(
+            "execution_resource")
+        supported, reason = capability_table.support(matrix, case_id=case.id,
+                                                     mechanism=mechanism,
+                                                     execution_resource=resource)
+        return ("not_run", None) if supported else ("unsupported", reason)
+    if case.category == "execution":
+        mode = params.get("accelerator")
+        entry = capability_table.index(matrix)["accelerator"].get(mode)
+        if entry is None:
+            return "unsupported", f"accelerator mode {mode!r} is not offered by the installed hccl_test"
+        if not entry["supported"]:
+            return "unsupported", entry.get("reason")
+    return "not_run", None
+
+
+def l0_parameter_sets(case, cfg, size, variant, matrix=None):
+    """Expand one L0 case into parameter dictionaries."""
+    settings = cfg["benchmark"]
+    family = l0_family(case)
+    static = dict(L0_PARAMETERS.get(case.id, {}))
+    base = {"variant": variant, "message_bytes": size}
+    if family == "transport":
+        outstanding = settings.get("outstanding") or [1]
+        peers = settings.get("peer_counts") or [0]
+        if case.id == "HW-008":
+            return [{"variant": engine, "message_bytes": size} for engine in ("mte", "udma", "urma")]
+        if case.id in ("LINK-012", "LINK-013"):
+            variants = ("default",) if case.id == "LINK-012" else ("device", "host")
+            return [{**base, **static, "outstanding": count, "peer_count": peer_count,
+                     "variant": item, "cores": settings.get("cores", [1])[-1],
+                     "quiet_mode": (settings.get("quiet_modes") or [0])[-1],
+                     "mode": settings.get("transport_mode", "write")}
+                    for item in variants
+                    for count in outstanding for peer_count in peers]
+        return [{**base, **static, "outstanding": count, "peer_count": peer_count,
+                 "mode": settings.get("transport_mode", "write")}
+                for count in outstanding for peer_count in peers]
+    if family == "execution":
+        modes = settings.get("execution", {}).get("modes") or ["default"]
+        return [{**base, **static, "accelerator": mode, "operation": static.get("operation",
+                                                                                 case.operation)}
+                for mode in modes]
+    if family == "overlap":
+        return [{**base, **static, "transport": static.get("mechanism", "auto"),
+                 "compute": static.get("compute", "gmm")}]
+    if family == "memory":
+        return [{**base, "variant": "default"}]
+    return [{**base}]
 
 def status_for(spec, case, cfg, baseline=False):
     if spec.status not in ("integrated", "historical_verified"):
@@ -123,20 +193,38 @@ def make_plan(configs, operators=None, levels=None, cases=None, baselines=False)
                 message_sizes = cfg["benchmark"].get("message_bytes", [4096])
                 if case.id in {"HW-010", "HW-011"} or spec:
                     message_sizes = [None]
-                for size in message_sizes:
-                    variants = CASE_VARIANTS.get(case.id, ("default",)) if reason is None else ("default",)
-                    if case.id in FIXED_OWNER_CASES and op_id == "alltoall_hccl" and reason is None:
-                        variants = (FIXED_OWNER,)
-                    for variant in variants:
-                        params = {"variant": variant, "message_bytes": size}
-                        identity = dict(config=cfg, backend=op_id, case=case.id, parameters=params)
-                        task_id = f"{case.id}-{fingerprint(identity)[:16]}"
-                        tasks[task_id] = {
-                            "task_id": task_id, "case_id": case.id, "level": case.level,
-                            "operation": case.operation, "backend_id": op_id, "config": cfg,
-                            "parameters": params, "status": status, "reason": reason,
-                            "source_versions": {"adapter_source": spec.source, "adapter_commit": spec.commit}
-                            if spec else {},
-                            "baseline": baselines or not spec,
-                        }
+                matrix = _l0_matrix(cfg, [case]) if case.level == "L0" else None
+                parameter_sets = []
+                if case.level == "L0":
+                    if reason is None:
+                        for size in message_sizes:
+                            variants = CASE_VARIANTS.get(case.id, ("default",))
+                            for variant in variants:
+                                parameter_sets.extend(
+                                    l0_parameter_sets(case, cfg, size, variant, matrix))
+                    else:
+                        parameter_sets = [{"variant": "default", "message_bytes": message_sizes[0]}]
+                else:
+                    for size in message_sizes:
+                        variants = CASE_VARIANTS.get(case.id, ("default",)) if reason is None else ("default",)
+                        if case.id in FIXED_OWNER_CASES and op_id == "alltoall_hccl" and reason is None:
+                            variants = (FIXED_OWNER,)
+                        for variant in variants:
+                            parameter_sets.append({"variant": variant, "message_bytes": size})
+                for params in parameter_sets:
+                    case_status, case_reason = status, reason
+                    if case.level == "L0" and reason is None:
+                        derived_status, derived_reason = _l0_status(case, params, matrix)
+                        if derived_status:
+                            case_status, case_reason = derived_status, derived_reason
+                    identity = dict(config=cfg, backend=op_id, case=case.id, parameters=params)
+                    task_id = f"{case.id}-{fingerprint(identity)[:16]}"
+                    tasks[task_id] = {
+                        "task_id": task_id, "case_id": case.id, "level": case.level,
+                        "operation": case.operation, "backend_id": op_id, "config": cfg,
+                        "parameters": params, "status": case_status, "reason": case_reason,
+                        "source_versions": {"adapter_source": spec.source, "adapter_commit": spec.commit}
+                        if spec else {},
+                        "baseline": baselines or not spec,
+                    }
     return list(tasks.values())

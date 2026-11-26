@@ -1,0 +1,21 @@
+# Native transport baseline: one mechanism per case, swept over message size,
+# outstanding requests and peer count.  Requires the native bridge for LINK-001
+# .. LINK-011 and the SHMEM runtime for LINK-012 / LINK-013; missing pieces are
+# reported as dependency_missing, never replaced by another mechanism.
+extends: ep8_bf16.yaml
+suite_id: transport
+benchmark:
+  levels: [L0]
+  warmup: 3
+  iterations: 10
+  message_bytes: [256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864]
+  outstanding: [1, 2, 4, 8]
+  peer_counts: [0]
+  cores: [1, 2, 4]
+  quiet_modes: [0, 1]
+  transport_mode: write
+  transport:
+    enabled: [ub_memory, urma, ub_ctp, ub_rtp, shmem_mte, shmem_udma]
+  verification:
+    enabled: true
+    require_verified_for_comparison: true

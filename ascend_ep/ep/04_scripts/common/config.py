@@ -20,7 +20,16 @@ DEFAULT = {
     "workload": {"tokens_per_rank": 32, "routing": "balanced", "seed": 42},
     "benchmark": {"warmup": 2, "iterations": 5, "levels": ["L1", "L2", "L3"],
                   "timing": "output_ready", "rank_reduction": "max",
-                  "retries": 0, "task_timeout_seconds": 3600},
+                  "retries": 0, "task_timeout_seconds": 3600,
+                  "message_bytes": [4096], "outstanding": [1], "peer_counts": [],
+                  "cores": [1], "quiet_modes": [0], "transport_mode": "write",
+                  "transport": {"enabled": [], "library": None},
+                  "execution": {"modes": ["default"]},
+                  "verification": {"enabled": True, "require_verified_for_comparison": True,
+                                   "trust_descriptor": False, "hccl_log_paths": [],
+                                   "hcomm_log_paths": []},
+                  "native_hccl": {}, "memory_library": None,
+                  "shmem_udma_library": None, "shmem_rendezvous": None},
     "topology": {}, "profiling": {"warmup": 1, "active": 3},
     "load_balance": {"enabled": False}, "dedup": {"mode": "none"},
     "operators": ["alltoall_hccl"],
@@ -103,7 +112,49 @@ def validate(config):
         raise ValueError("benchmark.phase must be train or forward")
     if config["dedup"]["mode"] not in ("none", "rank", "server"):
         raise ValueError("invalid dedup mode")
+    validate_l0(b)
     return config
+
+
+L0_MECHANISMS = ("ub_memory", "urma", "ub_ctp", "ub_rtp", "roce", "hccs", "uboe",
+                 "shmem_mte", "shmem_udma")
+L0_ACCELERATORS = ("default", "host_ts", "aicpu_ts", "aiv", "aiv_only", "ccu_ms",
+                   "ccu_sched", "aicpu", "ccu_ms_only", "ccu_sched_only")
+
+
+def validate_l0(settings):
+    """Validate the L0 dimension sweeps without changing older configurations."""
+    for name in ("message_bytes", "outstanding", "cores", "quiet_modes", "peer_counts"):
+        values = settings.get(name, [])
+        if not isinstance(values, list) or any(type(value) is not int or value < 0
+                                               for value in values):
+            raise ValueError(f"benchmark.{name} must be a list of non-negative integers")
+    if not settings.get("message_bytes"):
+        raise ValueError("benchmark.message_bytes must not be empty")
+    if any(value <= 0 for value in settings["message_bytes"]):
+        raise ValueError("benchmark.message_bytes entries must be positive")
+    if not settings.get("outstanding"):
+        raise ValueError("benchmark.outstanding must not be empty")
+    if any(value <= 0 for value in settings["outstanding"]):
+        raise ValueError("benchmark.outstanding entries must be positive")
+    transport = settings.get("transport") or {}
+    enabled = transport.get("enabled") or []
+    if not isinstance(enabled, list) or set(enabled) - set(L0_MECHANISMS):
+        raise ValueError(f"benchmark.transport.enabled must be a subset of {L0_MECHANISMS}")
+    execution = settings.get("execution") or {}
+    modes = execution.get("modes") or []
+    if not isinstance(modes, list) or set(modes) - set(L0_ACCELERATORS):
+        raise ValueError(f"benchmark.execution.modes must be a subset of {L0_ACCELERATORS}")
+    if settings.get("transport_mode") not in ("write", "read", "get", "put"):
+        raise ValueError("benchmark.transport_mode must be write, read, put or get")
+    verification = settings.get("verification") or {}
+    for key in ("enabled", "require_verified_for_comparison", "trust_descriptor"):
+        if not isinstance(verification.get(key, False), bool):
+            raise ValueError(f"benchmark.verification.{key} must be a boolean")
+    for key in ("hccl_log_paths", "hcomm_log_paths"):
+        paths = verification.get(key, [])
+        if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+            raise ValueError(f"benchmark.verification.{key} must be a list of paths")
 
 
 def load_configs(path, ancestry=()):

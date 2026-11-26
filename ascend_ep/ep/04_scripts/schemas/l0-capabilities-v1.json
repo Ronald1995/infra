@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "L0 capability matrix v1",
+  "type": "object",
+  "required": ["schema_version", "source", "device", "channels", "engines", "accelerators", "probes"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "source": {"type": "string", "enum": ["probe", "override", "unavailable"]},
+    "device": {"type": "object"},
+    "topology": {"type": "object"},
+    "channels": {"type": "array", "items": {"type": "object", "required": ["supported", "confidence"]}},
+    "engines": {"type": "array", "items": {"type": "object", "required": ["engine", "supported"]}},
+    "accelerators": {"type": "array", "items": {"type": "object", "required": ["mode", "supported"]}},
+    "memory_kernels": {"type": "array"},
+    "probes": {"type": "array"},
+    "message_limits": {"type": "object"}
+  }
+}

@@ -2,6 +2,19 @@
 
 以 [算子调研表](../../ep.md) 和 [测试方法](../03_benchmark/ep_benchmark_methodology.md) 定义范围。36 个算子的独立入口、已接入层次和限制见 [Capability Matrix](operators/README.md)。[SKILL.md](SKILL.md) 是 Agent 运行入口。
 
+
+## L0 硬件基线
+
+`baseleines/l0` 之外的 L0 入口在 [L0 README](baselines/l0/README.md)。L0 分六类：本地内存、原生通信机制、通信执行资源、集合通信、计算、通信与计算并发。每条结果区分 `requested` 与 `observed`，并给出 `verified` / `fallback` / `unverified` / `unsupported` 状态；只有 `verified` 结果可以跨通信机制比较。
+
+```sh
+python run_benchmark.py capabilities --config configs/hardware.yaml
+python run_benchmark.py run --config configs/transport.yaml --ep-size 8 --cases LINK-001,LINK-012,LINK-013
+python run_benchmark.py run --config configs/collectives.yaml --ep-size 8 --cases EXEC-001
+python run_benchmark.py run --config configs/overlap.yaml --ep-size 8 --cases OVERLAP-005
+```
+
+HCOMM 原生桥、SHMEM UDMA kernel、本地内存 kernel 和 oam-tools `hccl_test` 都是可选依赖：缺失时对应用例返回 `dependency_missing`，不影响其他 L0 及 L1–L4 测试。
 ## 安装和计划
 
 在本目录安装框架。按目标 CANN 版本准备相容的 PyTorch 和 torch_npu。CPU 测试需要支持 Gloo 的 PyTorch。

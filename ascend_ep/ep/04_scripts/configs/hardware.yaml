@@ -3,3 +3,15 @@ suite_id: hardware
 benchmark:
   levels: [L0]
   message_bytes: [4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824]
+  outstanding: [1, 2, 4, 8, 16]
+  peer_counts: [0]
+  cores: [1, 2, 4]
+  quiet_modes: [0, 1]
+  transport_mode: write
+  transport:
+    enabled: [ub_memory, urma, ub_ctp, ub_rtp, roce, hccs, uboe, shmem_mte, shmem_udma]
+  execution:
+    modes: [default, aicpu_ts, aiv, aiv_only, ccu_sched]
+  verification:
+    enabled: true
+    require_verified_for_comparison: true

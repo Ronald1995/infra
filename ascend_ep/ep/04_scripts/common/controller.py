@@ -39,6 +39,15 @@ def create_manifest(output, tasks, run_id=None):
         yaml.safe_dump({t["task_id"]: t["config"] for t in tasks}, sort_keys=False), encoding="utf-8"
     )
     write_json(root / "manifest.json", manifest)
+    if any(task["level"] == "L0" for task in tasks):
+        try:
+            from baselines.l0.topology import discovery
+            discovery.write(discovery.load(tasks[0]["config"]), root)
+        except Exception as exc:  # capability discovery must not block planning
+            write_json(root / "capabilities.json",
+                       {"schema_version": 1, "source": "unavailable", "error": str(exc),
+                        "device": {}, "channels": [], "engines": [], "accelerators": [],
+                        "probes": []})
     return root, manifest
 
 

@@ -114,6 +114,15 @@ def report(root, manifest, rows, analysis):
                 ("Task", "Backend", "Status", "Evidence"),
                 ((row["task_id"], row["backend_id"], row["status"], row["error_reason"] or "No run record")
                  for row in rows if row["status"] != "passed"))
+    from reporting.l0_report import write as write_l0
+    capabilities = None
+    capability_path = root / "capabilities.json"
+    if capability_path.is_file():
+        capabilities = __import__("json").loads(capability_path.read_text(encoding="utf-8"))
+    if any(row.get("benchmark_level") == "L0" for row in rows):
+        write_l0(root, manifest, rows, capabilities)
+        with (destination / "benchmark_report.md").open("a", encoding="utf-8") as file:
+            file.write("\n- [l0_report.md](l0_report.md)\n")
     from reporting.charts import create_charts
     create_charts(destination, rows, analysis)
     charts = sorted((destination / "charts").glob("*.png"))

@@ -51,7 +51,7 @@ def execute_worker(manifest_path, task_id, output, profile=False):
 
 
 def run_task(ctx, task, record, output, profile):
-    from benchmarks.l0_hardware import hardware_case
+    from benchmarks.l0_hardware import l0_case
     from benchmarks.operator_cases import Operation, operator_case, uses_planner
     from common import memory
     from common.cases import catalog
@@ -107,11 +107,21 @@ def run_task(ctx, task, record, output, profile):
         ctx.barrier()
         ctx.synchronize()
         initialization_start = perf_counter_ns()
+        l0_prepared = None
+        direct_metrics = None
         if is_hw:
             params = task["parameters"]
-            call, validate, cleanup, payload = hardware_case(ctx, case, works[0] if works else None,
-                                                             params["message_bytes"], params["variant"])
-            prepared = Operation(lambda _: None, lambda _: call(), validate)
+            setattr(ctx, "workload", works[0] if works else None)
+            l0_prepared = l0_case(ctx, case, params, output)
+            cleanup = l0_prepared.cleanup
+            payload = l0_prepared.payload
+            status_evidence = list(l0_prepared.evidence)
+            if l0_prepared.direct:
+                call, validate = l0_prepared.run, l0_prepared.validate
+                prepared = Operation(lambda _: None, lambda _: call(), validate)
+            else:
+                prepared = Operation(lambda _: None, l0_prepared.run, l0_prepared.validate,
+                                     l0_prepared.wait)
         else:
             spec = registry()[task["backend_id"]]
             backend = spec.create()
@@ -137,7 +147,15 @@ def run_task(ctx, task, record, output, profile):
             return
 
         memory.reset(ctx)
-        if settings["timing"] == "cold_start":
+        if is_hw and l0_prepared is not None and l0_prepared.direct:
+            # The backend measured internally: run it once, keep its numbers.
+            prepared.call()
+            direct_metrics = l0_prepared.direct["extract"]()
+            if direct_metrics is None:
+                raise BenchmarkUnavailable("runtime_failed",
+                                           "the backend produced no measurement")
+            samples = direct_metrics.get("samples") or []
+        elif settings["timing"] == "cold_start":
             samples = [{"iteration": 0, "latency_ns": initialization, "host_issue_ns": initialization,
                         "host_wait_ns": 0, "output_ready_ns": initialization, "operations": 1}]
         else:
@@ -221,9 +239,39 @@ def run_task(ctx, task, record, output, profile):
                 record["throughput"] = throughput(sum(tokens) * request_count, ctx.size, p50)
                 if request_count > 1:
                     record["workload"]["requests_per_sample"] = request_count
-        if payload is not None:
-            record["bandwidth"] = bandwidth({"unit": "bytes", "scope": "EP group",
-                                              "payload_bytes": payload, "source": "collective_payload_model"}, p50)
+        if direct_metrics:
+            record["latency"] = direct_metrics.get("latency")
+            record["bandwidth"] = direct_metrics.get("bandwidth")
+            record["metrics_source"] = direct_metrics.get("provider")
+        if payload is not None and not direct_metrics:
+            if isinstance(payload, dict) and "per_rank_bytes" in payload:
+                volume = {**payload, "payload_bytes": payload["per_rank_bytes"],
+                          "source": "declared_payload_model"}
+                record["bandwidth"] = bandwidth(volume, p50)
+                record["bandwidth"]["global_payload_bytes"] = payload.get("global_bytes")
+                record["bandwidth"]["bandwidth_unit"] = "GB/s"
+                record["bandwidth"]["scope"] = "per_rank"
+            elif isinstance(payload, dict):
+                record["bandwidth"] = bandwidth(payload, p50)
+            else:
+                record["bandwidth"] = bandwidth({"unit": "bytes", "scope": "EP group",
+                                                  "payload_bytes": payload,
+                                                  "source": "collective_payload_model"}, p50)
+        if is_hw and l0_prepared is not None:
+            from baselines.l0.topology import rank_graph
+            from baselines.l0.verification import hccl_log, path_verifier
+            request = l0_prepared.request or {}
+            evidence = list(l0_prepared.evidence)
+            verification = ((cfg.get("benchmark") or {}).get("verification") or {})
+            if verification.get("enabled", True):
+                logs, inspected = hccl_log.collect(hccl_log.configured_paths(cfg),
+                                                   [str(output)])
+                evidence.extend(logs)
+                record["verification_logs"] = {"inspected": inspected, "claims": len(logs)}
+            path_verifier.annotate(record, request, evidence)
+            record["category"] = case.category
+            record["parameters"] = dict(task["parameters"])
+            record["topology_graph"] = rank_graph.build(cfg, mapping)
     finally:
         ctx.synchronize()
         cleanup()
