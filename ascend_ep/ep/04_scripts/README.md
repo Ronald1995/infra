@@ -17,8 +17,8 @@ operators/       one directory per adapter; operators/vendor/ascendep is the
                  vendored upstream adapter tree
 metrics/         latency, traffic model, bandwidth, throughput, effective FLOPs
 profiling/       trace collection and parsing
-analysis/        comparability, comparison groups, report entry point
-reporting/       reports, coverage matrices, L0 report
+analysis/        comparability, comparison groups, L0 analysis, report entry point
+reporting/       main report sections, formatting, specialty reports, coverage, L0 report
 schemas/         versioned result/config/capability vocabularies
 dependencies/    dependency catalog (manifest.yaml) and requirement files
 scripts/         doctor.py, install_deps.sh, manifest_diff.py, vendor_ascendep.py
@@ -129,14 +129,31 @@ before/after numbers of this refactor are in [docs/manifest_diff.md](docs/manife
 
 Execution writes `manifest.json`, `matrix.json`, `resolved_config.yaml`, `topology.json`,
 `capabilities.json`, per-attempt logs, per-task `metrics.json` + `correctness.json` +
-`samples.jsonl`, and `ep_summary.json` with mutually exclusive buckets. `not_run` is never a
-pass. `reports/` holds `coverage_matrix.{md,csv,json}`, `case_operator_coverage.csv`,
-`variant_coverage.{md,csv}`, `operator_coverage.md`, `ep_size_comparison.md`,
-`l0_scaleout.md` and `benchmark_report.md`.
+`status.json` + `config.yaml` + `samples.jsonl`, and `ep_summary.json` with mutually exclusive
+buckets. `not_run` is never a pass.
+
+`report` writes `reports/benchmark_report.md` — the main analysis report, readable on its own
+(executive summary, environment and capability matrix, coverage, L0 baseline, L1-L4 operator
+performance, backend comparison, EP scaling, overlap, load balance, failures, evidence,
+recommendations) — plus the specialty reports that back it up: `l0_report.md`,
+`operator_comparison.md`, `bandwidth_analysis.md`, `overlap_analysis.md`,
+`scalability_analysis.md`, `load_balance_analysis.md`, `planner_training.md`,
+`dedup_comparison.md`, `failure_summary.md`, the coverage products
+(`coverage_matrix.{md,csv,json}`, `case_operator_coverage.csv`, `variant_coverage.{md,csv}`,
+`operator_coverage.md`, `ep_size_comparison.md`, `l0_scaleout.md`), `l0_metrics.json`,
+`l0_curves.csv`, `benchmark_summary.{json,csv}` and the charts that had data.
+
+Two rules make the report trustworthy: a comparison group needs two different backends under
+identical conditions (one backend is a *single measurement*), and an analysis without data
+still explains itself (`Status` / `Current Findings` / `Why Analysis Is Unavailable` /
+`Required Conditions` / `Alternative Evidence` / `Conclusion`) instead of writing a bare
+heading. Report layout, the data contract, the comparability rules and the formatting rules
+are documented in [docs/reporting.md](docs/reporting.md).
 
 Vocabulary: `passed`, `failed`, `unsupported`, `not_applicable`, `not_implemented`,
 `dependency_missing`, `environment_unavailable`, `source_unavailable`, `not_run`,
-`correctness_failed`, `runtime_failed`, `timeout`, `oom`. Only `passed` is a measurement.
+`correctness_failed`, `runtime_failed`, `timeout`, `oom`. Only `passed` is a measurement. The
+raw status is always kept; the report buckets (`schemas.STATUS_GROUPS`) only classify it.
 
 ## L0 hardware baselines
 
@@ -170,6 +187,8 @@ and never reported as verified.
 | [docs/l0_data_plane.md](docs/l0_data_plane.md) | control plane vs data plane, the three planes, the completion ladder, the delayed-write test |
 | [docs/evidence_capability.md](docs/evidence_capability.md) | evidence kinds, verification ladder, runtime probe, capability matrix |
 | [docs/observability.md](docs/observability.md) | observation fields, byte kinds, per-rank metrics, what HCCL can and cannot reveal |
+| [docs/reporting.md](docs/reporting.md) | report artifacts, main-report layout, data contract, comparability rules, formatting, chart degradation |
+| [docs/reporting_refactor.md](docs/reporting_refactor.md) | why the report system was rebuilt, what changed, test results, open gaps |
 | [docs/manifest_diff.md](docs/manifest_diff.md) | how to diff two manifests, and the numbers of this refactor |
 | [docs/blocked.md](docs/blocked.md) | **what is not done**, with the exact missing interface |
 | [docs/benchmark_matrix.md](docs/benchmark_matrix.md) | matrix design: layers, suites, variants, coverage reports |

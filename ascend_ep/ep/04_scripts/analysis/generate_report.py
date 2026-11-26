@@ -1,6 +1,7 @@
 """Analyze persisted performance and rank profiler artifacts."""
 from analysis.comparison import (
-    comparisons, dedup_comparisons, fixed_owner_comparisons, fusion, pareto, planner_comparisons, scaling,
+    comparison_groups, dedup_comparisons, fixed_owner_comparisons, fusion, pareto,
+    planner_comparisons, scaling,
 )
 from common.storage import write_json
 from profiling.analyze_overlap import analyze
@@ -40,7 +41,7 @@ def analyze_run(root, rows, extra_rows=()):
                 "fusion_speedup": item["fusion_speedup"], "serial_latency_ms": item["serial_latency_ms"],
                 "fused_latency_ms": item["fused_latency_ms"], "evidence": item["serial_task"],
             })
-    output = {"comparison_groups": comparisons(rows), "fusion": measured_fusion,
+    output = {"comparison_details": comparison_groups(rows), "fusion": measured_fusion,
               "scaling_groups": scaling(combined), "pareto": pareto(rows), "profiles": profiles,
               "planner_comparisons": planner_comparisons(combined),
               "fixed_owner_comparisons": fixed_owner_comparisons(combined),

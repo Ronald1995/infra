@@ -68,6 +68,28 @@
         "null"
       ]
     },
+    "category": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Case category from the catalog (memory/transport/execution/collective/compute/overlap). Written when the record is created, so a failed task keeps it."
+    },
+    "ep_size": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "EP size this task was planned at, so a report never has to re-derive it from the config of a failed record."
+    },
+    "case_parameters": {
+      "type": "object",
+      "description": "The standard parameter field: the planned case parameters (variant, message_bytes, mechanism, ...). The legacy `parameters` key is only read, never written."
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Legacy alias of case_parameters, read for backwards compatibility and never written by the current code."
+    },
     "observation": {
       "type": [
         "object",

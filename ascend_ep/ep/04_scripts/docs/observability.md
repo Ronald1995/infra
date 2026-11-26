@@ -159,15 +159,26 @@ The L0 path reports payload bytes through `Prepared.payload`, not through a rout
 
 ## 7. What a report may compare
 
-`analysis/comparison.py::comparable` accepts a row only when it is `passed`, its `source` is
-`measured`, its `correctness.passed` is true and its `latency.p50` is positive. Groups are
-then keyed by device, NPU model, CANN version, package set, topology, EP/TP size, workload,
-routing-trace hash, model, timing mode, dedup/load-balance state, level, operation and case
-parameters, so two adapters land in one group only when all of those agree.
+`analysis/comparability.py` is the single definition; `analysis/comparison.py` and
+`reporting/coverage.py` both reuse it, and `docs/reporting.md` documents it in full.
+
+* `eligibility(record)` accepts a row only when it is `passed`, its `source` is `measured`,
+  its `correctness.passed` is true and its `latency.p50` is positive. `exclusion_reason()`
+  says which of those failed.
+* `backend_comparison_key` groups rows by the **test conditions**: case identity, level,
+  operation, the whole `case_parameters` set (minus `reason`/`notes`), the environment
+  (device, NPU model, CANN version, packages), topology, EP/TP size, model, per-rank workload,
+  routing strategy/seed/trace, timing boundary, dedup/load-balance state and the **completion
+  level**. Task id, run id, backend id and every measured value are excluded.
+* A group of one backend is a `single_measurement`; several samples of one backend are a
+  `repeated_measurement`; only two different backends under identical conditions are an
+  `actual_comparison`, and only there are speedup and percentage differences computed.
+* `scaling_key` excludes the EP size, the derived topology and the global expert count (they
+  are the scaling dimension) and normalises the workload by the suite's `scaling.mode`.
 
 For L0, `baselines/l0/verification/path_verifier.py::status_allows_comparison` states that
 only `verified` records may be compared across mechanisms, and `comparable()` enforces it: an
-L0 row whose `verification.status` is not `verified` never enters a group. On this host
-nothing reaches `verified` (no bridge, no device), so no cross-mechanism L0 ranking is
-produced at all; a report must say that instead of presenting requested configurations as a
-measured ranking.
+L0 row whose `verification.status` is not `verified` never enters a comparable group. On a
+host without a bridge or a device nothing reaches `verified`, so no cross-mechanism L0 ranking
+is produced at all; the report says exactly that instead of presenting requested
+configurations as a measured ranking.

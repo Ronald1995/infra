@@ -10,10 +10,15 @@ Three rules keep the report honest:
 * two measurements are only put in the same performance group when their
   parameter variant, model shape, per-rank workload and timing boundary match,
   and L0 transport rows additionally require a ``verified`` execution path.
+
+The grouping rules themselves live in :mod:`analysis.comparability`; the L0
+scale-out join lives in :mod:`analysis.l0`.  Both are re-exported here so the
+existing call sites and tests keep working.
 """
 from collections import defaultdict
 import csv
 
+from analysis import comparability, l0 as l0_analysis
 from common.storage import fingerprint, write_json
 from schemas import SEVERITY
 
@@ -26,6 +31,9 @@ FAILED_STATUSES = {"runtime_failed", "correctness_failed", "timeout", "oom"}
 #: fingerprint, so a case-specific parameter can never be merged away.
 SCALEOUT_COLUMNS = ("variant", "peer_policy", "peer_count", "outstanding", "message_bytes",
                     "accelerator", "shape_mode", "compute", "mode", "cores", "quiet_mode")
+
+#: The L0 scale-out join, kept under its historic name.
+l0_scaleout = l0_analysis.scale_out
 
 
 def _severity(status):
@@ -63,6 +71,20 @@ def _matrix(manifest):
     return manifest.get("matrix") or {}
 
 
+def _catalog_category(case_id):
+    """The case category from the catalog, for a manifest that does not carry one.
+
+    Older manifests recorded the catalog without categories; the report then reads the
+    category from the case definition instead of printing ``-`` for every row.
+    """
+    try:
+        from common.cases import catalog
+        case = catalog().get(case_id)
+    except Exception:  # a broken catalog must not stop the matrix
+        return None
+    return getattr(case, "category", None)
+
+
 def _ep_sizes(rows, manifest):
     declared = (_matrix(manifest).get("selected_ep_sizes")
                 or _matrix(manifest).get("ep_sizes") or [])
@@ -95,7 +117,8 @@ def case_matrix(rows, manifest):
     for case_id in sorted(catalog):
         entry = catalog[case_id]
         record = {"case_id": case_id, "level": entry.get("level"),
-                  "category": entry.get("category"), "alias_of": entry.get("alias_of"),
+                  "category": entry.get("category") or _catalog_category(case_id),
+                  "alias_of": entry.get("alias_of"),
                   "verification": {}}
         for size in sizes:
             if entry.get("alias_of"):
@@ -154,44 +177,23 @@ def operator_matrix(rows, manifest):
 
 
 def _comparable_row(row):
-    return (row["status"] == "passed" and row.get("correctness") and row["correctness"]["passed"]
-            and row.get("latency") and row["latency"].get("p50"))
+    """A record that is an accepted measurement (the local eligibility test)."""
+    return comparability.eligibility(row)
 
 
 def _parameters_key(row):
-    return dict(row.get("case_parameters") or {})
+    return dict(row.get("case_parameters") or row.get("parameters") or {})
 
-
-def _workload_key(row):
-    cfg = row["config"]
-    tokens = cfg["workload"]["tokens_per_rank"]
-    tokens = tuple(tokens) if isinstance(tokens, list) else (tokens,)
-    # Per-rank shape, not the global total: EP8 and EP128 are comparable only
-    # when every rank does the same work.  The global expert count is *not* part
-    # of the key: it changes with the EP size by design, so it is reported with
-    # each point instead of excluding the comparison.
-    model = {key: value for key, value in cfg["model"].items() if key != "num_experts"}
-    return {
-        "model": model,
-        "tokens_per_rank": tokens,
-        "routing": cfg["workload"]["routing"],
-        "expert_placement": cfg["workload"].get("expert_placement"),
-        "seed": cfg["workload"]["seed"],
-        "dedup": cfg["dedup"],
-        "load_balance": cfg["load_balance"],
-    }
 
 
 def comparison_key(row):
-    cfg = row["config"]
-    latency = row.get("latency") or {}
-    bandwidth = row.get("bandwidth") or {}
-    return fingerprint([
-        row["case_id"], row["backend_id"], row["benchmark_level"], row["operation"],
-        _parameters_key(row), _workload_key(row),
-        cfg["benchmark"]["timing"], latency.get("unit"), latency.get("scope"),
-        bandwidth.get("unit"), bandwidth.get("scope"),
-    ])
+    """Group key for the per-operator EP-size comparison.
+
+    ``analysis.comparability.scaling_key`` owns the rule (same case, backend,
+    variant, model, workload semantics and timing boundary; EP size excluded because
+    it is the dimension being compared).
+    """
+    return comparability.scaling_key(row)
 
 
 def ep_size_comparison(rows, manifest):
@@ -246,103 +248,6 @@ def ep_size_comparison(rows, manifest):
         output.append(entry)
     output.sort(key=lambda item: (item["level"], item["case_id"], item["operator"] or ""))
     return {"groups": output, "excluded": excluded}
-
-
-def _observed_mechanism(row):
-    """``(mechanism, source)`` for one L0 row.
-
-    ``observed`` wins: the runtime answer is the only evidence of what was
-    actually exercised.  A row without an observation (for example a
-    ``not_applicable`` cross-server point) falls back to the *requested*
-    mechanism, which keeps the N/A next to the measurements of the same case.
-    """
-    observed = (row.get("observed") or {}).get("transport_protocol")
-    if observed:
-        return observed, "observed"
-    requested = (row.get("case_parameters") or {}).get("mechanism")
-    return (requested, "requested") if requested else (None, None)
-
-
-def l0_scaleout(rows):
-    """L0 hardware scale-out: one row per *complete* parameter variant.
-
-    Grouping uses the whole case-parameter dictionary (fingerprint), plus the case,
-    category and observed execution mechanism.  Nothing about a variant is
-    inferred from a subset of keys: ``ring``/``same_server``/``cross_server``,
-    ``device``/``host``, ``gmm``/``dgrad``/``wgrad`` and ``fixed``/``workload``
-    therefore never collapse into one line.  Two different tasks at the same EP
-    size are reported as ambiguous instead of one silently overwriting the other.
-    """
-    groups = defaultdict(list)
-    for row in rows:
-        if row["benchmark_level"] != "L0":
-            continue
-        parameters = row.get("case_parameters") or {}
-        mechanism, _source = _observed_mechanism(row)
-        key = (row["case_id"], row.get("category"), mechanism,
-               (row.get("observed") or {}).get("execution_resource"),
-               fingerprint(parameters))
-        groups[key].append(row)
-    output = []
-    for (case_id, category, mechanism, resource, parameter_fingerprint), group in sorted(
-            groups.items(), key=lambda item: str(item[0])):
-        parameters = dict(group[0].get("case_parameters") or {})
-        mechanism_source = next((source for row in group
-                                 for value, source in (_observed_mechanism(row),) if value == mechanism),
-                                None)
-        observed_mechanisms = sorted({value for row in group
-                                      for value, _source in (_observed_mechanism(row),)
-                                      if value and (row.get("observed") or {}).get("transport_protocol")})
-        by_ep_size = defaultdict(list)
-        for row in group:
-            by_ep_size[_ep_size(row)].append(row)
-        points, ambiguous = [], []
-        for size, same in sorted(by_ep_size.items()):
-            task_ids = sorted({row["task_id"] for row in same})
-            if len(task_ids) > 1:
-                ambiguous.append({
-                    "ep_size": size, "task_ids": task_ids,
-                    "reason": ("distinct tasks share the same case parameters but different "
-                               "configurations; the point is not collapsed into one value")})
-                continue
-            row = min(same, key=lambda item: item["task_id"])
-            latency = row.get("latency") or {}
-            bandwidth = row.get("bandwidth") or {}
-            points.append({
-                "ep_size": size, "task_id": row["task_id"], "status": row["status"],
-                "reason": row.get("error_reason"),
-                "verification": ((row.get("verification") or {}).get("status") or "unverified"),
-                "p50": latency.get("p50"),
-                "bandwidth_GBps": bandwidth.get("payload_bandwidth_GBps"),
-                "payload_bytes": bandwidth.get("payload_bytes"),
-            })
-        conflict = len(observed_mechanisms) > 1
-        verified_sizes = {point["ep_size"] for point in points
-                          if point["verification"] == "verified" and point["status"] == "passed"}
-        entry = {
-            "case_id": case_id, "category": category,
-            "mechanism": mechanism, "mechanism_source": mechanism_source,
-            "observed_mechanisms": observed_mechanisms, "mechanism_conflict": conflict,
-            "execution_resource": resource,
-            "parameter_fingerprint": parameter_fingerprint,
-            "parameters": parameters,
-            "points": points, "ambiguous": ambiguous,
-            "comparable": bool(not conflict and not ambiguous and len(verified_sizes) >= 2),
-        }
-        for name in SCALEOUT_COLUMNS:
-            entry[name] = parameters.get(name)
-        if conflict:
-            entry["reason"] = ("observed transport mechanism differs across EP sizes; the "
-                               "rows are kept separate")
-        elif ambiguous:
-            entry["reason"] = "several tasks share these parameters at one EP size"
-        else:
-            entry["reason"] = None
-        output.append(entry)
-    output.sort(key=lambda item: (item["case_id"], str(item["variant"]),
-                                  str(item["peer_policy"]), str(item["message_bytes"]),
-                                  str(item["accelerator"]), item["parameter_fingerprint"]))
-    return output
 
 
 def task_matrix(rows, manifest):

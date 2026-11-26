@@ -420,8 +420,10 @@ def run_task(ctx, task, record, output, profile):
                 from baselines.l0.verification.evidence import strongest_level
                 record["verification_levels"] = dict(levels)
                 record["verification_level"] = strongest_level(levels)
+            # `category` (and `case_parameters`) are already on the record from
+            # `schemas.result`, so a failed attempt keeps them too.  Restating the
+            # category here keeps the value tied to the case that actually ran.
             record["category"] = case.category
-            record["parameters"] = dict(task["parameters"])
             record["topology_graph"] = rank_graph.build(cfg, mapping)
     finally:
         ctx.synchronize()
