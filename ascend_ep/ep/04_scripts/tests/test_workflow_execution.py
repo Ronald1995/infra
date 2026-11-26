@@ -195,7 +195,8 @@ def test_scenario_g_profiling_covers_every_ep_size(workflow):
     assert summary["policy"] == "representative"
     assert summary["selected"]
     selected_sizes = {item["ep_size"] for item in summary["selected"]}
-    assert selected_sizes == {8, 64, 128}
+    # The representative policy must give every EP size of the run a trace.
+    assert selected_sizes == {8, 16, 32, 64, 128}
     assert len(summary["collected"]) == len(summary["selected"])
     assert summary["profile_enabled_flags"]
 

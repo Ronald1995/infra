@@ -45,8 +45,19 @@ def latency(rank_records):
         [mean([v["latency_ns"] for v in group]) for group in groups], .5) / 1e6
     result["rank_min_p50_ms"] = percentile(
         [min(v["latency_ns"] for v in group) for group in groups], .5) / 1e6
-    result["imbalance_ratio"] = (result["rank_max"][0] / mean(result["rank_max"])
-                                 if mean(result["rank_max"]) else None)
+    # Rank latency imbalance is a *per-iteration* ratio: max rank latency over
+    # mean rank latency in the same iteration.  Comparing one iteration's max with
+    # the mean of the maxima across iterations mixes two distributions and is not
+    # an imbalance at all (the old formula).  Percentiles keep the spread visible.
+    ratios = [high / middle for high, middle in zip(result["rank_max"], result["rank_mean"])
+              if middle]
+    result["rank_max_mean_samples"] = ratios
+    for name, value in (("p50", percentile(ratios, .5)), ("p95", percentile(ratios, .95)),
+                        ("max", max(ratios) if ratios else None)):
+        result[f"rank_latency_max_mean_{name}"] = value
+    # Historical key: now the median per-iteration ratio, which is what a reader
+    # always assumed it was.
+    result["imbalance_ratio"] = result["rank_latency_max_mean_p50"]
     result["stddev"] = pstdev(maxima) / 1e6
     result["cv"] = result["stddev"] / mean(result["rank_max"]) if mean(maxima) else None
     result["p95_p50_ratio"] = result["p95"] / result["p50"] if result["p50"] else None

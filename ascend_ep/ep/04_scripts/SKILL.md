@@ -7,7 +7,7 @@ description: Use this skill whenever the user asks to run, execute, benchmark, t
 
 This skill turns one instruction into a complete, auditable benchmark workflow:
 
-> 在 Ascend 950 上运行完整 EP Benchmark，EP8、EP64、EP128，覆盖 L0-L4 和所有算子。
+> 在 Ascend 950 上运行完整 EP Benchmark，EP8、EP16、EP32、EP64、EP128，覆盖 L0-L4 和所有算子。
 > 如果缺少依赖，尝试安装；如果需要编译 Kernel，尝试编译。完成后进行性能分析和
 > Profiling，生成完整报告。
 
@@ -51,7 +51,7 @@ python scripts/benchmark_workflow.py interpret "<the user's sentence>" --out req
 Rules for scope:
 
 * **Defaults come from the plan**, not from this document. EP sizes, levels and suites are
-  read from `configs/benchmark_plan.yaml` (EP8/64/128, L0-L4, all suites) unless the user
+  read from `configs/benchmark_plan.yaml` (EP8/16/32/64/128, L0-L4, all suites) unless the user
   names others.
 * An explicit value overrides **only its own dimension**. "EP64, L1-L2" narrows the EP size
   and the level; it does not drop suites, operators or cases.

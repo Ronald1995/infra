@@ -1,0 +1,32 @@
+# EP32 environment profile: only EP-specific parameters live here.
+#
+# Unified benchmark baseline: three experts per rank at every EP size, so an
+# EP-scaling curve changes the communication scale and *not* the local expert
+# work.  Global experts = 3 x EP size (96).  A historical profile with a
+# different expert count is kept next to it (see ep64_bf16_384.yaml) and must be
+# reported as its own model profile, never spliced into the same scaling curve.
+extends: base_benchmark.yaml
+distributed:
+  ep_size: 32
+  tp_size: 1
+
+model:
+  num_experts: 96
+  top_k: 6
+
+workload:
+  tokens_per_rank: 4096
+  routing: balanced
+  seed: 42
+
+profiling:
+  enabled: false
+  warmup: 1
+  active: 3
+
+operators:
+  - alltoall_hccl
+  - deepep_ascend
+  - moonep
+  - alltoallv_gmm_cann
+  - megamoe_lueelu

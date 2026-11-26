@@ -1,4 +1,29 @@
-"""Configuration loading, validation and scaling matrix expansion."""
+"""Configuration loading, validation and scaling matrix expansion.
+
+The resolver has one job: turn a stack of *raw* layers into one effective
+configuration **and** a record of where every field came from.  Two rules make
+that verifiable:
+
+1. **Defaults are applied last, never first.**  Every layer is read raw (no
+   schema defaults merged in), composed in priority order, and only the final
+   configuration is validated.  A default can therefore never shadow an explicit
+   value from a lower-priority file -- the class of bug that made an EP
+   environment silently override the base measurement settings.
+2. **A layer may not silently drop a field.**  A suite or a ``matrix`` point that
+   declares an environment field (EP size aside, where it is a selector) is a
+   configuration error with the field name and the file.  Before this change the
+   resolver deleted those keys, so the file said one thing and the run did
+   another.
+
+Priority, lowest to highest::
+
+    schema_default -> base_config -> EP environment -> suite -> matrix point -> CLI
+
+``resolve_config`` returns ``(config, provenance)`` where ``provenance`` maps a
+dotted field path to the layer/file that set its final value.  The plan writes
+that map next to the task manifest, which is what lets an audit answer "why did
+this task have ``cores=[2]``?" without re-reading every YAML file.
+"""
 from copy import deepcopy
 from pathlib import Path
 
@@ -56,6 +81,78 @@ def merge(base, changes):
         else:
             result[key] = deepcopy(value)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Field schema: what a configuration file may declare
+# ---------------------------------------------------------------------------
+#: Fields that are legal but have no entry in ``DEFAULT`` because they are
+#: optional switches consumed by one subsystem.  Anything outside ``DEFAULT`` and
+#: this mapping is a configuration error instead of an ignored key.
+OPTIONAL_FIELDS = {
+    "benchmark": {
+        "phase": True, "planner_steps": True, "native_hccl": True,
+        "memory_library": True, "shmem_udma_library": True, "shmem_rendezvous": True,
+        "verification": {"hccl_log_paths", "hcomm_log_paths"},
+        "compute": {"fixed_shape"},
+        # Optional switches inside a section the default already declares.
+        "transport": {"peer_policies", "library"},
+        "execution": {"modes"},
+    },
+    "distributed": {"hierarchical_inner_size": True},
+    "workload": {"expert_placement": True, "router_bias": True, "trace_path": True,
+                 "preferred_route_ratio": True},
+    "profiling": {"enabled": True},
+    "load_balance": {"redundant_experts": True},
+    "topology": {"server_ids": True, "supernode_ids": True, "source": True,
+                 "verified": True, "server_size": True},
+    "scaling": {"name": True, "mode": True, "global_tokens": True, "num_experts": True,
+                "tokens_per_rank": True, "experts_per_rank": True},
+}
+#: Sections that describe the EP environment.  A suite or a ``matrix`` point may
+#: not set them: they belong to the environment layer, and ``distributed.ep_size``
+#: is the one exception (it *routes* a scaling point to an EP size).
+ENVIRONMENT_SECTIONS = frozenset({
+    "schema_version", "extends", "matrix", "device", "distributed", "model",
+    "topology", "launch",
+})
+#: ``matrix`` entries may vary a scenario.  ``model`` keeps only the expert count,
+#: because strong/weak scaling are defined in terms of it.
+MATRIX_MODEL_OVERRIDES = frozenset({"num_experts"})
+#: Top-level keys accepted in a configuration file (``extends``/``matrix`` are
+#: consumed by the loader, ``suite_id``/``operators``/``backends`` are selectors).
+TOP_LEVEL_FIELDS = frozenset({
+    "schema_version", "device", "suite_id", "distributed", "model", "workload",
+    "benchmark", "topology", "profiling", "load_balance", "dedup", "operators",
+    "backends", "scaling",
+})
+
+
+def _field_tree(default, extras, prefix=""):
+    """Nested mapping of every allowed dotted field."""
+    if isinstance(extras, (bool, type(None))):
+        extras = {}
+    if isinstance(extras, (set, frozenset)):
+        extras = {name: {} for name in extras}
+    tree = {}
+    for key, value in default.items():
+        if isinstance(value, dict):
+            tree[key] = _field_tree(value, extras.get(key) or {})
+        else:
+            # ``None`` is the "scalar leaf" sentinel; ``{}`` means a free-form
+            # mapping (the schema declares the section, not its children).
+            tree[key] = None
+    for key, value in extras.items():
+        if isinstance(value, (set, frozenset)):
+            value = {name: {} for name in value}
+        if isinstance(value, dict):
+            tree[key] = _field_tree(tree.get(key) or {}, value)
+        else:
+            tree.setdefault(key, {})
+    return tree
+
+
+FIELD_TREE = _field_tree(DEFAULT, OPTIONAL_FIELDS)
 
 
 def require_int(value, name, minimum=1):
@@ -131,16 +228,173 @@ def validate(config):
 #: Sections that describe the EP environment rather than a suite scenario.  A
 #: suite configuration may not override them when it is merged into a benchmark
 #: plan, otherwise ``decode.yaml`` would silently drag EP8's model into EP64.
-ENVIRONMENT_SECTIONS = frozenset({
-    "schema_version", "extends", "matrix", "device", "distributed", "model",
-    "topology", "launch",
-})
+#: (Declared above, next to the field schema.)
 
-#: ``matrix`` entries are meant to vary a *scenario* (token count, dedup mode,
-#: planner phase).  When a plan composes them they may not smuggle the EP
-#: environment back in, with one deliberate exception: strong/weak scaling is
-#: defined in terms of the expert count, so ``model.num_experts`` stays legal.
-MATRIX_MODEL_OVERRIDES = frozenset({"num_experts"})
+
+def flatten_paths(value, prefix=""):
+    """Dotted paths of every leaf in a (nested) mapping."""
+    if not isinstance(value, dict):
+        yield prefix
+        return
+    for key, item in value.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        yield from flatten_paths(item, path)
+
+
+def field_errors(config):
+    """Unknown configuration fields, with the path that made them unknown.
+
+    A typo such as ``benchmark.quiet_modes`` vs ``quiet_mode`` used to be
+    ignored: the field was simply never read.  Now it fails validation and names
+    the field, so a configuration cannot describe a dimension that the executor
+    never sees.
+    """
+    errors = []
+
+    def walk(node, tree, prefix):
+        for key, value in node.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if str(key).startswith("_"):
+                continue
+            if prefix == "" and key not in TOP_LEVEL_FIELDS:
+                errors.append(f"unknown top-level field {key!r}")
+                continue
+            if key not in tree:
+                errors.append(f"unknown configuration field {path!r}")
+                continue
+            schema = tree[key]
+            if schema is None:
+                # A scalar leaf cannot grow children.
+                if isinstance(value, dict):
+                    errors.append(f"configuration field {path!r} must not have child keys")
+                continue
+            if not isinstance(value, dict):
+                if schema:
+                    errors.append(f"configuration field {path!r} must be a mapping")
+                continue
+            # An empty schema node is a free-form mapping: any child is allowed.
+            if schema:
+                walk(value, schema, path)
+
+    walk(config, FIELD_TREE, "")
+    return errors
+
+
+def validate_fields(config):
+    errors = field_errors(config)
+    if errors:
+        raise ValueError("invalid configuration: " + "; ".join(errors))
+    return config
+
+
+def _own_fields(raw):
+    """The fields one file declares itself (``extends``/``matrix`` excluded)."""
+    return {key: value for key, value in raw.items()
+            if key not in ("extends", "matrix")}
+
+
+def load_raw(path, ancestry=()):
+    """Read one configuration file without applying any schema default.
+
+    Returns ``(raw, provenance)``: the merged raw mapping (following ``extends``)
+    and a ``dotted path -> file name`` map naming the file that declared each
+    final value.  Nothing is validated here; validation happens once, after every
+    layer has been composed.
+    """
+    path = Path(path).resolve()
+    if path in ancestry:
+        raise ValueError(f"configuration inheritance cycle: {path}")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path.name}: configuration must be a YAML mapping")
+    if "plan" in raw:
+        raise ValueError(
+            f"{path.name} is a benchmark plan; load it with --plan instead of --config")
+    own = _own_fields(raw)
+    parent = raw.get("extends")
+    if parent:
+        parent_raw, parent_provenance = load_raw(path.parent / parent, (*ancestry, path))
+        merged = merge(parent_raw, own)
+        provenance = dict(parent_provenance)
+    else:
+        merged, provenance = merge({}, own), {}
+    provenance.update({field: path.name for field in flatten_paths(own)})
+    if merged.get("backends") is not None:
+        merged["operators"] = merged.pop("backends")
+        provenance.pop("backends", None)
+        provenance["operators"] = provenance.get("operators", path.name)
+    workload = merged.get("workload") or {}
+    if workload.get("routing") == "hot_expert":
+        workload["routing"] = "expert_hotspot"
+    if workload.get("trace_path"):
+        workload["trace_path"] = str((path.parent / workload["trace_path"]).resolve())
+        provenance["workload.trace_path"] = path.name
+    return merged, provenance
+
+
+def resolve_config(layers, schema_default=None):
+    """Compose layers (lowest first) into ``(effective, provenance)``.
+
+    ``layers`` is a sequence of ``(label, raw_mapping, provenance_mapping)``.
+    The schema defaults are the lowest layer, so an explicit value always wins
+    over a default; the returned provenance names ``schema_default`` for every
+    field no layer set.
+    """
+    default = deepcopy(DEFAULT if schema_default is None else schema_default)
+    provenance = {field: "schema_default" for field in flatten_paths(default)}
+    effective = default
+    for label, raw, layer_provenance in layers:
+        if not raw:
+            continue
+        effective = merge(effective, raw)
+        for field in flatten_paths(raw):
+            provenance[field] = (layer_provenance or {}).get(field, label)
+    return effective, provenance
+
+
+def provenance_record(config, provenance):
+    """The provenance a task/manifest carries: value + source per field."""
+    record = {}
+    for field in flatten_paths(config):
+        node = config
+        for part in field.split("."):
+            node = node[part]
+        if isinstance(node, dict):
+            continue
+        record[field] = {"value": node, "source": provenance.get(field, "unknown")}
+    return record
+
+
+def load_configs(path, ancestry=()):
+    """Load one standalone configuration and its ``matrix`` points.
+
+    Kept for ``--config`` runs: the file may declare a ``matrix`` list, and each
+    point is resolved as its own layer (highest priority).  The effective
+    configuration is validated exactly once, after the full composition.
+    """
+    path = Path(path).resolve()
+    raw, provenance = load_raw(path, ancestry)
+    raw_file = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    matrix = raw_file.get("matrix")
+    if matrix is None and "matrix" in raw:
+        matrix = raw["matrix"]
+    matrix = matrix or [{}]
+    if not isinstance(matrix, list) or not matrix or any(not isinstance(v, dict) for v in matrix):
+        raise ValueError("matrix must be a nonempty list of configuration overrides")
+    base_raw = {key: value for key, value in raw.items() if key != "matrix"}
+    base_provenance = {field: source for field, source in provenance.items()}
+    configs = []
+    for item in matrix:
+        layer_provenance = {field: f"{path.name} (matrix point)" for field in flatten_paths(item)}
+        config, point_provenance = resolve_config([
+            ("base_config", base_raw, base_provenance),
+            ("matrix_point", item, layer_provenance),
+        ])
+        validate(config)
+        validate_fields(config)
+        config["_provenance"] = provenance_record(config, point_provenance)
+        configs.append(config)
+    return configs
 
 
 def validate_l0(settings):
@@ -219,35 +473,73 @@ def load_configs(path, ancestry=()):
     return [validate(merge(merge(DEFAULT, raw), item)) for item in matrix]
 
 
-def suite_scenario(raw):
-    """Strip the EP environment from one suite configuration.
+def suite_scenario(raw, name=None):
+    """Return the scenario sections of one suite configuration, strictly.
 
-    A suite file is written as a complete configuration (``extends: ep8_bf16.yaml``)
-    so it can still be used with ``--config``.  A benchmark plan only takes its
-    scenario sections; EP size, TP size, device, model shape, rank mapping and
-    launch environment stay owned by the EP size configuration.
+    A suite file describes *when* a case runs, never *where*: EP size, device,
+    model shape, rank mapping and launch environment belong to the environment
+    layer.  Declaring one here is an error with the field name and the file, not a
+    silent deletion -- a dropped field means the file says one thing and the run
+    does another.  ``model.num_experts`` is the one exception: strong/weak scaling
+    are *defined* in terms of the expert count.
     """
-    return {key: deepcopy(value) for key, value in raw.items()
-            if key not in ENVIRONMENT_SECTIONS}
+    label = name or "suite configuration"
+    errors = []
+    for key, value in raw.items():
+        if key == "model":
+            errors.extend(f"model.{name}" for name in
+                          sorted(set(value or {}) - MATRIX_MODEL_OVERRIDES))
+        elif key in ENVIRONMENT_SECTIONS and key not in ("extends", "matrix", "schema_version"):
+            errors.append(key)
+    if errors:
+        raise ValueError(
+            f"{label} declares environment field(s) {errors}; a suite selects a scenario "
+            f"only (EP size, device, model, topology and launch live in the EP environment "
+            f"configuration, and model.num_experts is reserved for the scaling definition)")
+    scenario = {key: deepcopy(value) for key, value in raw.items()
+                if key not in ENVIRONMENT_SECTIONS}
+    if raw.get("model"):
+        # Only the scaling definition survives; the shape stays with the environment.
+        scenario["model"] = {key: deepcopy(value) for key, value in raw["model"].items()
+                             if key in MATRIX_MODEL_OVERRIDES}
+    return scenario
 
 
-def matrix_overlay(item):
-    """Sanitise one ``matrix`` entry before it is merged into a plan point.
+def matrix_overlay(item, name=None):
+    """Validate and sanitise one ``matrix`` entry.
 
-    ``matrix`` entries vary a scenario, not an environment.  ``distributed`` is
-    read only to route the entry to one EP size (see
-    :func:`load_suite_overlays`); ``device``, ``topology`` and ``launch`` are
-    dropped, and ``model`` keeps nothing but the expert count that strong/weak
-    scaling is defined by.
+    A ``matrix`` point varies a scenario (token count, dedup mode, planner phase).
+    ``distributed.ep_size`` is accepted because it *routes* a scaling point to an
+    EP size, and ``model.num_experts`` is accepted because strong/weak scaling are
+    defined in terms of it.  Every other environment field is an error.
     """
+    label = name or "matrix point"
+    errors = []
+    for key, value in item.items():
+        if key == "distributed":
+            extra = sorted(set(value or {}) - {"ep_size"})
+            if extra:
+                errors.append(f"distributed.{extra[0]}")
+        elif key == "model":
+            extra = sorted(set(value or {}) - MATRIX_MODEL_OVERRIDES)
+            if extra:
+                errors.append(f"model.{extra[0]}")
+        elif key in ENVIRONMENT_SECTIONS:
+            errors.append(key)
+    if errors:
+        raise ValueError(
+            f"{label} varies the environment ({', '.join(errors)}); a matrix point may only "
+            f"vary a scenario (distributed.ep_size is a selector, model.num_experts is the "
+            f"scaling definition)")
     clean = {}
     for key, value in item.items():
-        if key == "model" and isinstance(value, dict):
-            value = {name: deepcopy(setting) for name, setting in value.items()
-                     if name in MATRIX_MODEL_OVERRIDES}
-            if not value:
-                continue
-        elif key in ENVIRONMENT_SECTIONS:
+        if key == "model":
+            keep = {name: deepcopy(setting) for name, setting in (value or {}).items()
+                    if name in MATRIX_MODEL_OVERRIDES}
+            if keep:
+                clean["model"] = keep
+            continue
+        if key in ENVIRONMENT_SECTIONS:
             continue
         if key == "backends":
             key = "operators"
@@ -256,35 +548,36 @@ def matrix_overlay(item):
 
 
 def load_suite_overlays(path, ep_size=None):
-    """Return the suite-scoped layers declared by one configuration file.
+    """Return ``(overlay, provenance)`` layers declared by one suite configuration.
 
-    Only the *scenario* sections survive: EP size, device, model and topology
-    belong to the EP size configuration and are never taken from a suite file,
-    not even through a ``matrix`` entry.  A ``matrix`` list is expanded into one
-    layer per point, and scaling matrices are filtered to the requested EP size
-    (``distributed.ep_size`` is a selector here, not an override).
+    Only the scenario sections survive (strictly: see :func:`suite_scenario`).  A
+    ``matrix`` list becomes one layer per point, filtered to the requested EP size;
+    the provenance names the suite file and, for a matrix point, the point itself.
     """
     path = Path(path).resolve()
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
-        raise ValueError("configuration must be a YAML mapping")
+        raise ValueError(f"{path.name}: configuration must be a YAML mapping")
     if "plan" in raw:
         raise ValueError(
             f"{path.name} is a benchmark plan; register it as a suite with --plan, not as a "
             "suite_configs entry")
-    raw.pop("extends", None)
-    matrix = raw.pop("matrix", [{}]) or [{}]
+    matrix = raw.get("matrix") or [{}]
     if not isinstance(matrix, list) or any(not isinstance(item, dict) for item in matrix):
-        raise ValueError("matrix must be a list of configuration overrides")
-    base = suite_scenario(raw)
-    if "backends" in base:
-        base["operators"] = base.pop("backends")
-    if base.get("workload", {}).get("routing") == "hot_expert":
-        base["workload"]["routing"] = "expert_hotspot"
+        raise ValueError(f"{path.name}: matrix must be a list of configuration overrides")
+    base = suite_scenario(_own_fields(raw), path.name)
+    workload = base.get("workload") or {}
+    if workload.get("routing") == "hot_expert":
+        workload["routing"] = "expert_hotspot"
+    base_provenance = {field: path.name for field in flatten_paths(base)}
     points = []
-    for item in matrix:
+    for index, item in enumerate(matrix):
         declared = (item.get("distributed") or {}).get("ep_size")
         if declared is not None and ep_size is not None and declared != ep_size:
             continue
-        points.append(merge(base, matrix_overlay(item)))
-    return points or [base]
+        overlay = matrix_overlay(item, f"{path.name} matrix[{index}]")
+        provenance = dict(base_provenance)
+        provenance.update({field: f"{path.name} matrix[{index}]"
+                           for field in flatten_paths(overlay)})
+        points.append((merge(base, overlay), provenance))
+    return points or [(base, base_provenance)]

@@ -44,18 +44,33 @@ def select(records, policy):
                  "operator": record.get("backend_id"), "level": record.get("benchmark_level"),
                  "ep_size": record.get("ep_size")} for record in passing]
     selected, seen = [], set()
+    # Every EP size gets a trace before the budget is spent on more points of one
+    # size: with five sizes in the matrix a plain (size, level, operator) sweep
+    # would exhaust the cap inside the first three sizes.
+    for size in sorted({record.get("ep_size") for record in passing}, key=lambda item: item or 0):
+        for record in passing:
+            if record.get("ep_size") != size:
+                continue
+            seen.add((record.get("ep_size"), record.get("benchmark_level"),
+                      record.get("backend_id")))
+            selected.append(_selection(record))
+            break
     for record in passing:
         key = (record.get("ep_size"), record.get("benchmark_level"), record.get("backend_id"))
         if key in seen:
             continue
         seen.add(key)
-        selected.append({"task_id": record["task_id"], "case_id": record.get("case_id"),
-                         "operator": record.get("backend_id"),
-                         "level": record.get("benchmark_level"),
-                         "ep_size": record.get("ep_size")})
+        selected.append(_selection(record))
         if len(selected) >= MAX_REPRESENTATIVE:
             break
-    return selected
+    return selected[:max(MAX_REPRESENTATIVE, len({item["ep_size"] for item in selected}))]
+
+
+def _selection(record):
+    return {"task_id": record["task_id"], "case_id": record.get("case_id"),
+            "operator": record.get("backend_id"),
+            "level": record.get("benchmark_level"),
+            "ep_size": record.get("ep_size")}
 
 
 def _profile_argv(ctx, selected, records, policy):

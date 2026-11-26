@@ -1,11 +1,13 @@
-# EP64 environment profile: only EP-specific parameters live here.
+# EP64 environment profile: unified baseline, three experts per rank
+# (192 global experts).  The historical 384-expert profile is
+# ep64_bf16_384.yaml and is reported separately.
 extends: base_benchmark.yaml
 distributed:
   ep_size: 64
   tp_size: 1
 
 model:
-  num_experts: 384
+  num_experts: 192
   top_k: 6
 
 workload:

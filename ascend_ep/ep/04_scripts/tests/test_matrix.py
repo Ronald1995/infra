@@ -88,15 +88,17 @@ def test_catalog_is_the_single_source_of_truth():
 def test_every_ep_size_covers_the_same_complete_catalog(plan):
     run = expand_plan(plan)
     canonical = set(canonical_cases())
-    assert len(run.coverage) == len(plan.ep_sizes) == 3
+    assert len(run.coverage) == len(plan.ep_sizes) == 5
     for size in plan.ep_sizes:
         assert set(run.coverage[size]) == canonical
     assert len({frozenset(items) for items in run.coverage.values()}) == 1
 
 
 def test_missing_ep_configuration_is_reported(plan):
-    with pytest.raises(ValueError, match="EP16"):
-        expand_plan(plan, ep_sizes=[16])
+    # EP256 has no environment file next to the plan; the error must name it
+    # instead of silently falling back to another size.
+    with pytest.raises(ValueError, match="EP256"):
+        expand_plan(plan, ep_sizes=[256])
 
 
 def test_manifest_metadata_records_the_matrix(plan):
@@ -124,7 +126,8 @@ def test_multi_yaml_layering_keeps_defaults_and_overrides_scalars(plan):
     config = run.points[0].config
     # EP layer: environment comes from ep64, not from the decode suite file.
     assert config["distributed"]["ep_size"] == 64
-    assert config["model"]["num_experts"] == 384
+    # Unified baseline: three experts per rank (EP64 -> 192 global experts).
+    assert config["model"]["num_experts"] == 192
     # Suite layer: workload comes from decode.yaml.
     assert config["workload"]["tokens_per_rank"] == 16
     # Base layer: shared benchmark dimensions survive the composition.
@@ -774,18 +777,33 @@ def test_suite_overlay_cannot_override_ep_environment(tmp_path):
         "    topology: {server_ids: [9, 9, 9, 9, 9, 9, 9, 9]}",
         "    workload: {tokens_per_rank: 32}",
     ]), encoding="utf-8")
-    run = expand_plan(load_plan(_mini_plan(tmp_path, "overlay", "  topology: {server_size: 8, supernode_size: 16}", suite)))
+    # A suite that declares the environment is a configuration error that names
+    # every offending field; it is never silently stripped (the old behaviour made
+    # the file say one thing and the run do another).
+    with pytest.raises(ValueError) as caught:
+        expand_plan(load_plan(_mini_plan(
+            tmp_path, "overlay", "  topology: {server_size: 8, supernode_size: 16}", suite)))
+    message = str(caught.value)
+    for field in ("device", "distributed", "model.dtype", "topology"):
+        assert field in message, (field, message)
+    # A suite that only declares a scenario still composes with the EP environment.
+    suite.write_text("\n".join([
+        "extends: ep8_bf16.yaml",
+        "suite_id: decode",
+        "workload: {tokens_per_rank: 16}",
+    ]), encoding="utf-8")
+    run = expand_plan(load_plan(_mini_plan(
+        tmp_path, "overlay", "  topology: {server_size: 8, supernode_size: 16}", suite)))
     config = run.points[0].config
-    # EP environment wins over every suite/matrix declaration.
     assert config["distributed"]["ep_size"] == 8
     assert config["distributed"]["tp_size"] == 1
     assert config["device"] == "npu"
     assert config["model"]["hidden_size"] == 7168
     assert config["model"]["dtype"] == "bfloat16"
     assert config["topology"]["server_ids"] == [0] * 8
-    # Scenario values still come from the suite, including the scaling expert count.
-    assert config["workload"]["tokens_per_rank"] == 32
-    assert config["model"]["num_experts"] == 32
+    # Scenario values still come from the suite.
+    assert config["workload"]["tokens_per_rank"] == 16
+    assert config["model"]["num_experts"] == 24
 
 
 def test_scaling_overlay_preserves_num_experts(plan, full_matrix):

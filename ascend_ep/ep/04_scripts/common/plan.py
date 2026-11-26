@@ -19,13 +19,16 @@ from pathlib import Path
 
 import yaml
 
+from common import config_audit
 from common.cases import alias_map, case_counts, catalog
-from common.config import LEVELS, load_configs, load_suite_overlays, merge, validate
+from common.config import (LEVELS, load_raw, load_suite_overlays, merge, provenance_record,
+                           resolve_config, validate)
 from common.registry import ROOT
 from common.scheduler import (ALIAS_MODES, case_index, check_completeness, make_plan,
                               merge_tasks)
 from common.storage import fingerprint
-from common.suites import apply_scaling, normalize, select
+from common.suites import apply_scaling, normalize, select, workload_policy
+from common.variants import case_dimension_records
 
 PLAN_SCHEMA_VERSION = 1
 #: ``catalog``     every canonical case once, under the base configuration.  This
@@ -68,11 +71,19 @@ class PlanPoint:
     config: dict
     sources: tuple[str, ...]
     notes: tuple[str, ...] = ()
+    #: ``dotted field -> {value, source}`` for every leaf of the effective
+    #: configuration.  The plan writes it next to the manifest, so "why did this
+    #: task have cores=[2]?" is answerable without re-reading every YAML file.
+    provenance: dict = field(default_factory=dict)
 
     @property
     def fingerprint(self):
         effective = {key: value for key, value in self.config.items() if key != "suite_id"}
         return fingerprint(effective)
+
+    @property
+    def provenance_fingerprint(self):
+        return fingerprint(self.provenance)
 
 
 @dataclass
@@ -336,40 +347,76 @@ def _adapt_router_bias(config):
 
 
 def plan_points(plan, ep_sizes=None, suites=None, levels=None):
-    """Expand a plan into configuration points (no capability checks yet)."""
+    """Expand a plan into configuration points (no capability checks yet).
+
+    Every layer is read *raw* and composed by :func:`common.config.resolve_config`,
+    which also returns the field provenance.  Defaults are therefore applied once,
+    after the whole stack is composed: an EP environment that omits a field can no
+    longer inject its implicit default over an explicit base value.
+    """
     ep_sizes = list(ep_sizes or plan.ep_sizes)
     suites = list(suites or plan.suites)
     if isinstance(suites, str):
         suites = [suites]
     suites = [normalize(item) for item in suites]
-    base = load_configs(plan.base_config)[0] if plan.base_config else None
+    base_layer = None
+    if plan.base_config:
+        base_raw, base_provenance = load_raw(plan.base_config)
+        base_layer = ("base_config", base_raw, base_provenance)
     points = []
     for ep_size in ep_sizes:
-        environment = load_configs(plan.ep_config(ep_size))[0]
-        environment = merge(base, environment) if base else deepcopy(environment)
+        environment_raw, environment_provenance = load_raw(plan.ep_config(ep_size))
         for suite_id in suites:
             overlay_path = plan.suite_configs.get(suite_id)
-            overlays = load_suite_overlays(overlay_path, ep_size) if overlay_path else [{}]
-            for overlay in overlays:
-                config = merge(environment, overlay)
+            overlays = (load_suite_overlays(overlay_path, ep_size) if overlay_path
+                        else [({}, {})])
+            for overlay, overlay_provenance in overlays:
+                layers = [layer for layer in (base_layer,) if layer is not None]
+                layers.append(("environment", environment_raw, environment_provenance))
+                layers.append(("suite", overlay, overlay_provenance))
+                config, provenance = resolve_config(layers)
                 config["suite_id"] = suite_id
                 config = _apply_topology(plan, config, ep_size)
+                provenance.update({f"topology.{key}": _topology_source(config, plan)
+                                   for key in (config.get("topology") or {})})
                 config, note = _adapt_router_bias(config)
                 config = apply_scaling(suite_id, config, ep_size)
+                if workload_policy(suite_id):
+                    provenance["workload.tokens_per_rank"] = (
+                        f"suite:{suite_id} scaling ({workload_policy(suite_id)})")
+                    provenance["model.num_experts"] = (
+                        f"suite:{suite_id} scaling ({workload_policy(suite_id)})")
                 # The plan decides the level scope; an environment or suite file
                 # must not narrow it back to one EP size or one level.
-                config["benchmark"]["levels"] = list(levels) if levels else config["benchmark"]["levels"]
-                config = validate(config)
+                if levels:
+                    config["benchmark"]["levels"] = list(levels)
+                    provenance["benchmark.levels"] = "plan"
+                validate(config)
                 sources = [plan.path]
                 if plan.base_config:
                     sources.append(plan.base_config)
                 sources.append(plan.ep_config(ep_size))
                 if overlay_path:
                     sources.append(overlay_path)
-                points.append(PlanPoint(ep_size, suite_id, config,
-                                        tuple(dict.fromkeys(str(item) for item in sources)),
-                                        (note,) if note else ()))
+                points.append(PlanPoint(
+                    ep_size, suite_id, config,
+                    tuple(dict.fromkeys(str(item) for item in sources)),
+                    (note,) if note else (),
+                    provenance_record(config, provenance)))
     return points
+
+
+def _topology_source(config, plan):
+    """Name where one EP point's topology came from."""
+    topology = config.get("topology") or {}
+    source = topology.get("source") or "unavailable"
+    if source == "environment":
+        return "environment"
+    if source == "explicit":
+        return "plan (explicit rank map)"
+    if source == "plan":
+        return "plan pattern (synthetic, unverified)"
+    return source
 
 
 def expected_cases(plan, suites=None, levels=None, cases=None):
@@ -415,7 +462,12 @@ class PlanRun:
                  "notes": list(point.notes),
                  "topology": _topology_record(point.config),
                  "task_count": suite_tasks.get(f"EP{point.ep_size}/{point.suite}", 0),
-                 "fingerprint": point.fingerprint}
+                 "fingerprint": point.fingerprint,
+                 "provenance_id": point.provenance_fingerprint,
+                 "dimensions": case_dimension_records(
+                     [case for case in catalog().values() if case.level == "L0"],
+                     point.config["benchmark"], point.ep_size),
+                 "config_provenance": point.provenance}
                 for point in self.points
             ],
             "catalog": {
@@ -428,6 +480,12 @@ class PlanRun:
             "expected_cases": sorted(self.expected),
             "coverage": {str(ep): list(items) for ep, items in sorted(self.coverage.items())},
             "case_index": case_index(self.tasks),
+            "config_audit": config_audit.audit(
+                self.tasks, [point.config for point in self.points],
+                {f"EP{point.ep_size}/{point.suite}": case_dimension_records(
+                    [case for case in catalog().values() if case.level == "L0"],
+                    point.config["benchmark"], point.ep_size)
+                 for point in self.points}),
         })
         return data
 

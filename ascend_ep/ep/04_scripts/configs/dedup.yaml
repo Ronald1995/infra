@@ -1,27 +1,16 @@
 suite_id: dedup
-distributed:
-  ep_size: 16
-  tp_size: 1
-
-model:
-  hidden_size: 7168
-  intermediate_size: 3072
-  num_experts: 32
-  top_k: 6
-  dtype: bfloat16
-
 workload:
   tokens_per_rank: 4096
+  # dedup_controlled routes every token to the next rank, which is a remote
+  # peer at every EP size; the remote-rank *logit bias* is a router-level
+  # lever that needs an explicit rank-to-server map, so it is not declared
+  # here (the plan supplies the topology; a standalone run uses EP8).
   routing: dedup_controlled
-  router_bias: remote_rank
   seed: 42
 
 load_balance:
   enabled: false
   redundant_experts: 0
-
-topology:
-  server_ids: [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]
 
 benchmark:
   warmup: 20

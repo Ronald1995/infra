@@ -1,0 +1,29 @@
+# EP64 historical profile: 384 global experts (six per rank).
+# Kept for regression against the pre-unification results; it is a *different
+# model profile* and must never be plotted on the same scaling curve as the
+# three-experts-per-rank baseline (ep64_bf16.yaml).
+extends: base_benchmark.yaml
+distributed:
+  ep_size: 64
+  tp_size: 1
+
+model:
+  num_experts: 384
+  top_k: 6
+
+workload:
+  tokens_per_rank: 4096
+  routing: balanced
+  seed: 42
+
+profiling:
+  enabled: true
+  warmup: 1
+  active: 3
+
+backends:
+  - alltoall_hccl
+  - deepep_ascend
+  - moonep
+  - alltoallv_gmm_cann
+  - megamoe_lueelu

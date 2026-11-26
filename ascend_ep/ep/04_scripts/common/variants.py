@@ -42,6 +42,125 @@ SIZE_WINDOWS = {
 
 COMPUTE_SHAPE_MODES = ("fixed", "workload")
 
+#: Which transport mechanisms actually expose the ``cores`` and ``quiet_mode``
+#: controls, and to which variants.  This is a *runtime* fact, not a preference:
+#:
+#: * ``shmem_udma``: ``baselines/l0/shmem/udma.py`` passes ``cores`` as the QP
+#:   count and ``quiet_mode`` into ``ep_l0_udma_submit``, and records both in the
+#:   validation evidence.  Its ``host`` variant has no QP/quiet control at all
+#:   (``aclshmemx_putmem_on_stream``), so those values are fixed there.
+#: * every other mechanism: the native transport bridge has no core-count or
+#:   async-submit control in its ABI (``l0_session_open``/``channels``/
+#:   ``transfer``/``thread_alloc``), and ``l0_session_quiet`` is a drain fence,
+#:   not a submit mode.  Declaring a sweep there would create tasks whose
+#:   parameter the runtime never reads, so the dimension is ``not_applicable``
+#:   with that reason instead of silently running the last configured value.
+MECHANISM_DIMENSIONS = {
+    "shmem_udma": {"cores": "sweep", "quiet_mode": "sweep",
+                   "variants": {"device": "sweep", "host": "fixed"}},
+    "shmem_mte": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+    "ub_memory": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+    "urma": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+    "ub_ctp": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+    "ub_rtp": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+    "hccs": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+    "roce": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+    "uboe": {"cores": "not_applicable", "quiet_mode": "not_applicable"},
+}
+
+#: Human labels for the reason strings.
+DIMENSION_LABELS = {"cores": "core-count", "quiet_mode": "async-submit (quiet) mode"}
+
+#: Where each swept dimension is consumed at runtime.  The plan audit checks that
+#: the file exists and mentions the parameter, so a "swept" dimension always has a
+#: consumer instead of only a config entry.
+DIMENSION_CONSUMERS = {
+    "message_bytes": ("baselines/l0/transport/dataplane.py", "message"),
+    "outstanding": ("baselines/l0/transport/dataplane.py", "outstanding"),
+    "peer_count": ("baselines/l0/transport/channel.py", "peer"),
+    "cores": ("baselines/l0/shmem/udma.py", "cores"),
+    "quiet_mode": ("baselines/l0/shmem/udma.py", "quiet_mode"),
+}
+
+
+def case_dimensions(case, settings, ep_size=None, variant=None):
+    """Per-dimension applicability for one transport case.
+
+    Returns ``{dimension: {"type": "sweep"|"fixed"|"not_applicable", "values":
+    [...], "value": x, "reason": "..."}}``.  Only ``sweep`` dimensions multiply
+    the task matrix; ``not_applicable`` is a declared decision with a reason, so a
+    plan can report *why* a dimension has no coverage instead of pretending it ran.
+    """
+    from common.case_spec import l0_family
+
+    dimensions = {}
+    if l0_family(case) != "transport":
+        return dimensions
+    mechanism = transport_mechanism(case)
+    dimensions["message_bytes"] = {
+        "type": "sweep", "values": message_sizes(case, settings),
+        "consumer": _consumer("message_bytes")}
+    if case.sweeps("outstanding"):
+        dimensions["outstanding"] = {
+            "type": "sweep", "values": [int(value) for value in
+                                        settings.get("outstanding") or [1]],
+            "consumer": _consumer("outstanding")}
+    else:
+        dimensions["outstanding"] = {"type": "fixed", "value": 1,
+                                     "reason": "this case measures one in-flight transfer"}
+    if case.sweeps("peer_count"):
+        counts, reasons = [], []
+        for count, reason in peer_counts(case, settings, ep_size or 1):
+            if reason:
+                reasons.append(reason)
+            else:
+                counts.append(count)
+        dimensions["peer_count"] = {
+            "type": "sweep", "values": counts or [0],
+            "consumer": _consumer("peer_count"),
+            "invalid": reasons}
+    else:
+        dimensions["peer_count"] = {"type": "fixed", "value": 0,
+                                    "reason": "this case uses the whole EP group as peers"}
+    support = MECHANISM_DIMENSIONS.get(mechanism) or {}
+    variant_support = support.get("variants") or {}
+    for name, configured in (("cores", settings.get("cores") or [1]),
+                             ("quiet_mode", settings.get("quiet_modes") or [0])):
+        kind = support.get(name, "not_applicable")
+        if kind == "sweep" and variant is not None:
+            kind = variant_support.get(variant, kind)
+        if kind == "sweep":
+            dimensions[name] = {"type": "sweep",
+                                "values": [int(value) for value in configured],
+                                "consumer": _consumer(name)}
+        elif kind == "fixed":
+            dimensions[name] = {
+                "type": "fixed", "value": 1 if name == "cores" else 0,
+                "reason": (f"{mechanism} {variant or ''} variant has no "
+                           f"{DIMENSION_LABELS[name]} control; the value is fixed by the API")
+                           .replace("  ", " ")}
+        else:
+            dimensions[name] = {
+                "type": "not_applicable",
+                "reason": (f"{mechanism} does not expose any {DIMENSION_LABELS[name]} control; "
+                           f"the dimension cannot be swept without changing the runtime")}
+    return dimensions
+
+
+def _consumer(name):
+    path, token = DIMENSION_CONSUMERS[name]
+    return {"path": path, "token": token}
+
+
+def dimension_values(dimensions, name):
+    """The values a dimension contributes, or the single fixed value."""
+    record = dimensions.get(name) or {}
+    if record.get("type") == "sweep":
+        return list(record.get("values") or [])
+    if record.get("type") == "fixed":
+        return [record.get("value")]
+    return []
+
 
 def variants_for(case):
     """Named variants for ``case``; ``("default",)`` when it has none."""
@@ -176,23 +295,35 @@ def _transport_sets(case, settings, size, variant, ep_size):
     transport = settings.get("transport") or {}
     base = {"variant": variant, "message_bytes": size}
     mode = settings.get("transport_mode", "write")
-    outstanding = [int(value) for value in settings.get("outstanding") or [1]]
+    dimensions = case_dimensions(case, settings, ep_size, variant)
+    outstanding = dimension_values(dimensions, "outstanding") or [1]
+    cores = dimension_values(dimensions, "cores")
+    quiet_modes = dimension_values(dimensions, "quiet_mode")
     if static.get("backend") == "shmem":
         # The SHMEM engines exchange with the whole group; peer selection does not
-        # change what they submit, so it is not multiplied into more tasks.
-        return [{**base, **static, "outstanding": count, "peer_count": 0,
-                 "peer_policy": "group",
-                 "cores": (settings.get("cores") or [1])[-1],
-                 "quiet_mode": (settings.get("quiet_modes") or [0])[-1],
-                 "mode": mode}
-                for count in outstanding]
+        # change what they submit, so it is not multiplied into more tasks.  The
+        # core count and the quiet mode *do* change the submission (QP count and
+        # the async-submit flag), so every applicable combination becomes its own
+        # task; a variant without those controls keeps exactly one fixed value.
+        sets = []
+        for count in outstanding:
+            for core in cores or [1]:
+                for quiet in quiet_modes or [0]:
+                    sets.append({**base, **static, "outstanding": count, "peer_count": 0,
+                                 "peer_policy": "group", "cores": core,
+                                 "quiet_mode": quiet, "mode": mode})
+        return sets
     policies = transport.get("peer_policies") or [
         transport.get("peer_policy") or select_peers_rotation()]
-    return [{**base, **static, "outstanding": count, "peer_count": peers,
+    # A peer count that EP cannot satisfy stays in the matrix as an explicit
+    # record (the structural check marks it unsupported); filtering it out here
+    # would make the test scope shrink with the EP size.
+    peers = [value for value, _problem in peer_counts(case, settings, ep_size)]
+    return [{**base, **static, "outstanding": count, "peer_count": peer,
              "peer_policy": policy, "mode": mode}
             for policy in policies
             for count in outstanding
-            for peers, _ in peer_counts(case, settings, ep_size)]
+            for peer in peers]
 
 
 def _execution_sets(case, settings, size, variant):
@@ -357,3 +488,22 @@ def task_parameters(case, backend_id, settings, ep_size):
 def size_window_names():
     """The declared window names, for documentation and schema checks."""
     return tuple(_SPEC_WINDOWS)
+
+def case_dimension_records(cases, settings, ep_size=None):
+    """Per-variant dimension declarations for the transport cases of one point.
+
+    Written into the plan metadata, so a reader can see that ``cores=4`` became a
+    task for LINK-013 and that it is ``not_applicable`` for LINK-001 *before*
+    looking at a single result.
+    """
+    from common.case_spec import l0_family
+
+    records = {}
+    for case in cases:
+        if l0_family(case) != "transport":
+            continue
+        variants = case.variants or ("default",)
+        records[case.id] = {
+            variant: case_dimensions(case, settings, ep_size, variant)
+            for variant in variants}
+    return records
