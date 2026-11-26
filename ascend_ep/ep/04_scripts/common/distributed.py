@@ -5,6 +5,7 @@ import os
 import socket
 from contextlib import contextmanager
 
+from common import topology as topology_module
 from common.backend import BenchmarkUnavailable
 
 
@@ -35,6 +36,10 @@ class ExecutionContext:
         objects = [None] * self.size
         self.dist.all_gather_object(objects, value, group=self.metadata_group)
         return objects
+
+    def discovered_topology(self):
+        """The topology this context is actually running on, when it was observed."""
+        return dict(self.config.get("topology") or {})
 
     def mapping(self):
         visibility = os.getenv("ASCEND_RT_VISIBLE_DEVICES", "").split(",")
@@ -84,6 +89,12 @@ def open_context(config):
             dist.init_process_group("hccl" if device_type == "npu" else "gloo",
                                     timeout=timedelta(seconds=d["timeout_seconds"]), **rendezvous)
         group = dist.group.WORLD if dist.is_initialized() else None
+        # A real host map beats an assumed one: the workers just reported where they are.
+        hosts = topology_module.gather_hosts(dist, size, group)
+        discovered = topology_module.apply_discovered_topology(config, hosts)
+        if discovered is not config:
+            config.clear()
+            config.update(discovered)
         yield ExecutionContext(config, torch, dist, device, rank, size, local_rank,
                                group, None, group)
     finally:

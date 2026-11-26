@@ -242,7 +242,7 @@ Topology provenance uses exactly five states, normalised on read:
 
 | State | Meaning |
 |---|---|
-| `discovered` | read from the running deployment (runtime probe) |
+| `discovered` | read from the running deployment (rank host names gathered at start) |
 | `user_provided` | an explicit rank map in the environment or the plan |
 | `inferred` | derived from a declared grouping rule |
 | `synthetic` | the plan's `server_size`/`supernode_size` pattern (never verified) |
@@ -251,6 +251,14 @@ Topology provenance uses exactly five states, normalised on read:
 Legacy strings (`environment`, `explicit`, `plan`, `unavailable`) are mapped onto the
 five states, and an unrecognised value becomes `unknown` -- a claim of "verified" is
 never invented.
+
+`discovered` has a real producer: `common/topology.py` gathers every rank's host name
+from the process group when the runtime starts. An observed map replaces a
+`synthetic`/`inferred`/`unknown` one (the measurement should use the layout it actually
+ran on), while a `user_provided` map always wins because the deployment knows the
+physical layout the workers cannot see. Incomplete or invalid host lists change
+nothing, and a single host is recorded as a one-server discovery rather than as "no
+topology".
 
 ## 5.9 One transport registry, and the long-tail chart
 
