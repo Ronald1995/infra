@@ -1,180 +1,167 @@
 ---
 name: ep-benchmark
-description: Run, validate, profile and analyze distributed Ascend expert-parallel benchmarks.
+description: Use this skill whenever the user asks to run, execute, benchmark, test, profile, compare, resume, or analyze Ascend EP/MoE communication operators. Interpret natural-language benchmark requirements, automatically prepare the environment, resolve installable dependencies, inspect hardware capabilities, build available kernels, generate and validate the test matrix, execute benchmarks, recover interrupted runs, analyze performance, and deliver verified reports.
 ---
 
-# EP Benchmark: operating procedure
+# EP Benchmark: autonomous benchmark agent
 
-Ten steps, in order. Each step has a command and an acceptance gate; do not start the next
-step until the gate passes, and never report a result that a gate did not produce.
+This skill turns one instruction into a complete, auditable benchmark workflow:
 
-Two rules apply to every step:
+> 在 Ascend 950 上运行完整 EP Benchmark，EP8、EP64、EP128，覆盖 L0-L4 和所有算子。
+> 如果缺少依赖，尝试安装；如果需要编译 Kernel，尝试编译。完成后进行性能分析和
+> Profiling，生成完整报告。
 
-1. **Nothing is silently skipped.** A dependency that is missing leaves its task in the
-   manifest with a recorded status (`dependency_missing`, `environment_unavailable`,
-   `not_implemented`, `source_unavailable`). A task that disappears is a bug, not a saving.
-2. **Nothing is "verified" without evidence.** CPU runs validate framework behaviour only.
-   Every NPU-dependent claim needs a record from an Ascend run; until then the item belongs
-   to `docs/blocked.md`.
+The user never edits a YAML file and never needs to know which phase runs which command.
+You interpret the request, hand it to the workflow orchestrator, and report the result.
 
-Scope references: `operators/registry.yaml` (what each adapter claims),
-`docs/benchmark_matrix.md` (matrix design), `docs/blocked.md` (what is not done).
+**Hard rule: this file does not implement a benchmark.** Every phase calls an existing
+command (`run_benchmark.py`, `scripts/doctor.py`, `scripts/install_deps.sh`,
+`kernels/asc_comm/build.sh`). Never re-implement the scheduler, the runner, the timer or the
+case catalog to make the workflow simpler.
 
-## 1. Environment doctor
+## 1. When this skill applies
 
-```sh
-python run_benchmark.py doctor --profile all
-python run_benchmark.py doctor --profile npu --json > doctor.json
-python scripts/doctor.py --profile cpu          # focused view, same records
-```
+Trigger on any request to run, benchmark, test, measure, profile, compare, resume, analyze
+or report an Ascend EP / MoE / dispatch / combine / GMM / AllToAll benchmark. Also trigger
+on requests that only ask about feasibility ("can this machine run EP64?"), coverage,
+dependencies or timing estimates. Do **not** trigger for a code change to the benchmark
+itself.
 
-Gate: exit code 0, no `fail` row, and every `warn` carries an action you have decided to
-accept. Read the per-family matrix, not just the counts: `l0_transport`, `l0_collectives`,
-`profiling` and `multinode` must be `available` before the corresponding steps mean anything.
+## 2. Turn the instruction into a request
 
-## 2. Dependency installation
+Write a `request.json` (schema: `scripts/workflow/request.schema.json`) or let the
+interpreter do it:
 
 ```sh
-bash scripts/install_deps.sh --profile npu --dry-run     # print, do not run
-bash scripts/install_deps.sh --profile communication
-bash scripts/install_deps.sh --profile all --wheelhouse /data/wheels
-bash scripts/install_deps.sh --check-only --profile all  # verify, install nothing
+python scripts/benchmark_workflow.py interpret "<the user's sentence>" --out request.json
 ```
 
-Profiles: `cpu`, `npu`, `communication`, `profiling`, `multinode`, `all`
-(`dependencies/manifest.yaml` categories A-E). The installer never installs the driver, the
-firmware, the device nodes or CANN itself; it prints the exact manual step for each
-(`manual_step`, `host_provided`).
+| The user says | intent | what changes |
+|---|---|---|
+| 完整 / 全部 / full Benchmark | `full_benchmark` | nothing narrowed; the plan's scope |
+| 只跑 EP64 的 L1、L2 | `partial_benchmark` | only `scope.ep_sizes` / `scope.levels` |
+| 冒烟 / smoke / 快速验证 | `smoke_test` | small scope; CPU hosts use `configs/smoke_cpu.yaml` |
+| 估算…不要执行 | `estimate` | stops after `resource_estimation` |
+| 只生成计划 | `plan_only` | stops after `resource_estimation` |
+| 继续上次没跑完的 | `resume` | resumes the latest unfinished workflow |
+| 执行 Profiling | `profile` | profiling + analysis + report of an existing run |
+| 分析已有结果 / 只生成报告 | `analyze` / `report` | only the downstream phases |
+| 检查环境 | `environment_check` | doctor + dependencies + capability only |
 
-Gate: the script ends by running `scripts/doctor.py`; exit 0 means the profile is proven.
-A `BLOCKED:` line is a non-zero exit, never a warning to ignore.
+Rules for scope:
 
-## 3. Runtime capability probe
+* **Defaults come from the plan**, not from this document. EP sizes, levels and suites are
+  read from `configs/benchmark_plan.yaml` (EP8/64/128, L0-L4, all suites) unless the user
+  names others.
+* An explicit value overrides **only its own dimension**. "EP64, L1-L2" narrows the EP size
+  and the level; it does not drop suites, operators or cases.
+* Profiling defaults to `representative` (one passing task per EP size × level × operator),
+  never to the whole matrix.
+* Ask the user **only** for what cannot be derived: multi-node placement, the real physical
+  topology, an unreadable SoC, or a permission you do not have (sudo, network).
+* Never ask the user to repeat what the plan already declares.
+
+Details, including the precedence between trigger words: `references/request_interpretation.md`.
+
+## 3. Run the workflow
 
 ```sh
-python run_benchmark.py capabilities --plan configs/benchmark_plan.yaml
-python run_benchmark.py capabilities --plan configs/benchmark_plan.yaml --json
-python run_benchmark.py capabilities --config configs/transport.yaml --matrix recorded.json
+python scripts/benchmark_workflow.py execute --request request.json
+python scripts/benchmark_workflow.py plan    --request request.json   # plan + estimate only
+python scripts/benchmark_workflow.py resume  --workflow-id <id>
+python scripts/benchmark_workflow.py status  --workflow-id <id> --json
 ```
 
-Gate: for each EP size the per-operator support counts match the expected matrix, and every
-`unsupported` carries a reason string from the probe. Use `--matrix` only to replay a
-recorded matrix; it is marked `source: override` in every report.
+Phases, in order, each with a gate (`references/workflow_gates.md`):
 
-The staged probe in `baselines/l0/topology/runtime_probe.py` (`soc` -> `compiled` ->
-`endpoint_compatible` -> `channel_acquired` -> `kernel_available` -> `resource_available`)
-answers "is this channel usable *now*", which a compiled-in channel does not. Attach it to
-the static matrix with:
+```
+request_resolution -> environment_discovery -> dependency_check -> dependency_install
+-> capability_probe -> kernel_build -> plan_generation -> resource_estimation
+-> benchmark_execution -> result_validation -> profiling -> analysis
+-> report_generation -> final_validation
+```
+
+The workflow decides the phases; a phase that is not part of the intent is recorded as
+`skipped` with that reason. Never call the phases yourself in a different order: the
+orchestrator is what makes the run resumable and auditable.
+
+State lives in `05_results/workflows/<workflow_id>/`:
+
+```
+state.json  events.jsonl  request.json  environment.json  dependency_report.json
+capability_report.json  kernel_report.json  plan_manifest.json  resource_estimate.json
+execution_summary.json  result_validation.json  profiling_summary.json
+analysis_summary.json  report_summary.json  final_report.json  logs/
+```
+
+## 4. Automation rules
+
+1. **One request, one run.** Execution is always `run` → `profile` → `analyze` → `report`.
+   Never `run` and then `pipeline`; never start a second run for the same request. An
+   incomplete run continues with `resume --run-id <same id>`.
+2. **An exit code is not a task status.** `run` exits non-zero when a task failed or is
+   blocked. If every task reached a terminal status, continue to analysis and report, and
+   say what failed. Only a run with no manifest or an inconsistent summary is a failed
+   phase.
+3. **A blocked item blocks its own scope.** A missing operator dependency, a missing AIV/CCU
+   kernel, or an EP size larger than the host blocks exactly the tasks that need it. The rest
+   still runs. Never measure AIV/CCU cases through the host NBI path.
+4. **`not_run` is not a pass**, and `completion_status: complete` only means every task
+   reached a terminal status. Report the difference.
+5. **Nothing is invented.** No backend ranking from one measurement, no scaling trend from
+   one EP size, no overlap from a latency ratio, no physical bandwidth from a byte model, no
+   CPU result presented as Ascend performance.
+6. **Every claim is traceable.** Each phase writes its JSON artifact and every command keeps
+   its exit code and log path.
+
+## 5. Safety boundaries
+
+Allowed without asking (when the request implies them):
+
+* read-only checks: `doctor`, `capabilities`, `--dry-run`, `--check-only`;
+* plan generation, resource estimation;
+* the benchmark the user asked for;
+* installing a dependency the catalog marks installable **only** with
+  `dependency_policy: install_missing` **and** network or a wheelhouse;
+* building a kernel whose source and toolchain are both present;
+* analysis and report generation.
+
+Requires explicit permission in the request: network downloads, `sudo`, system packages,
+multi-node launches, profiling runs that would exceed the user's budget.
+
+Never, under any permission: install or upgrade the driver / firmware / CANN / device nodes,
+change system network configuration, delete an existing build artifact, delete historical
+results, kill another user's process, edit the plan file to hide a failure, or switch
+CANN/PyTorch versions. A full-benchmark request is not a system-administration permission.
+
+Details: `references/dependency_policy.md`, `references/execution_policy.md`.
+
+## 6. Failure and recovery
+
+Resume the workflow, do not restart the run:
 
 ```sh
-python run_benchmark.py capabilities --config configs/transport.yaml --runtime --json
+python scripts/benchmark_workflow.py resume --workflow-id <id>
 ```
 
-It is opt-in because it opens a bridge session and can be slow on a busy machine. Its
-per-channel `status` distinguishes `supported`, `unsupported`, `environment_unavailable`
-(a busy resource is *not* unsupported), `dependency_missing` and `not_implemented`. Without
-the probe, `capabilities` prints the static matrix built by
-`baselines/l0/topology/capabilities.py::discover`.
+The workflow resumes at its first phase that is not `passed`/`skipped`, keeps the run id,
+and invalidates the plan when the request hash or the repository commit changed. A
+retryable task status (`runtime_failed`, `timeout`, `oom`, ...) is retried by `resume`;
+`correctness_failed` is not retried blindly. Details: `references/recovery_policy.md`.
 
-## 4. Build the required kernels
+## 7. Deliver
 
-```sh
-export ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest
-source "${ASCEND_HOME_PATH}/set_env.sh"
-./kernels/asc_comm/build.sh --soc Ascend950 --strict
-python run_benchmark.py capabilities --json      # re-check kernel_available
-```
+Report, in this order:
 
-Gate: `build/manifest.json` exists and names each engine with the ABI symbols
-(`asc_comm_aiv_write_nbi`, `asc_comm_aiv_drain`, `asc_comm_ccu_submit`,
-`asc_comm_ccu_wait`), and `capabilities` no longer reports `dependency_missing` for those
-channels. Until then `LINK-001`..`004` and `LINK-008` stay blocked — they must not be served
-by the host NBI path (`docs/l0_data_plane.md`).
+1. **what ran** — workflow id, run id, device, EP sizes, levels, commit;
+2. **what passed** — counts, sample counts, which groups are actually comparable;
+3. **what is blocked and why** — dependency, environment, unsupported, kernel, capability,
+   with the recorded reason for each;
+4. **what was not verified** — no profile, no L0 verification, single measurement;
+5. **where the evidence is** — `reports/benchmark_report.md`, `reports/*`, raw `metrics.json`,
+   `05_results/workflows/<id>/`.
 
-## 5. Validate the benchmark plan
-
-```sh
-python run_benchmark.py plan --plan configs/benchmark_plan.yaml
-python run_benchmark.py plan --plan configs/benchmark_plan.yaml --ep-size 8 --suite overlap
-python scripts/manifest_diff.py OLD/manifest.json NEW/manifest.json --json diff.json  # optional gate
-```
-
-Gate: `check_completeness` and `check_parity` pass (they raise otherwise); EP8, EP64 and
-EP128 each expand 6753 tasks (`20259` total for the default plan); every task has either
-`not_run` with no reason (runnable, not yet measured) or a non-executable status **with** a
-reason; `alias_of` is recorded for the four legacy IDs. If `manifest_diff.py` is used, its
-exit code must be 0 or the executable change must be justified in writing.
-
-## 6. Run the benchmark matrix
-
-```sh
-python run_benchmark.py run --plan configs/benchmark_plan.yaml --run-id ep-matrix
-python run_benchmark.py run --plan configs/benchmark_plan.yaml --ep-size 64
-python run_benchmark.py run --config configs/smoke_npu.yaml --ep-size 8 --operators alltoall_hccl
-python run_benchmark.py resume --run-id ep-matrix
-```
-
-Gate: `ep_summary.json` has `completion_status: complete` and
-`consistency.consistent: true` (bucket sum == `planned_tasks`). With
-`execution.require_complete_execution: true`, any remaining `not_run` is a failure of the
-run, not a pass. `blocked` counts must equal the number of dependency/environment rows you
-accepted in step 1-2 — an unexpected `dependency_missing` means step 2 did not do what you
-think.
-
-## 7. Correctness validation
-
-Validation runs before every timed loop (`prepared.validate()` in
-`common/runner.py::run_task`), so a run that reaches `passed` has already produced its
-checks. Read them; do not trust the status alone.
-
-```sh
-python -c "import json;d=json.load(open('RUN/baseline_results/hardware/<task>/correctness.json'));print(d)"
-python -c "import json;d=json.load(open('RUN/operators/alltoall_hccl/<task>/metrics.json'));print(d['correctness'])"
-```
-
-Gate: every `passed` task has a non-empty `correctness` block with the tokens its
-`CaseSpec.correctness` promised (`dispatch_rows`, `combine_output`, `moe_forward_output`,
-`input_gradient`, ...). `correctness_failed` is **not** retryable: fix the cause or record
-the gap. A dispatch measured over a layout that was never validated is not a dispatch
-measurement.
-
-## 8. Profiling evidence
-
-```sh
-python run_benchmark.py profile --run-id ep-matrix --cases COMM-001,MOE-003
-python -m pytest -q tests/  # offline checks for the analysis path
-```
-
-Gate: each profile attempt writes rank traces plus `profile_manifest.json` with a sha256 per
-artefact, and the attempt is attached to the task record (`profiling_artifacts`). Kernel
-names and overlap intervals may only enter a report when the trace actually contains them;
-`msprof_kernel` evidence has no producer yet, so a kernel claim stays blocked
-(`docs/blocked.md` section C).
-
-## 9. Analyze results
-
-```sh
-python run_benchmark.py analyze --run-id ep-matrix
-python run_benchmark.py analyze --run-id ep-matrix --compare-run ep-8 --compare-run ep-64
-```
-
-Gate: only comparable points are compared (same case, operator, parameters, model, per-rank
-workload, timing boundary — `analysis/comparison.py::comparable`). For L0, only records with
-`verification.status == "verified"` may enter a cross-mechanism comparison; that is a rule
-you must apply yourself, because the analysis layer does not enforce it. On CPU nothing is
-verified, so the analysis is a comparison of requested configurations and must be labelled as
-such (`docs/observability.md`).
-
-## 10. Generate reports
-
-```sh
-python run_benchmark.py report --run-id ep-matrix
-python run_benchmark.py pipeline --plan configs/benchmark_plan.yaml   # run + analyze + report
-```
-
-Gate: `reports/coverage_matrix.*` accounts for every planned point
-(`accounted == planned` per `(EP, case, operator, variant)`), `benchmark_report.md` lists the
-outcome counts, `ep_summary.json` is consistent, and `l0_report.md` keeps
-`requested`/`observed`/`verification` separate. The delivery must state, in this order:
-what passed, what is blocked and why, which groups are comparable, and where the raw records
-live. `not_run` is not a pass and not a failure — it is an unmeasured point.
+Acceptance gates for the delivery (`references/report_acceptance.md`): the status buckets sum
+to the planned tasks, coverage accounts for every variant, and every link in the main report
+resolves. Final `partial` is a real delivery; final `failed`/`blocked` means explain what
+stopped it.

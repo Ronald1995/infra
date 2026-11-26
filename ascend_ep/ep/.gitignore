@@ -11,3 +11,7 @@
 05_results/raw/.baseline_cache/
 05_results/raw/20*T*-*/
 05_results/raw/local-*/
+# Workflow state and the run directories it creates are local execution records.
+05_results/workflows/
+05_results/raw/wf-*/
+05_results/raw/ep-*/

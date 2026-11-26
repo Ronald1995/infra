@@ -259,6 +259,30 @@ def persist_case(path, record):
 TOLERATED = {"passed", "unsupported", "not_applicable"}
 
 
+def profile_selected(task, args):
+    """Whether one task belongs to the requested ``profile`` selection.
+
+    Profiling a 20k-task matrix is never the goal, so the selection can be narrowed by
+    case, operator, EP size or exact task id.  Every dimension that is set must match;
+    an empty selection keeps the historical meaning ("every passing task").
+    """
+    cases = getattr(args, "cases", None)
+    if cases and task["case_id"] not in cases:
+        return False
+    operators = getattr(args, "operators", None)
+    if operators and task["backend_id"] not in operators:
+        return False
+    sizes = getattr(args, "ep_size", None)
+    if sizes:
+        size = task.get("ep_size") or task["config"]["distributed"]["ep_size"]
+        if size not in sizes:
+            return False
+    task_ids = getattr(args, "task_ids", None)
+    if task_ids and task["task_id"] not in task_ids:
+        return False
+    return True
+
+
 def execute(root, manifest, args, profile=False, resume=False, representative=False):
     from hashlib import sha256
 
@@ -288,8 +312,7 @@ def execute(root, manifest, args, profile=False, resume=False, representative=Fa
         eligible = executable and ((prior and prior["status"] == "passed") if profile else
                                   (not prior or resume and prior["status"] in RETRYABLE))
         if profile:
-            cases = getattr(args, "cases", None)
-            eligible = eligible and (not cases or task["case_id"] in cases)
+            eligible = eligible and profile_selected(task, args)
         if representative:
             config = task["config"]
             group = (task["backend_id"], task["level"], fingerprint(config))

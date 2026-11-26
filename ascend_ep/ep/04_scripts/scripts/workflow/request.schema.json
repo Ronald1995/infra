@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EP benchmark workflow request",
+  "type": "object",
+  "required": ["schema_version", "intent"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "intent": {
+      "enum": ["full_benchmark", "partial_benchmark", "smoke_test", "plan_only",
+               "estimate", "resume", "profile", "analyze", "report",
+               "environment_check"]
+    },
+    "plan": {
+      "type": ["string", "null"],
+      "description": "Benchmark plan expanded by the plan phase. Defaults to configs/benchmark_plan.yaml for the intents that expand a matrix."
+    },
+    "config": {
+      "type": ["string", "null"],
+      "description": "Single configuration (a YAML without a plan/matrix key). Mutually exclusive with plan; used for CPU smoke runs."
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ep_sizes": {
+          "type": "array", "items": {"type": "integer", "minimum": 1},
+          "description": "Empty = the plan's declared EP sizes."
+        },
+        "levels": {
+          "type": "array", "items": {"enum": ["L0", "L1", "L2", "L3", "L4"]},
+          "description": "Empty = the plan's declared levels."
+        },
+        "suites": {
+          "type": "array", "items": {"type": "string"},
+          "description": "Empty = the plan's declared suites. Read from the plan, never hardcoded."
+        },
+        "operators": {
+          "oneOf": [
+            {"const": "all"},
+            {"type": "array", "items": {"type": "string"}}
+          ]
+        },
+        "cases": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device": {"enum": ["npu", "cpu"]},
+        "soc": {"type": ["string", "null"]},
+        "dependency_policy": {"enum": ["check_only", "install_missing"]},
+        "allow_network": {"type": "boolean"},
+        "allow_sudo": {"type": "boolean"},
+        "wheelhouse": {"type": ["string", "null"]},
+        "local_devices": {
+          "type": ["integer", "null"],
+          "description": "Override the detected NPU device count (a container can hide it)."
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string"},
+        "profile_policy": {"enum": ["none", "representative", "full"]},
+        "resume": {"type": "boolean"},
+        "time_budget_minutes": {"type": ["integer", "null"], "minimum": 1},
+        "nnodes": {"type": "integer", "minimum": 1},
+        "nproc_per_node": {"type": ["integer", "null"], "minimum": 1},
+        "master_addr": {"type": "string"},
+        "master_port": {"type": ["integer", "null"], "minimum": 1},
+        "session": {"type": ["string", "null"]}
+      }
+    },
+    "run_id": {"type": ["string", "null"]},
+    "workflow_id": {"type": ["string", "null"]},
+    "sources": {
+      "type": "object",
+      "additionalProperties": {"type": "string"},
+      "description": "field -> where the resolved value came from (request / plan:<path> / default:<why> / prompt)."
+    },
+    "prompt": {"type": ["string", "null"]}
+  }
+}

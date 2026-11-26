@@ -26,6 +26,17 @@ def csv_values(value):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def csv_ints(value):
+    """Comma-separated integers, so ``--ep-size 8,64,128`` selects several points."""
+    try:
+        values = [int(item) for item in csv_values(value)]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected comma-separated integers, got {value!r}") from exc
+    if any(item < 1 for item in values):
+        raise argparse.ArgumentTypeError("EP sizes must be positive integers")
+    return values
+
+
 def add_launch(parser):
     parser.add_argument("--nnodes", type=int, default=1)
     parser.add_argument("--nproc-per-node", type=int)
@@ -42,7 +53,8 @@ def add_scope(parser):
     parser.add_argument("--operators", type=csv_values)
     parser.add_argument("--levels", type=csv_values)
     parser.add_argument("--cases", type=csv_values)
-    parser.add_argument("--ep-size", type=int, help="select one point of an EP scaling matrix")
+    parser.add_argument("--ep-size", type=csv_ints, metavar="N[,N...]",
+                        help="select one or more points of an EP scaling matrix")
 
 
 def build_parser():
@@ -80,7 +92,12 @@ def build_parser():
         if name in ("resume", "profile"):
             add_launch(command)
         if name == "profile":
+            # Profiling a 20k-task matrix is never the goal: these filters select the
+            # exact tasks to attach a trace to.
             command.add_argument("--cases", type=csv_values)
+            command.add_argument("--operators", type=csv_values)
+            command.add_argument("--ep-size", type=csv_ints, metavar="N[,N...]")
+            command.add_argument("--task-ids", type=csv_values)
         if name in ("analyze", "report"):
             command.add_argument("--compare-run", action="append", default=[],
                                  help="include another run from the same output root in comparative analysis")
@@ -128,11 +145,12 @@ def _require_source(args):
 def build_tasks(args):
     """Expand either a benchmark plan or a single configuration."""
     _require_source(args)
+    sizes = getattr(args, "ep_size", None) or None
     if args.plan:
         plan = load_plan(args.plan)
         run = expand_plan(
             plan,
-            ep_sizes=[args.ep_size] if args.ep_size else None,
+            ep_sizes=sizes,
             suites=[args.suite] if args.suite else None,
             levels=args.levels,
             cases=args.cases,
@@ -145,8 +163,8 @@ def build_tasks(args):
     if args.suite:
         suite_id = normalize(args.suite)
         configs = [{**config, "suite_id": suite_id} for config in configs]
-    if args.ep_size is not None:
-        configs = [cfg for cfg in configs if cfg["distributed"]["ep_size"] == args.ep_size]
+    if sizes:
+        configs = [cfg for cfg in configs if cfg["distributed"]["ep_size"] in sizes]
     if args.command != "plan" and getattr(args, "nnodes", 1) > 1 and len({
         (cfg["distributed"]["ep_size"], cfg["distributed"]["tp_size"]) for cfg in configs
     }) > 1:
@@ -234,6 +252,69 @@ def plan_summary(tasks, matrix):
               f"supernodes={record.get('supernodes')}")
 
 
+def runtime_payload(cfg, matrix):
+    """Walk the staged runtime probe for one configuration.
+
+    The staged probe answers "is this channel usable *now*", which a compiled-in
+    channel does not.  It is opt-in because it opens a bridge session and can be slow
+    on a busy machine.
+    """
+    from baselines.l0.topology import runtime_probe
+    descriptor = next((probe.get("detail") for probe in matrix.get("probes", ())
+                       if probe.get("name") == "transport_bridge" and probe.get("ok")), {})
+    return runtime_probe.as_dict(runtime_probe.probe(
+        cfg or {}, descriptor=descriptor or {}, device=matrix.get("device")))
+
+
+def plan_runtime(tasks):
+    """Per EP size runtime probe over that EP size's effective transport configuration.
+
+    ``capabilities --plan ... --runtime`` used to ignore ``--runtime`` entirely: the
+    plan branch returned before the probe.  A runtime verdict is the only one that may
+    mark a transport mechanism usable, so the plan path has to produce it too.
+    """
+    from baselines.l0.topology import discovery
+    by_size = {}
+    for task in tasks:
+        by_size.setdefault(task["ep_size"], []).append(task)
+    output = {}
+    for size, subset in sorted(by_size.items()):
+        transport = next((task for task in subset
+                          if task.get("case_category") == "transport"), None)
+        cfg = (transport or subset[0])["config"]
+        try:
+            matrix = discovery.load(cfg)
+        except Exception as exc:  # discovery must never make `capabilities` unusable
+            output[str(size)] = {"ep_size": size, "matrix_source": "unavailable",
+                                 "error": str(exc), "runtime": None}
+            continue
+        output[str(size)] = {"ep_size": size, "matrix_source": matrix.get("source"),
+                             "runtime": runtime_payload(cfg, matrix)}
+    return output
+
+
+def runtime_lines(summary):
+    """Human-readable runtime section of ``capabilities --plan --runtime``."""
+    lines = []
+    for size in sorted(summary, key=lambda item: int(item)):
+        runtime = summary[size].get("runtime")
+        lines.append(f"runtime EP{size} (matrix source: {summary[size].get('matrix_source')}):")
+        if not runtime:
+            lines.append(f"  unavailable: {summary[size].get('error', 'the probe did not run')}")
+            continue
+        counts = ", ".join(f"{status}={count}" for status, count in
+                           sorted((runtime.get("summary") or {}).items()))
+        lines.append(f"  channel status: {counts or 'no channel was probed'}")
+        for record in runtime.get("records") or ():
+            failed = next((stage for stage in record.get("stages") or ()
+                           if stage.get("state") == "fail"), None)
+            detail = f" ({failed['stage']}: {failed.get('reason')})" if failed else ""
+            lines.append(f"  - {record.get('channel')} on {record.get('engine')}: "
+                         f"{record.get('status')}{detail} "
+                         f"[released={record.get('released')}]")
+    return lines
+
+
 def run_command(args):
     if args.command == "list":
         for spec in registry().values():
@@ -247,23 +328,28 @@ def run_command(args):
     if args.command == "doctor":
         return doctor(args)
     if args.command == "capabilities":
+        runtime = bool(getattr(args, "runtime", False))
         if args.plan:
             tasks, _ = build_tasks(args)
-            print_capabilities(args, tasks, args.json)
+            summary = capability_summary(tasks)
+            if runtime:
+                probed = plan_runtime(tasks)
+                for size, entry in probed.items():
+                    summary.setdefault(size, {"tasks": 0, "statuses": {}, "operators": {},
+                                              "cases": {}}).update(entry)
+            if args.json:
+                print(json.dumps(summary, indent=2, sort_keys=True))
+            else:
+                print_capabilities(args, tasks, False)
+                if runtime:
+                    print()
+                    print("\n".join(runtime_lines(summary)))
             return 0
         from baselines.l0.topology import discovery
         cfg = load_configs(args.config)[0] if args.config else None
         matrix = discovery.load(cfg, override_path=args.matrix)
-        if getattr(args, "runtime", False):
-            # The staged probe answers "is this channel usable *now*", which a
-            # compiled-in channel does not.  It is opt-in because it opens a bridge
-            # session and can be slow on a busy machine.
-            from baselines.l0.topology import runtime_probe
-            descriptor = next((probe.get("detail") for probe in matrix.get("probes", ())
-                               if probe.get("name") == "transport_bridge" and probe.get("ok")), {})
-            matrix = {**matrix, "runtime": runtime_probe.as_dict(
-                runtime_probe.probe(cfg or {}, descriptor=descriptor or {},
-                                    device=matrix.get("device")))}
+        if runtime:
+            matrix = {**matrix, "runtime": runtime_payload(cfg, matrix)}
         print(discovery.dump(matrix) if args.json else discovery.describe(matrix))
         return 0
     if args.command == "_worker":

@@ -21,13 +21,38 @@ analysis/        comparability, comparison groups, L0 analysis, report entry poi
 reporting/       main report sections, formatting, specialty reports, coverage, L0 report
 schemas/         versioned result/config/capability vocabularies
 dependencies/    dependency catalog (manifest.yaml) and requirement files
-scripts/         doctor.py, install_deps.sh, manifest_diff.py, vendor_ascendep.py
+scripts/         doctor.py, install_deps.sh, manifest_diff.py, vendor_ascendep.py,
+                 benchmark_workflow.py + workflow/ (the autonomous phase machine)
+references/      policies the skill reads: request interpretation, gates, dependencies,
+                 execution, profiling, recovery, report acceptance
 configs/         base + EP size + suite + plan configurations
 kernels/asc_comm/ ASC-COMM AIV/CCU kernel project (device sources are blocked)
 launchers/ tests/ multi-node helpers; offline tests (`npu` marked)
 docs/            architecture, execution flow, data plane, evidence, observability,
-                 manifest diff, blocked capabilities, matrix design
+                 manifest diff, blocked capabilities, matrix design, reporting, workflow
 ```
+
+## Autonomous workflow
+
+`SKILL.md` is the natural-language entry point; one instruction runs the whole pipeline:
+
+```sh
+python scripts/benchmark_workflow.py interpret "在 Ascend 950 上运行完整 EP Benchmark，EP8、EP64、EP128" \
+  --out request.json
+python scripts/benchmark_workflow.py execute --request request.json   # every phase
+python scripts/benchmark_workflow.py plan    --request request.json   # plan + estimate only
+python scripts/benchmark_workflow.py resume  --workflow-id <id>
+python scripts/benchmark_workflow.py status  --workflow-id <id>
+```
+
+Phases: request -> environment -> dependencies (check, permitted install) -> capability
+(static + runtime) -> kernel build -> plan -> estimate -> execution -> validation ->
+profiling -> analysis -> report -> final validation. Every phase has a gate, writes a JSON
+artifact and records each command with its exit code and log. State lives in
+`05_results/workflows/<workflow_id>/`, so an interrupted run resumes at the unfinished phase
+and keeps its run id. A blocked item blocks only its own scope: a missing operator dependency,
+a missing AIV/CCU kernel or an EP size larger than the host never stops the rest of the
+matrix, and nothing falls back to a cheaper measurement path.
 
 ## Quick start
 
@@ -189,6 +214,8 @@ and never reported as verified.
 | [docs/observability.md](docs/observability.md) | observation fields, byte kinds, per-rank metrics, what HCCL can and cannot reveal |
 | [docs/reporting.md](docs/reporting.md) | report artifacts, main-report layout, data contract, comparability rules, formatting, chart degradation |
 | [docs/reporting_refactor.md](docs/reporting_refactor.md) | why the report system was rebuilt, what changed, test results, open gaps |
+| [docs/workflow.md](docs/workflow.md) | the autonomous workflow: before/after, module map, state files, recorded runs |
+| [references/](references/) | the policies the skill applies: request interpretation, gates, dependencies, execution, profiling, recovery, report acceptance |
 | [docs/manifest_diff.md](docs/manifest_diff.md) | how to diff two manifests, and the numbers of this refactor |
 | [docs/blocked.md](docs/blocked.md) | **what is not done**, with the exact missing interface |
 | [docs/benchmark_matrix.md](docs/benchmark_matrix.md) | matrix design: layers, suites, variants, coverage reports |
