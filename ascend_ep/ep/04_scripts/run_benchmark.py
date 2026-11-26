@@ -249,6 +249,21 @@ def plan_summary(tasks, matrix):
     aliases = matrix.get("case_aliases") or {}
     if known:
         print(f"catalog: {len(known)} cases ({len(aliases)} legacy aliases resolved)")
+    summary = matrix.get("plan_summary") or {}
+    if summary:
+        classes = summary.get("classes") or {}
+        print(f"plan summary: {summary.get('executable')} executable, "
+              f"{summary.get('not_executable')} not executable  "
+              f"(unsupported={classes.get('unsupported', 0)}, "
+              f"blocked={classes.get('blocked', 0)}, "
+              f"not_applicable={classes.get('not_applicable', 0)})")
+        estimation = summary.get("estimation") or {}
+        if estimation.get("status") == "estimated":
+            total = estimation.get("total_seconds") or 0
+            print(f"  estimated runtime: {total / 3600:.2f} h "
+                  f"(basis: {estimation.get('basis')})")
+        else:
+            print(f"  estimated runtime: unavailable ({estimation.get('reason')})")
     topology = matrix.get("topology") or {}
     for size, record in sorted(topology.items(), key=lambda item: str(item[0])):
         print(f"  topology EP{size}: source={record.get('source')} "

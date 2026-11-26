@@ -27,6 +27,7 @@ from common.registry import ROOT
 from common.scheduler import (ALIAS_MODES, case_index, check_completeness, make_plan,
                               merge_tasks)
 from common.storage import fingerprint
+from common import plan_summary as plan_summary_module
 from common import profiles as profiles_module
 from common.suites import apply_scaling, normalize, select, workload_policy
 from common.variants import case_dimension_records
@@ -105,6 +106,7 @@ class BenchmarkPlan:
     cases: list = field(default_factory=list)
     topology: dict = field(default_factory=dict)
     profile: str = "full"
+    estimation: dict = field(default_factory=dict)
 
     @property
     def directory(self):
@@ -220,6 +222,15 @@ def load_plan(path):
     profile = spec.get("profile") or raw.get("profile") or "full"
     if profile not in profiles_module.PROFILE_NAMES:
         raise ValueError(f"plan profile must be one of {profiles_module.PROFILE_NAMES}")
+    estimation = spec.get("estimation") or raw.get("estimation") or {}
+    if not isinstance(estimation, dict):
+        raise ValueError("plan estimation must be a mapping")
+    for key in ("per_task_seconds", "startup_seconds_per_ep", "init_seconds_per_ep",
+                "profiling_seconds_per_task"):
+        if key in estimation and (isinstance(estimation[key], bool)
+                                  or not isinstance(estimation[key], (int, float))
+                                  or estimation[key] < 0):
+            raise ValueError(f"plan estimation.{key} must be a non-negative number")
     execution = {**DEFAULT_EXECUTION, **(raw.get("execution") or {})}
     report = {**DEFAULT_REPORT, **(raw.get("report") or {})}
     for key in DEFAULT_EXECUTION:
@@ -251,7 +262,7 @@ def load_plan(path):
         operators=operators, levels=list(levels), suites=suites, aliases=aliases,
         mode=mode, base_config=base, ep_configs=ep_configs, suite_configs=suite_configs,
         execution=execution, report=report, cases=list(cases), topology=topology,
-        profile=profile)
+        profile=profile, estimation=estimation)
 
 
 def _rank_domains(value, size, name):
@@ -504,6 +515,7 @@ class PlanRun:
             "coverage": {str(ep): list(items) for ep, items in sorted(self.coverage.items())},
             "case_index": case_index(self.tasks),
             "execution_profile": getattr(self, "profile", None),
+            "plan_summary": plan_summary_module.summarize(self),
             "config_audit": config_audit.audit(
                 self.tasks, [point.config for point in self.points],
                 {f"EP{point.ep_size}/{point.suite}": case_dimension_records(
