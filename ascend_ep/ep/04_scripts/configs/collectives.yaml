@@ -1,13 +1,16 @@
-# Collective baseline: torch HCCL (HW-001..HW-006) and the native HCCL test tool
-# (EXEC-001..EXEC-006) swept over accelerator modes.  Modes are validated against
-# the installed tool's --help before a task is generated.
-extends: ep8_bf16.yaml
+# L0 collectives suite: EXEC-001..EXEC-006 executed by the native HCCL test tool
+# (AllToAll, AllToAllV, AllGather, ReduceScatter, AllReduce, P2P), swept over the
+# accelerator modes the installed tool actually offers.
+#
+# Framework collectives (HW-001..HW-006) belong to the `hardware` suite; this
+# suite only selects the communication-execution cases.
+extends: base_benchmark.yaml
 suite_id: collectives
 benchmark:
   levels: [L0]
   warmup: 5
   iterations: 20
-  message_bytes: [4096, 65536, 1048576, 4194304, 16777216, 67108864]
+  message_bytes: [1048576, 16777216, 268435456, 1073741824]
   execution:
     modes: [default, aicpu_ts, aiv, aiv_only, ccu_sched]
   native_hccl:

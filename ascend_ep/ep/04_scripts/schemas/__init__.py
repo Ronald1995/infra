@@ -2,9 +2,21 @@
 STATUSES = (
     "passed", "unsupported", "dependency_missing", "environment_unavailable", "source_unavailable",
     "not_implemented", "correctness_failed", "runtime_failed", "timeout", "oom", "not_run",
+    "not_applicable",
 )
 RETRYABLE = {"not_run", "runtime_failed", "timeout", "oom", "environment_unavailable",
              "dependency_missing", "source_unavailable"}
+
+#: Statuses that mean "the case ran and passed", i.e. a real measurement exists.
+MEASURED = {"passed"}
+#: Statuses that mean "the plan could not run this point, for a recorded reason".
+NOT_RUN = {"unsupported", "dependency_missing", "environment_unavailable", "source_unavailable",
+           "not_implemented", "not_run", "not_applicable"}
+#: Severity order from best to worst: the coverage matrix keeps the *highest*
+#: index in a cell, so a failed attempt is never hidden by a passed one.
+SEVERITY = ("passed", "not_run", "not_applicable", "unsupported", "source_unavailable",
+            "dependency_missing", "environment_unavailable", "not_implemented",
+            "oom", "timeout", "correctness_failed", "runtime_failed")
 
 
 def result(manifest, task, status="not_run", reason=None):

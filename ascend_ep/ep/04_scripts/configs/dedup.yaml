@@ -38,6 +38,11 @@ backends:
   - moonep_server_dedup
   - alltoall_hccl
 
+# None / Rank Dedup / Server Dedup.  The `none` point runs the measured control
+# cases of the dedup suite (COMM-001 dispatch and MOE-001 forward, same routing
+# trace) because no adapter implements a dedup case without dedup; the dedup
+# cases themselves are reported as not_applicable in that mode.
 matrix:
+  - dedup: {mode: none}
   - dedup: {mode: rank}
   - dedup: {mode: server}

@@ -25,20 +25,46 @@ def checked_id(run_id):
     return run_id
 
 
-def create_manifest(output, tasks, run_id=None):
+def create_manifest(output, tasks, run_id=None, matrix=None):
     now = datetime.now(timezone.utc)
     run_id = checked_id(run_id or f"{now:%Y%m%dT%H%M%S}-{uuid4().hex[:8]}")
     root = Path(output).resolve() / run_id
     root.mkdir(parents=True, exist_ok=False)
     env = capture(probe_npu=any(t["config"]["device"] == "npu" for t in tasks))
+    if matrix is None:
+        from common.plan import matrix_metadata
+        matrix = matrix_metadata(tasks)
     manifest = {"schema_version": 1, "run_id": run_id, "created_at": now.isoformat(),
-                "environment": env, "tasks": tasks}
+                "environment": env, "matrix": matrix, "tasks": tasks}
     write_json(root / "environment.json", env)
-    write_json(root / "topology.json", {t["task_id"]: t["config"]["topology"] for t in tasks})
-    (root / "resolved_config.yaml").write_text(
-        yaml.safe_dump({t["task_id"]: t["config"] for t in tasks}, sort_keys=False), encoding="utf-8"
-    )
+    write_json(root / "matrix.json", matrix)
+    if matrix.get("config_points"):
+        # One topology per expansion point; a full matrix repeats it thousands of times.
+        shared_topology = {}
+        for task in tasks:
+            shared_topology.setdefault(fingerprint(task["config"]["topology"]),
+                                       task["config"]["topology"])
+        write_json(root / "topology.json", shared_topology)
+    else:
+        write_json(root / "topology.json", {t["task_id"]: t["config"]["topology"] for t in tasks})
+    if matrix.get("config_points"):
+        # Plan runs share one effective configuration per expansion point: store
+        # the layered configs once instead of repeating them for every task.
+        shared, mapping = {}, {}
+        for task in tasks:
+            key = task.get("config_fingerprint") or fingerprint(task["config"])
+            shared.setdefault(key, {"sources": task.get("config_source") or [],
+                                    "config": task["config"]})
+            mapping[task["task_id"]] = key
+        (root / "resolved_config.yaml").write_text(
+            yaml.safe_dump({"configs": shared, "tasks": mapping}, sort_keys=False),
+            encoding="utf-8")
+    else:
+        (root / "resolved_config.yaml").write_text(
+            yaml.safe_dump({t["task_id"]: t["config"] for t in tasks}, sort_keys=False),
+            encoding="utf-8")
     write_json(root / "manifest.json", manifest)
+    _write_ep_manifests(root, run_id, matrix, tasks)
     if any(task["level"] == "L0" for task in tasks):
         try:
             from baselines.l0.topology import discovery
@@ -49,6 +75,24 @@ def create_manifest(output, tasks, run_id=None):
                         "device": {}, "channels": [], "engines": [], "accelerators": [],
                         "probes": []})
     return root, manifest
+
+
+def _write_ep_manifests(root, run_id, matrix, tasks):
+    """Per-EP index files, so one EP size can be inspected without the others."""
+    sizes = sorted({task.get("ep_size") or task["config"]["distributed"]["ep_size"]
+                    for task in tasks})
+    if len(sizes) < 2:
+        return
+    for size in sizes:
+        subset = [task for task in tasks
+                  if (task.get("ep_size") or task["config"]["distributed"]["ep_size"]) == size]
+        write_json(root / "manifests" / f"ep{size}.json", {
+            "schema_version": 1, "run_id": run_id, "ep_size": size,
+            "manifest": "manifest.json",
+            "status_counts": {status: sum(1 for task in subset if task["status"] == status)
+                              for status in sorted({task["status"] for task in subset})},
+            "task_ids": [task["task_id"] for task in subset],
+        })
 
 
 def result_path(root, task):
@@ -201,13 +245,18 @@ def persist_case(path, record):
     write_json(path, record)
 
 
+TOLERATED = {"passed", "unsupported", "not_applicable"}
+
+
 def execute(root, manifest, args, profile=False, resume=False, representative=False):
     from hashlib import sha256
 
     session = args.session if args.nnodes > 1 else uuid4().hex
     phase = "profile" if profile else "run"
     control = root / "logs" / f"control-{checked_id(session)}-{phase}"
+    fail_fast = bool(getattr(args, "fail_fast", False))
     failed = False
+    stopped = False
     environments = {}
     profiled = set()
     for task in manifest["tasks"]:
@@ -330,5 +379,34 @@ def execute(root, manifest, args, profile=False, resume=False, representative=Fa
                     write_json(control / f"{attempts[attempt_index + 1]}.json", {"run": False})
                 break
         print(f"{task_id} {task['backend_id']} {record['status']}", flush=True)
-        failed |= record["status"] not in {"passed", "unsupported"}
+        if record["status"] not in TOLERATED:
+            failed = True
+            if fail_fast:
+                stopped = True
+                break
+    if not profile:
+        _write_ep_summary(root, manifest)
+    if stopped:
+        print("fail_fast stopped the run after the first failing case", flush=True)
     return 1 if failed else 0
+
+
+def _write_ep_summary(root, manifest):
+    """Aggregate one run per EP size; a failure in one EP never hides the others."""
+    summary = {}
+    for task in manifest["tasks"]:
+        size = task.get("ep_size") or task["config"]["distributed"]["ep_size"]
+        entry = summary.setdefault(str(size), {
+            "ep_size": size, "tasks": 0, "statuses": {},
+            "levels": sorted({task["level"] for task in manifest["tasks"]
+                              if (task.get("ep_size") or task["config"]["distributed"]["ep_size"]) == size}),
+        })
+        location = result_path(root, task)
+        status = load_json(location)["status"] if location.is_file() else task["status"]
+        entry["tasks"] += 1
+        entry["statuses"][status] = entry["statuses"].get(status, 0) + 1
+    write_json(root / "ep_summary.json", {"schema_version": 1, "run_id": manifest["run_id"],
+                                          "ep_sizes": summary})
+    for size, entry in sorted(summary.items(), key=lambda item: int(item[0])):
+        counts = ", ".join(f"{name}={count}" for name, count in sorted(entry["statuses"].items()))
+        print(f"EP{size}: {entry['tasks']} tasks ({counts})", flush=True)

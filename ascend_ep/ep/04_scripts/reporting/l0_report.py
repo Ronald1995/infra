@@ -42,9 +42,12 @@ def curves(rows):
         payload = metric.get("payload_bytes") or metric.get("per_rank_bytes")
         output.append({
             "case_id": row["case_id"],
+            "ep_size": (row.get("config") or {}).get("distributed", {}).get("ep_size"),
             "family": row.get("category"),
             "mechanism": (row.get("observed") or {}).get("transport_protocol"),
             "execution_resource": (row.get("observed") or {}).get("execution_resource"),
+            "requested": row.get("requested"),
+            "observed": row.get("observed"),
             "message_bytes": parameters.get("message_bytes"),
             "outstanding": parameters.get("outstanding"),
             "peer_count": parameters.get("peer_count"),
@@ -68,11 +71,12 @@ def write(root, manifest, rows, capabilities=None):
         "schema_version": 1, "run_id": manifest["run_id"],
         "device": _device(manifest, l0), "capabilities": capabilities, "measurements": measured,
     })
+    csv_fields = ["case_id", "ep_size", "family", "mechanism", "execution_resource",
+                  "message_bytes", "outstanding", "peer_count", "accelerator", "status",
+                  "verification", "payload_bytes", "latency_ms", "bandwidth_GBps",
+                  "rank_max_GBps"]
     with (destination / "l0_curves.csv").open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(measured[0]) if measured else [
-            "case_id", "family", "mechanism", "execution_resource", "message_bytes",
-            "outstanding", "peer_count", "accelerator", "status", "verification",
-            "payload_bytes", "latency_ms", "bandwidth_GBps", "rank_max_GBps"])
+        writer = csv.DictWriter(handle, fieldnames=csv_fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(measured)
 
@@ -84,6 +88,19 @@ def write(root, manifest, rows, capabilities=None):
               f"- CANN: {device['cann_version']}",
               f"- NPU models: {device['npu_models']}",
               f"- packages: {device['packages']}", ""]
+    sizes = sorted({point["ep_size"] for point in measured if point["ep_size"]})
+    if len(sizes) > 1:
+        lines += ["## 2. EP size coverage", "",
+                  "L0 is a shared hardware baseline, not an operator case, so every EP size runs "
+                  "the same case catalog once.", "",
+                  "| EP | tasks | passed | verified |", "| --- | --- | --- | --- |"]
+        for size in sizes:
+            subset = [point for point in measured if point["ep_size"] == size]
+            lines.append("| EP{size} | {tasks} | {passed} | {verified} |".format(
+                size=size, tasks=len(subset),
+                passed=sum(1 for point in subset if point["status"] == "passed"),
+                verified=sum(1 for point in subset if point["verification"] == "verified")))
+        lines += ["", "EP scale-out per mechanism and message size is in `l0_scaleout.md`.", ""]
     matrix = capabilities or {}
     if matrix:
         lines += ["## 3. Capability matrix", "",

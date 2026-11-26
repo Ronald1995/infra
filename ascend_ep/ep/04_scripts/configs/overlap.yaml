@@ -1,4 +1,8 @@
-extends: ep8_bf16.yaml
+# Overlap suite: the L0 concurrency family (OVERLAP-001..OVERLAP-009) together
+# with the fused operator cases.  The L0 cases measure communication and compute
+# on separate streams with device-event evidence; they are not replaced by the
+# operator-internal fusion cases.
+extends: base_benchmark.yaml
 suite_id: overlap
 benchmark:
   levels: [L0, L2, L3]

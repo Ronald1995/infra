@@ -37,3 +37,10 @@ profiling:
 backends:
   - moonep_dynamic_planner
   - alltoall_hccl
+
+# Planner On, inference and training.  The Planner Off control for LAYER-003 is
+# the `fixed_owner` variant that `alltoall_hccl` runs in the same plan, so both
+# sides of the comparison are measured under one routing trace.
+matrix:
+  - benchmark: {phase: train}
+  - benchmark: {phase: forward}

@@ -1,3 +1,6 @@
+# Training tail: asynchronous dispatch/combine and backward paths.
+# The case set is the `training_tail` suite (COMM-005/006/007, MOE-002, MOE-003);
+# the matrix only varies the tail token count.
 extends: ep8_bf16.yaml
 suite_id: training_tail
 matrix:

@@ -2,10 +2,60 @@
 
 以 [算子调研表](../../ep.md) 和 [测试方法](../03_benchmark/ep_benchmark_methodology.md) 定义范围。36 个算子的独立入口、已接入层次和限制见 [Capability Matrix](operators/README.md)。[SKILL.md](SKILL.md) 是 Agent 运行入口。
 
+## 统一测试矩阵（Benchmark Plan）
+
+一份 `configs/benchmark_plan.yaml` 生成 `EP Size × Suite × Case × Operator × Parameter Variant`
+完整矩阵，默认覆盖 EP8/EP64/EP128 与 L0～L4 全部 Catalog。设计细节见
+[测试矩阵设计](docs/benchmark_matrix.md)。
+
+```sh
+# 完整计划：只生成 Manifest，不执行
+python run_benchmark.py plan --plan configs/benchmark_plan.yaml
+
+# 完整执行：EP8、EP64、EP128 顺序执行，逐 Case 继续，失败不中断其他 EP Size
+python run_benchmark.py run  --plan configs/benchmark_plan.yaml
+
+# 能力视图 / 缩小范围
+python run_benchmark.py capabilities --plan configs/benchmark_plan.yaml
+python run_benchmark.py run --plan configs/benchmark_plan.yaml --ep-size 64
+python run_benchmark.py run --plan configs/benchmark_plan.yaml --suite overlap
+python run_benchmark.py run --plan configs/benchmark_plan.yaml --cases COMM-001,COMM-003
+python run_benchmark.py run --plan configs/benchmark_plan.yaml --operators deepep_ascend,moonep
+
+# 无 NPU 的 Plan → Manifest → 执行 → 覆盖率报告校验
+python run_benchmark.py run --plan configs/benchmark_plan_smoke_cpu.yaml \
+  --cases COMM-001,COMM-004,COMM-005,MOE-003,LAYER-002 --operators alltoall_hccl
+```
+
+分层规则：
+
+- `configs/base_benchmark.yaml`：全局共享的测试定义（层级、消息大小候选池、L0 sweep、验证策略、固定计算 Shape）。
+- `configs/ep{8,64,128}_bf16.yaml`：只描述 EP 环境（EP/TP、模型、专家数、拓扑来源），**不再决定 Case 范围**。
+- `configs/{suite}.yaml`：只描述场景（workload、`benchmark` 维度、operators）；plan 组合时不会覆盖 EP 环境字段。
+- `common/variants.py`：Case-specific 参数变体（不是全维度笛卡尔积）。
+
+每个 task 保留 `config_source`、`config_fingerprint`、`ep_size`、`suite_ids`，不支持的组合保留
+`unsupported / dependency_missing / not_implemented / not_applicable` 状态与原因。
+`HW-007/HW-008/HW-009/HW-012` 是 `LINK-012/LINK-013/MEM-001/OVERLAP-001` 的 legacy alias，默认
+不重复生成 task，但在 `manifest.matrix.case_index` 与覆盖率报告中显式记录。
+
+执行后生成 `reports/coverage_matrix.{md,csv,json}`、`case_operator_coverage.csv`、
+`operator_coverage.md`、`ep_size_comparison.md` 和 `l0_scaleout.md`；`run` 命令也会写入覆盖率报告。
 
 ## L0 硬件基线
 
-`baseleines/l0` 之外的 L0 入口在 [L0 README](baselines/l0/README.md)。L0 分六类：本地内存、原生通信机制、通信执行资源、集合通信、计算、通信与计算并发。每条结果区分 `requested` 与 `observed`，并给出 `verified` / `fallback` / `unverified` / `unsupported` 状态；只有 `verified` 结果可以跨通信机制比较。
+`baselines/l0` 之外的 L0 入口在 [L0 README](baselines/l0/README.md)。L0 分六类：本地内存、原生通信机制、通信执行资源、集合通信、计算、通信与计算并发。每条结果区分 `requested` 与 `observed`，并给出 `verified` / `fallback` / `unverified` / `unsupported` 状态；只有 `verified` 结果可以跨通信机制比较。
+
+L0 有独立 Suite 和配置，按 Case category 过滤，而不是靠 YAML 文件名推断：
+
+| Suite | 配置 | Case |
+|---|---|---|
+| `hardware` | `configs/hardware.yaml` | HW-001～006、HW-010～011 |
+| `memory` | `configs/memory.yaml` | MEM-001～004 |
+| `transport` | `configs/transport.yaml` | LINK-001～013 |
+| `collectives` | `configs/collectives.yaml` | EXEC-001～006 |
+| `overlap` | `configs/overlap.yaml` | OVERLAP-001～009 + FUSE-001～009 + MOE-007 |
+
 
 ```sh
 python run_benchmark.py capabilities --config configs/hardware.yaml
@@ -53,7 +103,6 @@ python run_benchmark.py run --config configs/smoke_npu.yaml --ep-size 8 \
 python -m operators.deepep_ascend.benchmark --config operators/deepep_ascend/config.yaml --levels L3
 python run_benchmark.py baseline --config configs/hardware.yaml --levels L0
 python run_benchmark.py baseline --config configs/ep8_bf16.yaml --levels L1,L2
-
 # 批量运行、恢复及产物
 python run_benchmark.py run --config configs/ep8_bf16.yaml --operators all
 python run_benchmark.py resume --run-id RUN_ID
@@ -62,7 +111,7 @@ python run_benchmark.py analyze --run-id RUN_ID
 python run_benchmark.py report --run-id RUN_ID
 ```
 
-`--list-backends` 等价于 `list`，旧的 `--config PATH` 等价于 `run --config PATH`。未按层级或 Case 限定的 NPU `pipeline` 先运行公共基线，再运行算子用例。启用 `profiling.enabled` 时，每个后端、层级和配置组合选取一个已通过的用例单独采集 Trace，然后生成分析和报告。也可用 `profile` 独立采集已通过的用例。
+`--list-backends` 等价于 `list`，旧的 `--config PATH` 等价于 `run --config PATH`。单算子入口（`python -m operators.<id>.benchmark`）默认 L1–L4，因为 L0 是公共硬件基线；`--config` 未显式指定 `--levels` 时使用配置里的 `benchmark.levels`（EP 环境配置默认 L0–L4，`--plan` 始终使用 plan 的 levels）。未按层级或 Case 限定的 NPU `pipeline` 先运行公共基线，再运行算子用例。启用 `profiling.enabled` 时，每个后端、层级和配置组合选取一个已通过的用例单独采集 Trace，然后生成分析和报告。也可用 `profile` 独立采集已通过的用例。
 
 ## 多机和扩展性
 

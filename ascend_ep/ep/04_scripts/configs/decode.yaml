@@ -1,3 +1,8 @@
+# Decode scenario: small token count, low latency, small messages, forward only.
+#
+# The case set comes from the `decode` suite in common/suites.py
+# (COMM-001, COMM-003, MOE-001, LAYER-001).  This file only supplies the decod
+# workload parameters; prefill.yaml uses the same cases with a large token count.
 suite_id: decode
 distributed:
   ep_size: 8

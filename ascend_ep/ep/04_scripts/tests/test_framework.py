@@ -35,12 +35,28 @@ def test_research_registry_and_directory_coverage():
     assert ids == set(registry()) == directories
 
 
-@pytest.mark.parametrize("path", sorted((ROOT / "configs").glob("*.yaml")), ids=lambda p: p.name)
+def _configuration_files():
+    """Every YAML under configs/ that is a configuration, not a benchmark plan."""
+    import yaml
+    result = []
+    for path in sorted((ROOT / "configs").glob("*.yaml")):
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and "plan" not in raw:
+            result.append(path)
+    return result
+
+
+@pytest.mark.parametrize("path", _configuration_files(), ids=lambda p: p.name)
 def test_config_files(path):
     schema = json.loads((ROOT / "schemas/config-v1.json").read_text(encoding="utf-8"))
     for cfg in load_configs(path):
         jsonschema.validate(cfg, schema)
         assert make_plan([cfg])
+
+
+def test_plan_file_is_not_a_configuration():
+    with pytest.raises(ValueError, match="benchmark plan"):
+        load_configs(ROOT / "configs/benchmark_plan.yaml")
 
 
 def test_invalid_config():

@@ -1,4 +1,10 @@
-"""Plan, run, profile, analyze and report expert-parallel benchmarks."""
+"""Plan, run, profile, analyze and report expert-parallel benchmarks.
+
+Two entry points exist side by side:
+
+``--config FILE``  single-configuration execution (kept for compatibility)
+``--plan FILE``    unified benchmark plan: EP8/EP64/EP128 x L0-L4 x operators
+"""
 import argparse
 import json
 from pathlib import Path
@@ -6,9 +12,14 @@ import sys
 
 from common.config import LEVELS, load_configs
 from common.controller import DEFAULT_OUTPUT, checked_id, create_manifest, execute, results, wait_for
+from common.plan import expand as expand_plan, load_plan, matrix_metadata
 from common.registry import CAPABILITIES, registry
 from common.scheduler import make_plan
 from common.storage import load_json, write_json
+from common.suites import normalize
+from schemas import SEVERITY
+
+COMMANDS_WITH_PLAN = ("plan", "run")
 
 
 def csv_values(value):
@@ -24,25 +35,33 @@ def add_launch(parser):
     parser.add_argument("--session", help="unique ID shared by all node controllers for this invocation")
 
 
+def add_scope(parser):
+    parser.add_argument("--config", type=Path, help="single configuration file")
+    parser.add_argument("--plan", type=Path, help="benchmark plan covering several EP sizes")
+    parser.add_argument("--suite", help="select one suite (all/full expands the complete catalog)")
+    parser.add_argument("--operators", type=csv_values)
+    parser.add_argument("--levels", type=csv_values)
+    parser.add_argument("--cases", type=csv_values)
+    parser.add_argument("--ep-size", type=int, help="select one point of an EP scaling matrix")
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     listing = commands.add_parser("list")
     listing.add_argument("--capabilities", action="store_true")
     commands.add_parser("doctor")
-    capability = commands.add_parser("capabilities", help="print the L0 capability matrix")
-    capability.add_argument("--config", type=Path)
-    capability.add_argument("--matrix", type=Path, help="use a recorded matrix instead of probing")
+    capability = commands.add_parser("capabilities", help="print the benchmark capability matrix")
+    add_scope(capability)
+    capability.add_argument("--matrix", type=Path, help="use a recorded L0 matrix instead of probing")
     capability.add_argument("--json", action="store_true")
     for name in ("plan", "run", "baseline", "pipeline"):
         command = commands.add_parser(name)
-        command.add_argument("--config", type=Path, required=True)
-        command.add_argument("--operators", type=csv_values)
-        command.add_argument("--levels", type=csv_values)
-        command.add_argument("--cases", type=csv_values)
-        command.add_argument("--ep-size", type=int, help="select one point of an EP scaling matrix")
+        add_scope(command)
         command.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
         command.add_argument("--run-id")
+        command.add_argument("--fail-fast", action="store_true",
+                             help="stop at the first failing case instead of continuing")
         if name != "plan":
             add_launch(command)
     for name in ("resume", "profile", "analyze", "report"):
@@ -101,6 +120,116 @@ def doctor():
     print(json.dumps(env, indent=2))
 
 
+def _require_source(args):
+    if bool(args.config) == bool(args.plan):
+        raise ValueError("choose exactly one of --config or --plan")
+    if args.plan and args.command not in COMMANDS_WITH_PLAN + ("capabilities",):
+        raise ValueError("--plan is supported by the plan, run and capabilities commands")
+    if args.suite:
+        normalize(args.suite)
+    if args.levels and set(args.levels) - set(LEVELS):
+        raise ValueError("expected benchmark levels L0 through L4")
+
+
+def build_tasks(args):
+    """Expand either a benchmark plan or a single configuration."""
+    _require_source(args)
+    if args.plan:
+        plan = load_plan(args.plan)
+        run = expand_plan(
+            plan,
+            ep_sizes=[args.ep_size] if args.ep_size else None,
+            suites=[args.suite] if args.suite else None,
+            levels=args.levels,
+            cases=args.cases,
+            operators=args.operators,
+        )
+        matrix = run.metadata()
+        matrix["selected_ep_sizes"] = sorted({task["ep_size"] for task in run.tasks})
+        return run.tasks, matrix
+    configs = load_configs(args.config)
+    if args.suite:
+        suite_id = normalize(args.suite)
+        configs = [{**config, "suite_id": suite_id} for config in configs]
+    if args.ep_size is not None:
+        configs = [cfg for cfg in configs if cfg["distributed"]["ep_size"] == args.ep_size]
+    if args.command != "plan" and getattr(args, "nnodes", 1) > 1 and len({
+        (cfg["distributed"]["ep_size"], cfg["distributed"]["tp_size"]) for cfg in configs
+    }) > 1:
+        raise ValueError("multi-node scaling runs require --ep-size to select one point")
+    tasks = make_plan(configs, args.operators, args.levels, args.cases,
+                      args.command == "baseline",
+                      suites=[args.suite] if args.suite else None)
+    if args.command == "pipeline" and not (args.cases or args.levels or args.suite) and any(
+        config["device"] == "npu" for config in configs
+    ):
+        public = make_plan([config for config in configs if config["device"] == "npu"], baselines=True)
+        tasks = list({task["task_id"]: task for task in [*tasks, *public]}.values())
+        tasks.sort(key=lambda task: not task["baseline"])
+    return tasks, matrix_metadata(tasks)
+
+
+def capability_summary(tasks):
+    """Per EP size / operator / case status counts without running anything."""
+    summary = {}
+    for task in tasks:
+        size = task["ep_size"]
+        entry = summary.setdefault(str(size), {"tasks": 0, "statuses": {},
+                                               "operators": {}, "cases": {}})
+        entry["tasks"] += 1
+        entry["statuses"][task["status"]] = entry["statuses"].get(task["status"], 0) + 1
+        operator = entry["operators"].setdefault(task["backend_id"], {})
+        operator[task["status"]] = operator.get(task["status"], 0) + 1
+        cases = entry["cases"].setdefault(task["case_id"], {})
+        cases[task["backend_id"]] = task["status"]
+    return summary
+
+
+def print_capabilities(args, tasks, as_json):
+    summary = capability_summary(tasks)
+    if as_json:
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return
+    cases = sorted({task["case_id"] for task in tasks})
+    operators = sorted({task["backend_id"] for task in tasks})
+    print(f"EP sizes: {', '.join(summary)}  cases: {len(cases)}  operators: {len(operators)}")
+    header = "operator".ljust(34) + "".join(size.rjust(12) for size in summary)
+    print(header)
+    for operator in operators:
+        row = operator.ljust(34)
+        for size in summary:
+            statuses = summary[size]["operators"].get(operator)
+            row += ("-" if not statuses else str(sum(statuses.values()))).rjust(12)
+        print(row)
+    print("\nstatus totals")
+    for size, entry in summary.items():
+        counts = ", ".join(f"{name}={count}" for name, count in
+                           sorted(entry["statuses"].items(), key=lambda item: _severity(item[0])))
+        print(f"EP{size}: {entry['tasks']} tasks ({counts})")
+
+
+def _severity(status):
+    return SEVERITY.index(status) if status in SEVERITY else len(SEVERITY)
+
+
+def plan_summary(tasks, matrix):
+    sizes = matrix.get("selected_ep_sizes") or matrix.get("ep_sizes") or []
+    print(f"plan: {matrix.get('name')}  EP sizes: {', '.join(map(str, sizes))}")
+    print(f"cases: {len({task['case_id'] for task in tasks})}  tasks: {len(tasks)}")
+    for size in sizes:
+        subset = [task for task in tasks if task["ep_size"] == size]
+        counts = {}
+        for task in subset:
+            counts[task["status"]] = counts.get(task["status"], 0) + 1
+        detail = ", ".join(f"{name}={count}" for name, count in
+                           sorted(counts.items(), key=lambda item: _severity(item[0])))
+        print(f"  EP{size}: {len(subset)} tasks ({detail})")
+    known = matrix.get("catalog") or {}
+    aliases = matrix.get("case_aliases") or {}
+    if known:
+        print(f"catalog: {len(known)} cases ({len(aliases)} legacy aliases resolved)")
+
+
 def run_command(args):
     if args.command == "list":
         for spec in registry().values():
@@ -115,6 +244,10 @@ def run_command(args):
         doctor()
         return 0
     if args.command == "capabilities":
+        if args.plan:
+            tasks, _ = build_tasks(args)
+            print_capabilities(args, tasks, args.json)
+            return 0
         from baselines.l0.topology import discovery
         cfg = load_configs(args.config)[0] if args.config else None
         matrix = discovery.load(cfg, override_path=args.matrix)
@@ -137,39 +270,33 @@ def run_command(args):
         if args.session:
             checked_id(args.session)
     if args.command in {"plan", "run", "baseline", "pipeline"}:
-        configs = load_configs(args.config)
-        if args.ep_size is not None:
-            configs = [cfg for cfg in configs if cfg["distributed"]["ep_size"] == args.ep_size]
-        if args.command != "plan" and args.nnodes > 1 and len({
-            (cfg["distributed"]["ep_size"], cfg["distributed"]["tp_size"]) for cfg in configs
-        }) > 1:
-            raise ValueError("multi-node scaling runs require --ep-size to select one point")
-        if args.levels and set(args.levels) - set(LEVELS):
-            raise ValueError("expected benchmark levels L0 through L4")
-        tasks = make_plan(configs, args.operators, args.levels, args.cases, args.command == "baseline")
-        if args.command == "pipeline" and not (args.cases or args.levels) and any(
-            config["device"] == "npu" for config in configs
-        ):
-            public = make_plan([config for config in configs if config["device"] == "npu"], baselines=True)
-            tasks = list({task["task_id"]: task for task in [*tasks, *public]}.values())
-            tasks.sort(key=lambda task: not task["baseline"])
+        tasks, matrix = build_tasks(args)
         if not tasks:
             raise ValueError("configuration selected no benchmark cases")
+        execution = matrix.get("execution") or {}
+        if execution.get("fail_fast") or not execution.get("continue_on_error", True):
+            args.fail_fast = True
         if args.command != "plan" and args.node_rank:
             root = args.output.resolve() / checked_id(args.run_id)
             manifest = wait_for(root / "manifest.json", 180)
             if manifest["tasks"] != tasks:
                 raise ValueError("coordinator plan differs from this node's configuration")
         else:
-            root, manifest = create_manifest(args.output, tasks, args.run_id)
+            root, manifest = create_manifest(args.output, tasks, args.run_id, matrix=matrix)
         print(f"{root} ({len(tasks)} tasks)", flush=True)
         if args.command == "plan":
+            if args.plan:
+                plan_summary(tasks, matrix)
             return 0
     else:
         root = args.output.resolve() / checked_id(args.run_id)
         manifest = load_json(root / "manifest.json")
     if args.command in {"baseline", "run", "resume", "profile", "pipeline"}:
         status = execute(root, manifest, args, profile=args.command == "profile", resume=args.command == "resume")
+        if args.command == "run":
+            from reporting.coverage import write as write_coverage
+            coverage = write_coverage(root, manifest, list(results(root, manifest)))
+            print(f"{coverage.get('coverage', coverage['json'])}", flush=True)
         if args.command == "pipeline" and any(
             task["config"]["device"] == "npu" and task["config"]["profiling"].get("enabled", False)
             for task in manifest["tasks"]
@@ -212,7 +339,14 @@ def main(argv=None):
 
 
 def single_operator(operator, argv=None):
+    """Entry point for ``python -m operators.<id>.benchmark``.
+
+    L0 is a shared hardware baseline and is not part of a single-operator run, so
+    the operator entry point defaults to L1-L4 unless the caller selects levels.
+    """
     args = list(sys.argv[1:] if argv is None else argv)
+    if "--levels" not in args:
+        args += ["--levels", "L1,L2,L3,L4"]
     return main(["run", *args, "--operators", operator])
 
 

@@ -10,8 +10,14 @@ Overlap is not assumed from "two tasks were submitted".  ``direct`` metrics
 include the measured intersection of the two device-side windows, and the case
 fails its validation when the intersection is empty or when either task produced
 wrong data.  Without device events the intersection falls back to host
-timestamps and the report marks the overlap as ``unverified``.
+timestamps; the result is still stored but marked ``overlap_verified=False`` with
+an explicit reason, so the report never shows a fabricated overlap ratio.
+
+Both the communication volume (``message_bytes``) and the compute shape are
+recorded with the result, so an overlap point is only compared with another point
+that used the same communication and compute size.
 """
+import math
 import time
 
 import torch
@@ -29,16 +35,17 @@ def prepare(ctx, case, work, size, params):
     if ctx.size < 2 or ctx.device.type == "cpu":
         raise BenchmarkUnavailable("unsupported", "overlap baselines require at least two NPU ranks")
     compute = params.get("compute") or "gmm"
-    comm = _communication(ctx, size)
-    compute_run, compute_check = _compute(ctx, work, compute)
+    payload_bytes = int(params.get("message_bytes") or size)
+    comm = _communication(ctx, payload_bytes)
+    compute_run, compute_check, shape = _compute(ctx, work, compute, payload_bytes)
     state = {}
 
     def run():
         torch.npu.synchronize(ctx.device)
         ctx.barrier()
         state["comm_only"] = _time(ctx, comm)
-        state["compute_only"] = _time(ctx, compute_run)
-        state["concurrent"] = _concurrent(ctx, comm, compute_run, state)
+        state["compute_only"] = _time(ctx, {"run": compute_run})
+        state["concurrent"] = _concurrent(ctx, comm, compute_run)
         return None
 
     def validate():
@@ -47,7 +54,8 @@ def prepare(ctx, case, work, size, params):
         compute_check()
         state["validated"] = True
         return {"checked": "both_tasks", "communication": comm_check,
-                "compute": compute, "overlap_ns": state["concurrent"]["overlap_ns"]}
+                "compute": compute, "compute_shape": shape,
+                "overlap_ns": state["concurrent"]["overlap_ns"]}
 
     def metrics():
         serial = state["comm_only"]["ms"] + state["compute_only"]["ms"]
@@ -55,6 +63,14 @@ def prepare(ctx, case, work, size, params):
         comm_ns, compute_ns = state["concurrent"]["comm_ns"], state["concurrent"]["compute_ns"]
         overlap_ns = state["concurrent"]["overlap_ns"]
         denominator = max(1, min(comm_ns, compute_ns))
+        ratio = overlap_ns / denominator
+        device_events = state["concurrent"]["device_events"]
+        verified = bool(device_events and overlap_ns > 0.05 * denominator)
+        reason = None
+        if not device_events:
+            reason = "device events unavailable: overlap uses host timestamps and is not verified"
+        elif not verified:
+            reason = "device windows do not intersect enough to prove overlap"
         return {
             "latency": {"unit": "ms", "scope": "concurrent_wall", "source": "measured",
                         "p50": concurrent, "p95": None, "p99": None,
@@ -62,19 +78,29 @@ def prepare(ctx, case, work, size, params):
                         "compute_only_ms": state["compute_only"]["ms"],
                         "serial_sum_ms": serial,
                         "concurrent_ms": concurrent,
+                        "communication_ms": comm_ns / 1e6,
+                        "compute_ms": compute_ns / 1e6,
                         "communication_slowdown": (comm_ns / 1e6) / state["comm_only"]["ms"]
                         if state["comm_only"]["ms"] else None,
                         "compute_slowdown": (compute_ns / 1e6) / state["compute_only"]["ms"]
                         if state["compute_only"]["ms"] else None,
-                        "overlap_ratio": overlap_ns / denominator,
-                        "overlap_verified": bool(state["concurrent"]["device_events"]
-                                                 and overlap_ns > 0.05 * denominator),
-                        "overlap_evidence": ("device_events" if state["concurrent"]["device_events"]
-                                             else "host_timestamps")},
+                        "overlap_ratio": ratio if device_events else None,
+                        "overlap_ratio_source": "device_event_intersection" if device_events
+                        else "not_available",
+                        "overlap_verified": verified,
+                        "overlap_unavailable_reason": reason,
+                        "overlap_evidence": "device_events" if device_events else "host_timestamps"},
             "bandwidth": {"unit": "bytes", "scope": "per_rank", "source": "configuration",
-                          "payload_bytes": int(params["message_bytes"]),
-                          "communication_GBps": (int(params["message_bytes"]) /
-                                                 (comm_ns / 1e3)) if comm_ns else None},
+                          "payload_bytes": comm["payload_bytes"],
+                          "definition": comm["definition"],
+                          "communication_GBps": (comm["payload_bytes"] / (comm_ns / 1e3))
+                          if comm_ns else None},
+            "compute_shape": shape,
+            "overlap": {"ratio": ratio if device_events else None,
+                        "verified": verified, "evidence": "device_events" if device_events
+                        else "host_timestamps", "reason": reason,
+                        "communication_ms": comm_ns / 1e6, "compute_ms": compute_ns / 1e6,
+                        "concurrent_ms": concurrent},
             "samples": [],
         }
 
@@ -95,7 +121,7 @@ def _time(ctx, task):
     return {"ms": (time.perf_counter_ns() - started) / 1e6}
 
 
-def _concurrent(ctx, comm, compute_run, state):
+def _concurrent(ctx, comm, compute_run):
     """Submit both tasks, then measure the intersection of their device windows."""
     streams = {"comm": torch.npu.Stream(device=ctx.device),
                "compute": torch.npu.Stream(device=ctx.device)}
@@ -136,29 +162,36 @@ def _concurrent(ctx, comm, compute_run, state):
 
 
 def _communication(ctx, size):
-    """Default communication task: one framework AllToAll over the EP group."""
-    value = torch.full((size,), ctx.rank % 127 + 1, dtype=torch.uint8, device=ctx.device)
+    """Framework AllToAll with a configured payload size.
+
+    The message is rounded up to a multiple of the EP group so every rank sends
+    the same stripe; the actual per-rank and global byte counts are recorded.
+    """
+    torch = ctx.torch
+    group = max(1, ctx.size)
+    per = max(1, math.ceil(int(size) / group))
+    total = per * group
+    value = torch.full((total,), ctx.rank % 127 + 1, dtype=torch.uint8, device=ctx.device)
     destination = torch.empty_like(value)
-    stripe = size // ctx.size if ctx.size else 0
 
     def run():
         ctx.dist.all_to_all_single(destination, value, group=ctx.ep_group)
 
     def validate():
-        if not stripe:
-            return {"checked": "skipped", "reason": "message smaller than the EP group"}
-        peers = (torch.arange(ctx.size, device=ctx.device) % 127).add(1).to(torch.uint8)
-        if not torch.equal(destination, peers.repeat_interleave(stripe)):
+        expected = torch.cat([value.new_full((per,), peer % 127 + 1) for peer in range(group)])
+        if not torch.equal(destination, expected):
             raise CorrectnessError("overlap communication payload did not match")
-        return {"checked": "byte_exact"}
+        return {"checked": "byte_exact", "per_rank_bytes": total}
 
-    return {"run": run, "validate": validate, "mechanism": "auto",
+    return {"run": run, "validate": validate, "mechanism": "auto", "payload_bytes": total,
+            "definition": ("per_rank_bytes counts the equal split sent to every other rank; "
+                           "the declared message_bytes is rounded up to a multiple of the EP group"),
             "evidence": [Evidence(source="native_descriptor", claim={},
                                   detail="torch HCCL all_to_all_single on a dedicated stream")]}
 
 
-def _compute(ctx, work, kind):
-    if kind in ("gmm", "gmm_swiglu"):
+def _compute(ctx, work, kind, size):
+    if kind in ("gmm", "gmm_swiglu", "swiglu"):
         reference = CollectiveBackend(None, "alltoall")
         reference.initialize(ctx)
         dispatched = reference.dispatch(work)
@@ -166,6 +199,23 @@ def _compute(ctx, work, kind):
         counts = dispatched.expert_token_counts
         gate_up = gmm1(work, rows, counts, ctx).detach().requires_grad_()
         activation = activate(gate_up, work.limit)
+        shape = {"mode": "workload_expert_rows", "rows": int(rows.shape[0]),
+                 "groups": len(counts), "k": int(work.hidden_states.shape[1]),
+                 "n": int(work.w_gate.shape[1])}
+
+        if kind == "swiglu":
+            def run():
+                return activate(gate_up, work.limit)
+
+            def check():
+                got = run()
+                if got.shape != activation.shape:
+                    raise CorrectnessError("overlap SwiGLU produced a different shape")
+                denominator = float(activation.float().norm()) + 1e-12
+                if float((got.float() - activation.float()).norm()) / denominator > 0.04:
+                    raise CorrectnessError("overlap SwiGLU result drifted from the reference")
+
+            return run, check, shape
 
         def run():
             value = gmm1(work, rows, counts, ctx)
@@ -184,19 +234,9 @@ def _compute(ctx, work, kind):
                 raise CorrectnessError("overlap compute result drifted from the reference")
             del activation
 
-        return run, check
-    if kind == "swiglu":
-        value = torch.full((size_guess(work), 1024), 0.5, device=ctx.device)
-
-        def run():
-            return activate(value, work.limit)
-
-        def check():
-            run()
-
-        return run, check
+        return run, check, shape
     if kind == "hbm_copy":
-        source = torch.full((size_guess(work),), 1, dtype=torch.uint8, device=ctx.device)
+        source = torch.full((int(size),), 1, dtype=torch.uint8, device=ctx.device)
         destination = torch.zeros_like(source)
 
         def run():
@@ -207,13 +247,8 @@ def _compute(ctx, work, kind):
             if not bool((destination == 1).all()):
                 raise CorrectnessError("overlap HBM copy produced different bytes")
 
-        return run, check
+        return run, check, {"mode": "hbm_copy", "bytes": int(size), "groups": 0}
     raise BenchmarkUnavailable("unsupported", f"unknown overlap compute task {kind!r}")
-
-
-def size_guess(work):
-    tokens = work.route.tokens if hasattr(work, "route") else [32]
-    return max(1, int(sum(tokens)) * 128)
 
 
 def request_for(case, params):

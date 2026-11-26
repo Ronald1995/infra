@@ -1,0 +1,73 @@
+# Global base configuration for every EP benchmark.
+#
+# Only *shared measurement definitions* live here: test levels, the message-size
+# candidate pool, L0 dimension sweeps, verification policy and the fixed compute
+# shape.  EP-specific environment (EP size, model, topology, rank mapping) is in
+# ep8_bf16.yaml / ep64_bf16.yaml / ep128_bf16.yaml, and scenario definitions are
+# in the suite files.  A benchmark plan composes the three layers.
+schema_version: 1
+device: npu
+
+distributed:
+  ep_size: 8
+  tp_size: 1
+  timeout_seconds: 180
+
+model:
+  hidden_size: 7168
+  intermediate_size: 3072
+  num_experts: 24
+  top_k: 6
+  dtype: bfloat16
+  swiglu_limit: 10.0
+
+workload:
+  tokens_per_rank: 4096
+  routing: balanced
+  seed: 42
+
+benchmark:
+  warmup: 20
+  iterations: 50
+  # The complete matrix runs every level; a suite may narrow this.
+  levels: [L0, L1, L2, L3, L4]
+  rank_reduction: max
+  # Candidate pool only: each L0 case keeps the window that makes sense for it
+  # (latency cases stop at 1 MiB, throughput cases start at 1 MiB).  The union
+  # still spans 4 KiB .. 1 GiB.
+  message_bytes: [4096, 65536, 1048576, 16777216, 268435456, 1073741824]
+  outstanding: [1, 4]
+  # 1/2/4 peers compare one link at a fixed fan-out; 0 means "all other ranks"
+  # and measures how the mechanism scales with the EP group.
+  peer_counts: [1, 2, 4, 0]
+  cores: [1, 2, 4]
+  quiet_modes: [0, 1]
+  transport_mode: write
+  transport:
+    enabled: [ub_memory, urma, ub_ctp, ub_rtp, hccs, roce, uboe, shmem_mte, shmem_udma]
+    library: null
+    peer_policy: ring
+  execution:
+    modes: [default, aicpu_ts, aiv, aiv_only, ccu_sched]
+  compute:
+    # Fixed-shape compute baseline: the same M/N/K and group count at every EP
+    # size, so the kernel itself is compared instead of the routing result.
+    fixed_shape: {m: 8192, k: 7168, n: 3072, groups: 8}
+  verification:
+    enabled: true
+    require_verified_for_comparison: true
+    trust_descriptor: false
+    hccl_log_paths: []
+    hcomm_log_paths: []
+
+profiling:
+  enabled: false
+  warmup: 1
+  active: 3
+
+load_balance:
+  enabled: false
+  redundant_experts: 0
+
+dedup:
+  mode: none

@@ -1,3 +1,7 @@
+# Prefill scenario: large token count, large communication, batch expert GEMM.
+#
+# The case set is the same `decode`/`prefill` suite listing
+# (COMM-001, COMM-003, MOE-001, LAYER-001); only the workload below differs.
 suite_id: prefill
 distributed:
   ep_size: 8

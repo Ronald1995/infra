@@ -1,4 +1,4 @@
-"""Case catalog matching the methodology IDs and actual measurement boundaries.
+"""Case catalog: the single source of truth for every benchmark case.
 
 L0 is split into six families, and the family is part of the case metadata so the
 scheduler, the runner and the report can route a case without inspecting its ID:
@@ -9,11 +9,31 @@ scheduler, the runner and the report can route a case without inspecting its ID:
 ``collective``  framework-level collectives through torch HCCL (``HW-001``..)
 ``compute``     standalone GMM / SwiGLU
 ``overlap``     communication and compute submitted concurrently
+
+The catalog is also the only place that knows about *legacy* L0 identifiers.
+``HW-007``, ``HW-008``, ``HW-009`` and ``HW-012`` were renamed by the layered L0
+refactor; they stay in the catalog so old plans and old result files remain
+readable, but they declare ``alias_of`` and the scheduler does not expand them
+into a second copy of the same measurement.  Whatever consumes a manifest (the
+report, ``plan``, the coverage matrix) sees the legacy ID, so nothing is dropped
+silently.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 CATEGORIES = ("memory", "transport", "execution", "collective", "compute", "overlap",
               "operator")
+
+#: Legacy L0 identifiers and the canonical case they now describe.
+LEGACY_ALIASES = {
+    # Native SHMEM baselines moved into the LINK family.
+    "HW-007": "LINK-012",
+    "HW-008": "LINK-013",
+    # The device-copy framework case is the contiguous HBM copy case.
+    "HW-009": "MEM-001",
+    # The concurrent communication/GMM case is now the first overlap case; the
+    # remaining OVERLAP-* cases sweep the other mechanisms and compute kernels.
+    "HW-012": "OVERLAP-001",
+}
 
 
 @dataclass(frozen=True)
@@ -26,6 +46,15 @@ class Case:
     category: str = "operator"
     #: Which benchmark dimensions this case sweeps over.
     dimensions: tuple[str, ...] = ()
+    #: Canonical case that superseded this legacy identifier, if any.
+    alias_of: str | None = None
+    #: Free-form labels used by suites and reports that do not want to hard-code
+    #: case identifiers.
+    tags: tuple[str, ...] = ()
+
+    @property
+    def legacy(self):
+        return self.alias_of is not None
 
 
 #: Static per-case parameters.  ``mechanism``/``execution_resource`` mirror the
@@ -126,6 +155,9 @@ def catalog():
         for case_id in (f"{prefix}-{number:03}",)
     }
     cases.update(l0_cases(cases))
+    for legacy, canonical in LEGACY_ALIASES.items():
+        if legacy in cases:
+            cases[legacy] = replace(cases[legacy], alias_of=canonical)
     return cases
 
 
@@ -166,16 +198,20 @@ def l0_cases(base):
                                    category=_category_for(case_id),
                                    dimensions=dimensions[prefix])
     result["HW-009"] = Case("HW-009", "L0", "device_copy", (), category="memory")
-    result["HW-010"] = Case("HW-010", "L0", "grouped_matmul", (), category="compute")
-    result["HW-011"] = Case("HW-011", "L0", "swiglu", (), category="compute")
+    result["HW-010"] = Case("HW-010", "L0", "grouped_matmul", (), category="compute",
+                            dimensions=("shape_mode", "variant"))
+    result["HW-011"] = Case("HW-011", "L0", "swiglu", (), category="compute",
+                            dimensions=("shape_mode", "variant"))
     for case_id in ("HW-001", "HW-002", "HW-003", "HW-004", "HW-005", "HW-006"):
         result[case_id] = Case(case_id, "L0", base[case_id].operation,
-                               base[case_id].requires, category="collective")
+                               base[case_id].requires, category="collective",
+                               dimensions=("message_bytes",))
     result["HW-012"] = Case("HW-012", "L0", "concurrent_gmm_communication", (),
-                            category="overlap")
+                            category="overlap", dimensions=("message_bytes",))
     for case_id in ("HW-007", "HW-008"):
         result[case_id] = Case(case_id, "L0", base[case_id].operation,
-                               base[case_id].requires, category="transport")
+                               base[case_id].requires, category="transport",
+                               dimensions=("message_bytes", "variant"))
     return result
 
 
@@ -189,3 +225,29 @@ def l0_family(case):
             "concurrent_gmm_communication": "overlap",
             "shmem_mte": "transport", "shmem_scaleout": "transport"}.get(case.operation,
                                                                         "collective")
+
+
+def canonical_cases():
+    """Catalog entries without the legacy aliases, keyed by case ID."""
+    return {case_id: case for case_id, case in catalog().items() if case.alias_of is None}
+
+
+def alias_map():
+    """Legacy case ID -> canonical case ID."""
+    return {case.id: case.alias_of for case in catalog().values() if case.alias_of}
+
+
+def resolve(case_id):
+    """Return the canonical ID for ``case_id`` (itself when it is canonical)."""
+    return catalog()[case_id].alias_of or case_id
+
+
+def case_counts():
+    """Dynamic case counts by level, including the legacy aliases."""
+    counts = {"total": 0, "canonical": 0}
+    for case in catalog().values():
+        counts["total"] += 1
+        if case.alias_of is None:
+            counts["canonical"] += 1
+        counts[case.level] = counts.get(case.level, 0) + 1
+    return counts

@@ -18,13 +18,14 @@ DEFAULT = {
     "model": {"hidden_size": 128, "intermediate_size": 64, "num_experts": 8,
               "top_k": 2, "dtype": "bfloat16", "swiglu_limit": 10.0},
     "workload": {"tokens_per_rank": 32, "routing": "balanced", "seed": 42},
-    "benchmark": {"warmup": 2, "iterations": 5, "levels": ["L1", "L2", "L3"],
+    "benchmark": {"warmup": 2, "iterations": 5, "levels": ["L0", "L1", "L2", "L3", "L4"],
                   "timing": "output_ready", "rank_reduction": "max",
                   "retries": 0, "task_timeout_seconds": 3600,
                   "message_bytes": [4096], "outstanding": [1], "peer_counts": [],
                   "cores": [1], "quiet_modes": [0], "transport_mode": "write",
-                  "transport": {"enabled": [], "library": None},
+                  "transport": {"enabled": [], "library": None, "peer_policy": "ring"},
                   "execution": {"modes": ["default"]},
+                  "compute": {"fixed_shape": {"m": 8192, "k": 7168, "n": 3072, "groups": 8}},
                   "verification": {"enabled": True, "require_verified_for_comparison": True,
                                    "trust_descriptor": False, "hccl_log_paths": [],
                                    "hcomm_log_paths": []},
@@ -120,6 +121,15 @@ L0_MECHANISMS = ("ub_memory", "urma", "ub_ctp", "ub_rtp", "roce", "hccs", "uboe"
                  "shmem_mte", "shmem_udma")
 L0_ACCELERATORS = ("default", "host_ts", "aicpu_ts", "aiv", "aiv_only", "ccu_ms",
                    "ccu_sched", "aicpu", "ccu_ms_only", "ccu_sched_only")
+PEER_POLICIES = ("ring", "same_server", "cross_server")
+
+#: Sections that describe the EP environment rather than a suite scenario.  A
+#: suite configuration may not override them when it is merged into a benchmark
+#: plan, otherwise ``decode.yaml`` would silently drag EP8's model into EP64.
+ENVIRONMENT_SECTIONS = frozenset({
+    "schema_version", "extends", "matrix", "device", "distributed", "model",
+    "topology", "launch",
+})
 
 
 def validate_l0(settings):
@@ -147,6 +157,16 @@ def validate_l0(settings):
         raise ValueError(f"benchmark.execution.modes must be a subset of {L0_ACCELERATORS}")
     if settings.get("transport_mode") not in ("write", "read", "get", "put"):
         raise ValueError("benchmark.transport_mode must be write, read, put or get")
+    policy = transport.get("peer_policy", "ring")
+    if policy not in PEER_POLICIES:
+        raise ValueError(f"benchmark.transport.peer_policy must be one of {PEER_POLICIES}")
+    policies = transport.get("peer_policies", [])
+    if not isinstance(policies, list) or set(policies) - set(PEER_POLICIES):
+        raise ValueError(f"benchmark.transport.peer_policies must be a subset of {PEER_POLICIES}")
+    shape = (settings.get("compute") or {}).get("fixed_shape") or {}
+    for key in ("m", "k", "n", "groups"):
+        if type(shape.get(key)) is not int or shape[key] < 1:
+            raise ValueError(f"benchmark.compute.fixed_shape.{key} must be a positive integer")
     verification = settings.get("verification") or {}
     for key in ("enabled", "require_verified_for_comparison", "trust_descriptor"):
         if not isinstance(verification.get(key, False), bool):
@@ -164,6 +184,9 @@ def load_configs(path, ancestry=()):
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError("configuration must be a YAML mapping")
+    if "plan" in raw:
+        raise ValueError(
+            f"{path.name} is a benchmark plan; load it with --plan instead of --config")
     parent = raw.pop("extends", None)
     matrix = raw.pop("matrix", [{}])
     if parent:
@@ -180,3 +203,35 @@ def load_configs(path, ancestry=()):
     if not isinstance(matrix, list) or not matrix or any(not isinstance(v, dict) for v in matrix):
         raise ValueError("matrix must be a nonempty list of configuration overrides")
     return [validate(merge(merge(DEFAULT, raw), item)) for item in matrix]
+
+
+def load_suite_overlays(path, ep_size=None):
+    """Return the suite-scoped layers declared by one configuration file.
+
+    A suite file is written as a complete configuration so it can still be used
+    with ``--config``.  When a benchmark plan composes it, only the *scenario*
+    sections survive: EP size, device, model and topology belong to the EP size
+    configuration and are never taken from a suite file.  A ``matrix`` list is
+    expanded into one layer per point, and scaling matrices are filtered to the
+    requested EP size.
+    """
+    path = Path(path).resolve()
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("configuration must be a YAML mapping")
+    raw.pop("extends", None)
+    matrix = raw.pop("matrix", [{}]) or [{}]
+    if not isinstance(matrix, list) or any(not isinstance(item, dict) for item in matrix):
+        raise ValueError("matrix must be a list of configuration overrides")
+    base = {key: value for key, value in raw.items() if key not in ENVIRONMENT_SECTIONS}
+    if "backends" in base:
+        base["operators"] = base.pop("backends")
+    if base.get("workload", {}).get("routing") == "hot_expert":
+        base["workload"]["routing"] = "expert_hotspot"
+    points = []
+    for item in matrix:
+        declared = (item.get("distributed") or {}).get("ep_size")
+        if declared is not None and ep_size is not None and declared != ep_size:
+            continue
+        points.append(merge(base, item))
+    return points or [base]
