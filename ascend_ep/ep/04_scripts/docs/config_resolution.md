@@ -221,6 +221,37 @@ still cannot reach 100% verified coverage, and the report now says so explicitly
 (`analysis/results.json` carries `coverage_metrics` and `long_tail`; the report has a
 dedicated long-tail section).
 
+## 5.8 Execution profiles and topology provenance
+
+`common/profiles.py` separates "what the plan declares" from "how much of it this
+invocation executes":
+
+| Profile | Suites | Levels | Dimensions | Aliases |
+|---|---|---|---|---|
+| `smoke` | `all` only | L0, L1 | first value | dedupe |
+| `core` | standard suites | plan | all | dedupe |
+| `full` (default) | plan's list | plan | all | dedupe |
+| `exhaustive` | plan's list | plan | all | run |
+
+`--execution-profile` (or `plan.profile`) selects it; the resolved profile is written to
+the manifest (`execution_profile`) and every plan point records
+`benchmark.dimension_policy`, so a narrowed run is visible instead of looking like a
+smaller matrix.
+
+Topology provenance uses exactly five states, normalised on read:
+
+| State | Meaning |
+|---|---|
+| `discovered` | read from the running deployment (runtime probe) |
+| `user_provided` | an explicit rank map in the environment or the plan |
+| `inferred` | derived from a declared grouping rule |
+| `synthetic` | the plan's `server_size`/`supernode_size` pattern (never verified) |
+| `unknown` | no topology was obtainable |
+
+Legacy strings (`environment`, `explicit`, `plan`, `unavailable`) are mapped onto the
+five states, and an unrecognised value becomes `unknown` -- a claim of "verified" is
+never invented.
+
 ## 6. What is still open (tracked, not hidden)
 
 | Item | State |

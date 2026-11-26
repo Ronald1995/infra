@@ -99,6 +99,7 @@ def case_dimensions(case, settings, ep_size=None, variant=None):
     mechanism = transport_mechanism(case)
     dimensions["message_bytes"] = {
         "type": "sweep", "values": message_sizes(case, settings),
+        "policy": settings.get("dimension_policy") or "all",
         "consumer": _consumer("message_bytes")}
     if case.sweeps("outstanding"):
         dimensions["outstanding"] = {
@@ -130,8 +131,11 @@ def case_dimensions(case, settings, ep_size=None, variant=None):
         if kind == "sweep" and variant is not None:
             kind = variant_support.get(variant, kind)
         if kind == "sweep":
-            dimensions[name] = {"type": "sweep",
-                                "values": [int(value) for value in configured],
+            values = [int(value) for value in configured]
+            if (settings.get("dimension_policy") or "all") == "first":
+                values = values[:1]
+            dimensions[name] = {"type": "sweep", "values": values,
+                                "policy": settings.get("dimension_policy") or "all",
                                 "consumer": _consumer(name)}
         elif kind == "fixed":
             dimensions[name] = {
@@ -250,7 +254,10 @@ def message_sizes(case, settings):
     selected = [size for size in candidates if lower <= size <= upper]
     # Never return an empty sweep: fall back to the closest candidate and let the
     # capability/parameter checks decide whether it is runnable.
-    return selected or [candidates[0]]
+    selected = selected or [candidates[0]]
+    if (settings.get("dimension_policy") or "all") == "first":
+        selected = selected[:1]
+    return selected
 
 
 def peer_counts(case, settings, ep_size):
@@ -265,8 +272,11 @@ def peer_counts(case, settings, ep_size):
     if l0_family(case) != "transport" or not case.sweeps("peer_count"):
         return [(0, None)]
     available = ep_size - 1
+    counts = list(settings.get("peer_counts") or [0])
+    if (settings.get("dimension_policy") or "all") == "first":
+        counts = counts[:1]
     result = []
-    for count in settings.get("peer_counts") or [0]:
+    for count in counts:
         count = int(count)
         if count and count > available:
             result.append((count, f"peer_count={count} exceeds the {available} peers of EP{ep_size}"))
@@ -328,7 +338,9 @@ def _transport_sets(case, settings, size, variant, ep_size):
 
 def _execution_sets(case, settings, size, variant):
     static = case.requested()
-    modes = (settings.get("execution") or {}).get("modes") or ["default"]
+    modes = list((settings.get("execution") or {}).get("modes") or ["default"])
+    if (settings.get("dimension_policy") or "all") == "first":
+        modes = modes[:1]
     return [{**{"variant": variant, "message_bytes": size}, **static, "accelerator": mode,
              "operation": static.get("operation", case.operation)} for mode in modes]
 

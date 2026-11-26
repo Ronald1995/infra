@@ -27,6 +27,7 @@ from common.registry import ROOT
 from common.scheduler import (ALIAS_MODES, case_index, check_completeness, make_plan,
                               merge_tasks)
 from common.storage import fingerprint
+from common import profiles as profiles_module
 from common.suites import apply_scaling, normalize, select, workload_policy
 from common.variants import case_dimension_records
 
@@ -103,6 +104,7 @@ class BenchmarkPlan:
     report: dict = field(default_factory=dict)
     cases: list = field(default_factory=list)
     topology: dict = field(default_factory=dict)
+    profile: str = "full"
 
     @property
     def directory(self):
@@ -129,7 +131,7 @@ class BenchmarkPlan:
             "levels": list(self.levels),
             "suites": list(self.suites),
             "operators": self.operators,
-            "aliases": self.aliases,
+            "aliases": self.aliases, "profile": self.profile,
             "execution": dict(self.execution),
             "report": dict(self.report),
             "topology_pattern": dict(self.topology),
@@ -215,6 +217,9 @@ def load_plan(path):
         normalize(suite_id): _resolve(path.parent, item)
         for suite_id, item in (spec.get("suite_configs") or raw.get("suite_configs") or {}).items()
     }
+    profile = spec.get("profile") or raw.get("profile") or "full"
+    if profile not in profiles_module.PROFILE_NAMES:
+        raise ValueError(f"plan profile must be one of {profiles_module.PROFILE_NAMES}")
     execution = {**DEFAULT_EXECUTION, **(raw.get("execution") or {})}
     report = {**DEFAULT_REPORT, **(raw.get("report") or {})}
     for key in DEFAULT_EXECUTION:
@@ -245,7 +250,8 @@ def load_plan(path):
         path=path, name=str(spec.get("name") or path.stem), ep_sizes=list(ep_sizes),
         operators=operators, levels=list(levels), suites=suites, aliases=aliases,
         mode=mode, base_config=base, ep_configs=ep_configs, suite_configs=suite_configs,
-        execution=execution, report=report, cases=list(cases), topology=topology)
+        execution=execution, report=report, cases=list(cases), topology=topology,
+        profile=profile)
 
 
 def _rank_domains(value, size, name):
@@ -273,6 +279,20 @@ def _rank_domains(value, size, name):
     raise ValueError(f"topology {name} must be a list or a mapping")
 
 
+#: The five declared topology provenance states.
+TOPOLOGY_SOURCES = ("discovered", "user_provided", "inferred", "synthetic", "unknown")
+_LEGACY_SOURCES = {"environment": "user_provided", "explicit": "user_provided",
+                   "plan": "synthetic", "unavailable": "unknown", "plan pattern": "synthetic"}
+
+
+def normalize_source(value):
+    """Map a declared source onto the five-state vocabulary."""
+    if value is None:
+        return "unknown"
+    value = _LEGACY_SOURCES.get(value, value)
+    return value if value in TOPOLOGY_SOURCES else "unknown"
+
+
 def _apply_topology(plan, config, ep_size):
     """Compose the rank-to-server and server-to-supernode map for one EP point.
 
@@ -289,22 +309,22 @@ def _apply_topology(plan, config, ep_size):
     """
     pattern = dict(plan.topology or {})
     topology = dict(config.get("topology") or {})
-    source = topology.get("source")
+    source = normalize_source(topology.get("source")) if topology.get("source") else None
     verified = bool(topology.get("verified", False))
     server_ids = topology.get("server_ids")
     supernode_ids = topology.get("supernode_ids")
 
     if server_ids is not None:
         server_ids = _rank_domains(server_ids, ep_size, "server_ids")
-        source = source or "environment"
+        source = source or "user_provided"
     elif pattern.get("rank_to_server") is not None:
         server_ids = _rank_domains(pattern["rank_to_server"], ep_size, "rank_to_server")
-        source = "explicit"
+        source = "user_provided"
         verified = verified or bool(pattern.get("verified", False))
     elif pattern.get("server_size"):
         server_size = pattern["server_size"]
         server_ids = [rank // server_size for rank in range(ep_size)]
-        source = "plan"
+        source = "synthetic"
         verified = False
 
     if supernode_ids is not None:
@@ -324,8 +344,8 @@ def _apply_topology(plan, config, ep_size):
     if server_ids is None and supernode_ids is None:
         # Nothing was declared: keep the topology empty and make the absence
         # explicit so a cross-server comparison cannot silently run.
-        return {**config, "topology": {**topology, "source": "unavailable", "verified": False}}
-    composed = {**topology, "source": source or "unavailable", "verified": verified}
+        return {**config, "topology": {**topology, "source": "unknown", "verified": False}}
+    composed = {**topology, "source": normalize_source(source), "verified": verified}
     if server_ids is not None:
         composed["server_ids"] = server_ids
         composed["server_size"] = max(Counter(server_ids).values())
@@ -346,7 +366,7 @@ def _adapt_router_bias(config):
     return config, None
 
 
-def plan_points(plan, ep_sizes=None, suites=None, levels=None):
+def plan_points(plan, ep_sizes=None, suites=None, levels=None, dimension_policy=None):
     """Expand a plan into configuration points (no capability checks yet).
 
     Every layer is read *raw* and composed by :func:`common.config.resolve_config`,
@@ -376,6 +396,9 @@ def plan_points(plan, ep_sizes=None, suites=None, levels=None):
                 layers.append(("suite", overlay, overlay_provenance))
                 config, provenance = resolve_config(layers)
                 config["suite_id"] = suite_id
+                if dimension_policy:
+                    config["benchmark"]["dimension_policy"] = dimension_policy
+                    provenance["benchmark.dimension_policy"] = f"profile:{plan.profile}"
                 config = _apply_topology(plan, config, ep_size)
                 provenance.update({f"topology.{key}": _topology_source(config, plan)
                                    for key in (config.get("topology") or {})})
@@ -409,12 +432,12 @@ def plan_points(plan, ep_sizes=None, suites=None, levels=None):
 def _topology_source(config, plan):
     """Name where one EP point's topology came from."""
     topology = config.get("topology") or {}
-    source = topology.get("source") or "unavailable"
-    if source == "environment":
-        return "environment"
-    if source == "explicit":
-        return "plan (explicit rank map)"
-    if source == "plan":
+    source = normalize_source(topology.get("source")) if topology.get("source") else None or "unavailable"
+    if source == "user_provided":
+        return ("environment (user-provided map)"
+                if topology.get("server_ids") and topology.get("source") == "user_provided"
+                else "plan (user-provided map)")
+    if source == "synthetic":
         return "plan pattern (synthetic, unverified)"
     return source
 
@@ -480,6 +503,7 @@ class PlanRun:
             "expected_cases": sorted(self.expected),
             "coverage": {str(ep): list(items) for ep, items in sorted(self.coverage.items())},
             "case_index": case_index(self.tasks),
+            "execution_profile": getattr(self, "profile", None),
             "config_audit": config_audit.audit(
                 self.tasks, [point.config for point in self.points],
                 {f"EP{point.ep_size}/{point.suite}": case_dimension_records(
@@ -492,7 +516,7 @@ class PlanRun:
 
 def _topology_record(config):
     topology = config.get("topology") or {}
-    return {"source": topology.get("source", "unavailable"),
+    return {"source": normalize_source(topology.get("source")),
             "verified": bool(topology.get("verified", False)),
             "server_size": topology.get("server_size"),
             "servers": len(set(topology.get("server_ids") or ())),
@@ -511,20 +535,39 @@ def _topology_summary(points, ep_size):
 
 
 def expand(plan, ep_sizes=None, suites=None, levels=None, cases=None, operators=None,
-           aliases=None):
-    """Expand a plan into a complete, integrity-checked task list."""
+           aliases=None, profile=None):
+    """Expand a plan into a complete, integrity-checked task list.
+
+    ``profile`` (smoke/core/full/exhaustive) narrows *this invocation*; it never
+    changes what the plan declares.  The resolved scope is recorded in the manifest.
+    """
     selected_eps = list(ep_sizes or plan.ep_sizes)
     selected_suites = [normalize(item) for item in (suites or plan.suites)]
     requested_levels = list(levels) if levels else None
-    effective_levels = requested_levels or list(plan.levels)
     cases = list(cases) if cases else None
+    name = profile or plan.profile
+    resolved = profiles_module.resolve(name, selected_suites,
+                                       requested_levels or plan.levels, cases)
+    effective_levels = resolved["levels"]
+    selected_suites = [normalize(item) for item in resolved["suites"]] or selected_suites
+    if resolved["cases_per_level"]:
+        pool = select(selected_suites, effective_levels)
+        chosen, seen = [], {}
+        for case_id in pool:
+            level = catalog()[case_id].level
+            if seen.get(level, 0) >= resolved["cases_per_level"]:
+                continue
+            seen[level] = seen.get(level, 0) + 1
+            chosen.append(case_id)
+        cases = chosen
     operators = operators if operators is not None else plan.operators
-    points = plan_points(plan, selected_eps, selected_suites, effective_levels)
+    points = plan_points(plan, selected_eps, selected_suites, effective_levels,
+                         resolved["dimension_policy"])
     store = {}
     for point in points:
         tasks = make_plan([point.config], operators=operators, levels=requested_levels,
                           cases=cases, suites=[point.suite],
-                          aliases=aliases or plan.aliases)
+                          aliases=aliases or resolved["aliases"])
         sources = [_relative(item) for item in point.sources]
         label = f"EP{point.ep_size}/{point.suite}"
         for task in tasks:
@@ -537,8 +580,10 @@ def expand(plan, ep_sizes=None, suites=None, levels=None, cases=None, operators=
                                        task["backend_id"], task["task_id"]))
     expected = expected_cases(plan, selected_suites, effective_levels, cases)
     coverage = check_completeness(ordered, selected_eps, expected)
-    return PlanRun(plan=plan, points=points, tasks=ordered, expected=expected,
-                   coverage=coverage)
+    run = PlanRun(plan=plan, points=points, tasks=ordered, expected=expected,
+                  coverage=coverage)
+    run.profile = resolved
+    return run
 
 
 def matrix_metadata(tasks, ep_sizes=None, suites=None, levels=None):

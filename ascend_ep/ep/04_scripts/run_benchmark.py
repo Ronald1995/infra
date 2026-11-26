@@ -52,6 +52,9 @@ def add_scope(parser):
     parser.add_argument("--suite", help="select one suite (all/full expands the complete catalog)")
     parser.add_argument("--operators", type=csv_values)
     parser.add_argument("--levels", type=csv_values)
+    parser.add_argument("--execution-profile", choices=("smoke", "core", "full", "exhaustive"),
+                        help="how much of the plan this invocation executes (default: the "
+                             "plan's own `profile`, otherwise full)")
     parser.add_argument("--cases", type=csv_values)
     parser.add_argument("--ep-size", type=csv_ints, metavar="N[,N...]",
                         help="select one or more points of an EP scaling matrix")
@@ -155,6 +158,7 @@ def build_tasks(args):
             levels=args.levels,
             cases=args.cases,
             operators=args.operators,
+            profile=getattr(args, "execution_profile", None),
         )
         matrix = run.metadata()
         matrix["selected_ep_sizes"] = sorted({task["ep_size"] for task in run.tasks})

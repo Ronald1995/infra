@@ -51,7 +51,7 @@ python scripts/benchmark_workflow.py interpret "<the user's sentence>" --out req
 Rules for scope:
 
 * **Defaults come from the plan**, not from this document. EP sizes, levels and suites are
-  read from `configs/benchmark_plan.yaml` (EP8/16/32/64/128, L0-L4, all suites) unless the user
+  read from `configs/benchmark_plan.yaml` (EP8/16/32/64/128, L0-L4, all suites, `profile: full`) unless the user
   names others.
 * An explicit value overrides **only its own dimension**. "EP64, L1-L2" narrows the EP size
   and the level; it does not drop suites, operators or cases.
@@ -144,6 +144,34 @@ readiness is in `python scripts/dependency_report.py`; deployment from a bare ho
 `docs/installation.md`.
 
 Details: `references/dependency_policy.md`, `references/execution_policy.md`.
+
+## 5.5 Coverage profiles and what a run must prove
+
+A run narrows the matrix only through a declared execution profile; it never silently
+drops a requirement:
+
+| Profile | Scope | Use |
+|---|---|---|
+| `smoke` | one case per level (L0, L1), one value per swept dimension | environment and correctness check |
+| `core` | every EP size, every standard case, every applicable operator, all dimension values, standard suites only | baseline comparison |
+| `full` | the plan's whole suite list, including routing targets, stragglers, combined long tail, topology, scaling, dedup, quantized | the default benchmark |
+| `exhaustive` | full plus the legacy alias identifiers as their own tasks | deep parameter study |
+
+`--execution-profile` selects it for one invocation; the plan's own `profile:` is the
+default. The manifest records the resolved profile, so a `smoke` run can never be
+reported as benchmark coverage.
+
+Before delivering, verify the four coverage numbers from `analysis/results.json`
+(`coverage_metrics`): planning, execution, correctness and verified performance. They
+are separate on purpose: planning can be 100% while a mechanism without an
+implementation keeps verified coverage below it, and the report must say which one is
+low and why.
+
+Routing targets and slow-rank injections are *paired* measurements: every stressed
+point needs a baseline under the same condition, and the long-tail section reports the
+slowdown, retention, amplification and calibration error -- or lists the point as
+`not_applicable` with the reason when no baseline exists. Never quote a slowdown ratio
+without its baseline.
 
 ## 6. Failure and recovery
 

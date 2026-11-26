@@ -821,12 +821,12 @@ def test_scaling_overlay_preserves_num_experts(plan, full_matrix):
 def test_topology_source_is_recorded(plan, full_matrix, tmp_path):
     for ep_size in plan.ep_sizes:
         record = full_matrix.metadata()["topology"][str(ep_size)]
-        assert record["source"] == "plan"
+        assert record["source"] == "synthetic"
         assert record["verified"] is False
         assert record["servers"] == max(1, ep_size // 8)
         assert record["supernodes"] == max(1, ep_size // 16)
     for point in full_matrix.points:
-        assert point.config["topology"]["source"] == "plan"
+        assert point.config["topology"]["source"] == "synthetic"
         assert point.config["topology"]["verified"] is False
     # An explicit map is taken as-is and may declare itself verified.
     explicit = "\n".join([
@@ -837,7 +837,7 @@ def test_topology_source_is_recorded(plan, full_matrix, tmp_path):
     ])
     run = expand_plan(load_plan(_mini_plan(tmp_path, "explicit", explicit)))
     topology = run.metadata()["topology"]["8"]
-    assert topology["source"] == "explicit" and topology["verified"] is True
+    assert topology["source"] == "user_provided" and topology["verified"] is True
     config = run.points[0].config["topology"]
     assert config["server_ids"] == [0, 0, 0, 0, 1, 1, 1, 1]
     assert config["supernode_ids"] == [0, 0, 0, 0, 0, 0, 0, 0]

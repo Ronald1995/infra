@@ -53,6 +53,7 @@ DEFAULT = {
                   "retries": 0, "task_timeout_seconds": 3600,
                   "message_bytes": [4096], "outstanding": [1], "peer_counts": [],
                   "cores": [1], "quiet_modes": [0], "transport_mode": "write",
+                  "dimension_policy": "all",
                   # Every mechanism is enabled by default, which is the legacy
                   # "no filter" behaviour.  An explicit subset restricts the LINK
                   # cases; an explicit `[]` disables all transport mechanisms and
@@ -98,6 +99,7 @@ OPTIONAL_FIELDS = {
         # Optional switches inside a section the default already declares.
         "transport": {"peer_policies", "library"},
         "straggler": True,
+        "dimension_policy": True,
         "execution": {"modes"},
     },
     "distributed": {"hierarchical_inner_size": True},
@@ -251,6 +253,8 @@ def validate(config):
                 raise ValueError(f"routing_control.{key} must be one of {allowed}")
     if b["timing"] not in TIMINGS or b["rank_reduction"] != "max":
         raise ValueError("invalid timing or rank reduction")
+    if b.get("dimension_policy", "all") not in ("all", "first"):
+        raise ValueError("benchmark.dimension_policy must be all or first")
     if not b["levels"] or set(b["levels"]) - set(LEVELS):
         raise ValueError("benchmark.levels must contain L0 through L4")
     if b.get("phase", "train") not in ("train", "forward"):
