@@ -51,11 +51,15 @@ sources:
     # the branch ("MindSpeed core_r0.8.0") rather than a commit, so the branch tip is
     # listed as a candidate -- not adopted silently, because a moving branch is not a
     # pin and changing what the operator runs needs a decision.
-    commit: null
-    manifest_pin_invalid: "dependencies/manifest.yaml pins c68e201a5733065b3aa59a3d44dc5e2ec700d7c9, absent upstream"
-    candidate_commits:
+    commit: 3f2fb3701ea26507b739ee4c8ae5f04aea7fa556
+    branch: master
+    pin_note: >-
+      The manifest used to pin c68e201, which upstream no longer contains.  Pinned by
+      decision to the master tip.  The registry calls the intended release
+      "core_r0.8.0" (46f6ca8c) -- it is recorded here as the documented alternative,
+      not applied, because changing which branch an operator runs is a version choice.
+    alternative_commits:
       "refs/heads/core_r0.8.0": 46f6ca8c3d04d9abd591f80346db8a8ebdb2eccd
-      "refs/heads/master": 3f2fb3701ea26507b739ee4c8ae5f04aea7fa556
     directory: mindspeed
     python_modules: [mindspeed]
     environment: base
@@ -162,10 +166,11 @@ sources:
     # manifest.yaml pins 41d4793…, which this repository does not contain (the clone
     # has 526 refs and `git cat-file` cannot find the object).  Left unpinned here so
     # the check reports UNPINNED instead of failing later with "unable to read tree".
-    commit: null
-    manifest_pin_invalid: "dependencies/manifest.yaml pins 41d479374004696e21f69f9c72094b1d29941987, absent upstream"
-    candidate_commits:
-      "refs/heads/main": 08873a62feb09f56dd41f5c812aec31375206a58
+    commit: 08873a62feb09f56dd41f5c812aec31375206a58
+    branch: main
+    pin_note: >-
+      The manifest used to pin 41d4793, which upstream does not contain (526 refs,
+      cat-file cannot find the object).  Pinned by decision to the main tip.
     directory: Mega-MoE-TD
     python_modules: [mega_moe, _moe_testkit]
     environment: base
@@ -199,7 +204,9 @@ sources:
     # mismatch is recorded rather than silently smoothed over.
     commit: ed07fa687d1ca30e636b5a86e1e6ceba82d88535
     tag: v1.8.0
-    manifest_pin_mismatch: "dependencies/manifest.yaml pins release_tag 8.2.RC1, absent upstream"
+    pin_note: >-
+      The manifest used to pin release_tag 8.2.RC1, which this repository does not
+      have; manifest and catalogue now both pin v1.8.0 (ed07fa68).
     directory: shmem
     python_modules: [shmem]
     environment: base

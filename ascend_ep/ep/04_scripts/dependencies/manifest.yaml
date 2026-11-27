@@ -1354,7 +1354,7 @@ dependencies:
 - id: shmem
   category: C
   kind: native_build
-  version: 8.2.RC1
+  version: v1.8.0
   required_by:
   - l0_transport
   - l0_overlap
@@ -1367,7 +1367,7 @@ dependencies:
   manual_step: null
   install:
   - git clone https://gitcode.com/cann/shmem <source-cache>/shmem
-  - git -C <source-cache>/shmem checkout tags/8.2.RC1
+  - git -C <source-cache>/shmem checkout ed07fa687d1ca30e636b5a86e1e6ceba82d88535
   - bash build.sh
   - pip install --no-build-isolation ./build/*.whl
   check:
@@ -1898,11 +1898,11 @@ dependencies:
 - id: mega-moe
   category: C
   kind: python_import
-  version: 41d4793
+  version: 08873a6
   required_by:
   - operator:megamoe_td
   source_url: https://gitcode.com/jzhoujg/Mega-MoE-TD
-  commit: 41d479374004696e21f69f9c72094b1d29941987
+  commit: 08873a62feb09f56dd41f5c812aec31375206a58
   license: Apache-2.0 (Mega-MoE-TD README; verify LICENSE in the checkout)
   optional: false
   installable: true
@@ -1910,7 +1910,7 @@ dependencies:
   manual_step: null
   install:
   - git clone https://gitcode.com/jzhoujg/Mega-MoE-TD <source-cache>/Mega-MoE-TD
-  - git -C <source-cache>/Mega-MoE-TD checkout 41d479374004696e21f69f9c72094b1d29941987
+  - git -C <source-cache>/Mega-MoE-TD checkout 08873a62feb09f56dd41f5c812aec31375206a58
   - pip install -e . --no-deps
   check:
     type: python_module
@@ -1924,7 +1924,7 @@ dependencies:
   - Ascend910_93
   supported_cann:
   - 8.2.RC1
-  notes: ascendep/ep/README.md names 41d479374004696e21f69f9c72094b1d29941987 as the standalone MegaMoE
+  notes: ascendep/ep/README.md names 08873a62feb09f56dd41f5c812aec31375206a58 as the standalone MegaMoE
     entry used by its 950DT EP2 runs; that entry is the Mega-MoE-TD project (src/mega_moe with MegaMoEFunction/FusedMoEForward/MoEForwardConfig,
     tests/_moe_testkit.py). `pip install -e . --no-deps` is its documented install; the hardware stack
     (CANN, Triton-distributed, ACLSHMEM) is deployment-provided by design. The adapters import `_moe_testkit`
@@ -1936,7 +1936,7 @@ dependencies:
   - _moe_testkit
   pin:
     kind: commit
-    value: 41d479374004696e21f69f9c72094b1d29941987
+    value: 08873a62feb09f56dd41f5c812aec31375206a58
     verify: git rev-parse HEAD
   conflicts: []
   install_spec:
@@ -1947,7 +1947,7 @@ dependencies:
       submodules: false
       pin:
         kind: commit
-        value: 41d479374004696e21f69f9c72094b1d29941987
+        value: 08873a62feb09f56dd41f5c812aec31375206a58
     subdirectories:
     - tests
     steps:
@@ -2087,7 +2087,7 @@ dependencies:
   kind: python_import
   version: core_r0.8.0
   source_url: https://gitcode.com/Ascend/MindSpeed
-  commit: c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+  commit: 3f2fb3701ea26507b739ee4c8ae5f04aea7fa556
   license: Apache-2.0 (Ascend MindSpeed); verify in the checkout
   optional: false
   installable: true
@@ -2116,7 +2116,7 @@ dependencies:
   - mindspeed
   pin:
     kind: commit
-    value: c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+    value: 3f2fb3701ea26507b739ee4c8ae5f04aea7fa556
     verify: git rev-parse HEAD
   conflicts: []
   install_spec:
@@ -2127,7 +2127,7 @@ dependencies:
       submodules: false
       pin:
         kind: commit
-        value: c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+        value: 3f2fb3701ea26507b739ee4c8ae5f04aea7fa556
     steps:
     - run: pip install --no-build-isolation -e .
     verify:
@@ -2137,7 +2137,7 @@ dependencies:
   - operator:hierarchical_alltoallv_mindspeed
   install:
   - git clone https://gitcode.com/Ascend/MindSpeed <source-cache>/MindSpeed
-  - git -C <source-cache>/MindSpeed checkout c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+  - git -C <source-cache>/MindSpeed checkout 3f2fb3701ea26507b739ee4c8ae5f04aea7fa556
   - pip install --no-build-isolation -e .
 - category: C
   kind: native_build

@@ -327,7 +327,7 @@ def test_peer_pinned_sources_are_scheduled(manifest):
     assert fetches["fsdp-turbo"]["pin"]["value"] == (
         "474a39a4f367fd740723238ebd3e4695f8c3f26c")
     assert fetches["mega-moe"]["pin"]["value"] == (
-        "41d479374004696e21f69f9c72094b1d29941987")
+        "08873a62feb09f56dd41f5c812aec31375206a58")
 
 
 def test_container_provisioned_dependencies_are_verify_only(entries):
