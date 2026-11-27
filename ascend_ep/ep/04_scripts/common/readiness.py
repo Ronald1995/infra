@@ -16,7 +16,7 @@ two questions on top of that:
 Nothing here installs anything: it classifies, so the caller can decide.  The
 install path stays ``scripts/install_deps.sh`` + ``scripts/vendor_ascendep.py``.
 """
-from common import status_map
+from common import platform_support, status_map
 
 READY = "READY"
 MISSING = "MISSING"
@@ -82,20 +82,23 @@ def soc_supported(supported, soc):
     return "*" in supported or soc in supported
 
 
-def _dep_state(entry, doctor_status, soc):
-    """Classify one dependency from its manifest entry and the doctor verdict.
+def _dep_state(entry, doctor_status, soc, support=None):
+    """Classify one dependency from the doctor verdict, its manifest entry and its
+    platform-support evidence.
 
-    The doctor verdict comes first: an installed, importable package is READY even
-    when its release notes never mentioned this SoC.  Only an *absent* dependency
-    can be reported as a SoC problem, and even then the honest label is
-    ``UNDOCUMENTED_ON_SOC`` -- the manifest describes ``supported_soc`` as what the
-    release is documented for, which is not the same claim as "cannot run here".
+    Order matters.  An installed, importable package is READY even when its release
+    notes never mentioned this SoC.  Only an *absent* dependency can be a SoC
+    question, and ``UNSUPPORTED_PLATFORM`` requires a ``rejected`` verdict that
+    carries evidence -- a release note that omits the SoC is ``undocumented``.
     """
     if doctor_status in ("pass", "warn"):
         return VERSION_MISMATCH if doctor_status == "warn" else READY
     if entry is None:
         return MISSING
-    if not soc_supported(entry.get("supported_soc"), soc):
+    if platform_support.blocks(support):
+        return UNSUPPORTED_PLATFORM
+    if support == platform_support.UNDOCUMENTED or (
+            support is None and not soc_supported(entry.get("supported_soc"), soc)):
         return UNDOCUMENTED_ON_SOC
     if entry.get("ownership") == "vendored":
         # A vendored tree is verified, never installed: absent means the tree is
@@ -123,7 +126,7 @@ def hardware_blocked(limits, soc):
     return not any(token in text for token in family)
 
 
-def classify(rows, entries, soc, operator_hardware=None):
+def classify(rows, entries, soc, operator_hardware=None, support_table=None):
     """Return ``{operator: {state, bucket, blockers, unsupported, undocumented}}``.
 
     ``rows`` are the per-operator rows of ``scripts.dependency_report.build()``;
@@ -132,11 +135,14 @@ def classify(rows, entries, soc, operator_hardware=None):
     ``constraints.hardware`` list, which is the only source of a platform block.
     """
     operator_hardware = operator_hardware or {}
+    support_table = support_table or {}
     result = {}
     for row in rows:
         states = {}
         for dep in row.get("dependencies") or []:
-            states[dep] = _dep_state(entries.get(dep), (row.get("states") or {}).get(dep), soc)
+            entry = entries.get(dep)
+            support = platform_support.status_for(support_table, dep, soc, entry)
+            states[dep] = _dep_state(entry, (row.get("states") or {}).get(dep), soc, support)
         for module in row.get("unmapped_modules") or []:
             states.setdefault(f"module:{module}", MISSING)
         limits = operator_hardware.get(row["operator"]) or ()

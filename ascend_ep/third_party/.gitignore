@@ -1,0 +1,7 @@
+# Third-party checkouts are data, not source: they arrive from a networked machine
+# and are verified by commit id (scripts/fetch_third_party.py --check).  Only the
+# catalogue and the README belong in git.
+*
+!sources.yaml
+!README.md
+!.gitignore

@@ -2000,7 +2000,6 @@ dependencies:
     - python scripts/vendor_ascendep.py --check
   required_by:
   - operator:allgather_fsdpturbo
-  - operator:allgather_hccl
   - operator:allgather_megatron
   - operator:allgather_overlap_mindspeed
   - operator:alltoall_fsdpturbo

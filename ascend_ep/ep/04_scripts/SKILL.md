@@ -48,9 +48,63 @@ else still runs. A blocked task is never a pass.
 | stage | command |
 |---|---|
 | environment gates, dependencies, kernel build | `python scripts/doctor.py`, `scripts/install_deps.sh`, `kernels/asc_comm/build.sh` |
+| third-party sources (offline) | `python scripts/fetch_third_party.py --check` / `--fetch` |
+| isolated environments | `python scripts/env_manager.py --base-check` / `--check` / `--create` |
+| native build | `python scripts/native_build.py --list` / `--run` / `--verify` |
 | **NPU Smoke (L0 gate + one real run per operator)** | `python scripts/npu_smoke.py` |
 | planning / full benchmark / profiling / analysis / report | `python run_benchmark.py …` |
 | end-to-end orchestration of the above | `python scripts/benchmark_workflow.py` |
+
+## 1.4 Platform support: a release note is a hint, a run is a verdict
+
+`dependencies/manifest.yaml` defines `supported_soc` as what a *release is documented
+for*. A dependency whose notes omit Ascend950 is therefore **undocumented**, not
+unsupported — an earlier revision turned that gap into `BLOCKED_PLATFORM` and wrongly
+dropped eleven adapters, several of which carry 950DT reference reports.
+
+The four states live in `dependencies/platform_support.yaml` and are enforced by
+`common/platform_support.py`:
+
+| status | meaning | may block the platform? |
+|---|---|---|
+| `documented` | the release declares this SoC | no |
+| `undocumented` | notes omit it → prepare it and let a real run decide | **no** |
+| `validated` | a real run on this SoC passed (cite the run) | no |
+| `rejected` | a real run or the vendor proved it cannot work (cite the evidence) | yes |
+
+Only two things may produce `BLOCKED_PLATFORM`: an operator's own
+`constraints.hardware` excluding the host SoC, or a `rejected` verdict carrying
+evidence. `platform_support.promote()` refuses a rejection without evidence.
+
+## 1.5 Dependency preparation pipeline
+
+```
+detect host SoC + CANN -> load 36 operators -> drop the operators whose own
+constraints.hardware excludes the SoC (2) -> resolve the closure of the remaining 34
+-> verify third_party checkouts -> CANN/HCCL/HCOMM probe -> TUNA python plan ->
+isolated environments -> source installs -> A5 native build -> doctor -> Stage 1 L0
+-> Stage 2 operator smoke -> benchmark -> report
+```
+
+| step | command | states it may report |
+|---|---|---|
+| sources | `fetch_third_party.py --check` | `FOUND` / `MISSING` / `COMMIT_MISMATCH` / `UNPINNED` |
+| environments | `env_manager.py --create` | `PRESENT` / `ABSENT` / `BROKEN`; refuses to build on an unusable NPU stack |
+| native build | `native_build.py --run` | `BUILT` / `BUILT_HOST_ONLY` / `BUILD_FAILED` / `BLOCKED_DEPENDENCY` |
+| dependencies | `npu_smoke.py deps` | `READY` / `MISSING` / `VERSION_MISMATCH` / `BUILD_FAILED` / `SOURCE_UNAVAILABLE` / `UNDOCUMENTED_ON_SOC` / `UNSUPPORTED_PLATFORM` |
+
+Rules that keep the pipeline honest:
+
+* a checkout is verified by full commit id, never by "the clone succeeded";
+* `BUILT_HOST_ONLY` exists because `kernels/asc_comm` links a host library even when
+  `aiv/write_nbi/kernel.cpp` / `ccu/dsl/kernel.cpp` are absent — a host link is not a
+  device kernel;
+* a similarly named PyPI project is never a substitute; `dependencies/distributions.yaml`
+  records the four traps (megatron/megatron-core, mindspeed, deep-ep, deep-gemm) and
+  `common/distributions.py::check_module_origin` verifies the imported module actually
+  lives in the pinned checkout;
+* torch and torch_npu come from the container and are never installed or downgraded;
+* HCCL and HCOMM come from CANN: not third-party sources, never reinstalled here.
 
 ## 1.3 Per-operator smoke profiles
 

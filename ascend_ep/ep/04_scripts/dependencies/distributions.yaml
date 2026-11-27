@@ -1,0 +1,147 @@
+# Distribution names vs import modules, and which PyPI package may be substituted.
+#
+# Four dependencies in this project share a *name* with an unrelated PyPI project:
+#
+#   megatron (NVIDIA Megatron-LM @baf94af)   vs  PyPI `megatron` / `megatron-core`
+#   mindspeed (Ascend MindSpeed @c68e201)    vs  PyPI `mindspeed` (a 0.0.1.dev1 stub)
+#   deep_ep (lueelu DeepEP @83252a5)         vs  PyPI `deep-ep` (1.0.0, unrelated)
+#   deep_gemm (DeepGEMM-Ascend @3a35326)     vs  PyPI `deep-gemm` (1.0.0, unrelated)
+#
+# `pip install <name>` succeeding therefore proves nothing about the code that will
+# run.  This table records the mapping explicitly so the installer and the doctor
+# can refuse a substitution instead of silently accepting one.
+schema_version: 1
+
+distributions:
+  megatron:
+    package_name: null            # editable install of the pinned checkout only
+    import_modules: [megatron]
+    pypi_same_name: megatron-core
+    substitutable: false
+    reason: >-
+      PyPI `megatron-core` is a different distribution (a library split, not the
+      pinned commit), and PyPI `megatron` is an unrelated project.
+  mindspeed:
+    package_name: null
+    import_modules: [mindspeed]
+    pypi_same_name: mindspeed
+    substitutable: false
+    reason: PyPI `mindspeed` only publishes a 0.0.1.dev1 stub, not Ascend MindSpeed.
+  deep-ep:
+    package_name: null
+    import_modules: [deep_ep]
+    pypi_same_name: deep-ep
+    substitutable: false
+    reason: PyPI `deep-ep` is unrelated to the lueelu fork used here.
+  deep-ep-v2:
+    package_name: null
+    import_modules: [deep_ep]
+    pypi_same_name: deep-ep
+    substitutable: false
+    reason: >-
+      Same module name as deep-ep.  Both forks must live in separate environments;
+      neither may be satisfied from PyPI.
+  deep-ep-experimental:
+    package_name: null
+    import_modules: [deep_ep_experimental]
+    pypi_same_name: null
+    substitutable: false
+    reason: Built from the experiments/ subdirectories of the lueelu fork.
+  deepgemm-ascend:
+    package_name: null
+    import_modules: [deep_gemm]
+    pypi_same_name: deep-gemm
+    substitutable: false
+    reason: >-
+      PyPI `deep-gemm` 1.0.0 is not DeepGEMM-Ascend; the Ascend port is
+      github.com/deepseek-ai/DeepGEMM-Ascend @3a35326.
+  npu-patch:
+    package_name: null
+    import_modules: [npu_patch]
+    pypi_same_name: null
+    substitutable: false
+    reason: Ships inside the MoonEP checkout (dev_npu branch).
+  npu-patch-dedup:
+    package_name: null
+    import_modules: [npu_patch]
+    pypi_same_name: null
+    substitutable: false
+    reason: >-
+      Same module name as npu-patch, from the dev_server_dedup branch: the two
+      cannot share an environment.
+  moonep-runtime:
+    package_name: null
+    import_modules: [moonep]
+    pypi_same_name: null
+    substitutable: false
+    reason: Editable install of the MoonEP dev_npu checkout.
+  moonep-dedup-runtime:
+    package_name: null
+    import_modules: [moonep]
+    pypi_same_name: null
+    substitutable: false
+    reason: Editable install of the MoonEP dev_server_dedup checkout.
+  fsdp-turbo:
+    package_name: null
+    import_modules: [fsdp_turbo]
+    pypi_same_name: null
+    substitutable: false
+    reason: gitcode FSDPTurbo checkout, editable install.
+  mega-moe:
+    package_name: null
+    import_modules: [mega_moe, _moe_testkit]
+    pypi_same_name: null
+    substitutable: false
+    reason: gitcode Mega-MoE-TD checkout, editable install without deps.
+  cann-ops-transformer:
+    package_name: null
+    import_modules: [cann_ops_transformer]
+    pypi_same_name: null
+    substitutable: false
+    reason: gitcode CANN add-on built against the installed toolkit.
+  vllm-ascend:
+    package_name: vllm-ascend
+    import_modules: [vllm_ascend]
+    pypi_same_name: vllm-ascend
+    substitutable: false
+    reason: >-
+      A wheel exists on TUNA, but the pinned commit differs from any released
+      version; treat it as container-provided and never downgrade silently.
+  triton-distributed-ascend:
+    package_name: null
+    import_modules: [triton_dist]
+    pypi_same_name: triton-distributed
+    substitutable: false
+    reason: Ascend port is not published; version still unpinned.
+
+  # --- genuine PyPI dependencies ------------------------------------------------
+  numpy:
+    package_name: numpy
+    import_modules: [numpy]
+    substitutable: true
+  pyyaml:
+    package_name: PyYAML
+    import_modules: [yaml]
+    substitutable: true
+  jsonschema:
+    package_name: jsonschema
+    import_modules: [jsonschema]
+    substitutable: true
+  pandas:
+    package_name: pandas
+    import_modules: [pandas]
+    substitutable: true
+  matplotlib:
+    package_name: matplotlib
+    import_modules: [matplotlib]
+    substitutable: true
+  torch:
+    package_name: torch
+    import_modules: [torch]
+    substitutable: false
+    reason: container-provided; must not be replaced by a TUNA wheel
+  torch-npu:
+    package_name: torch-npu
+    import_modules: [torch_npu]
+    substitutable: false
+    reason: container-provided; must not be replaced by a TUNA wheel

@@ -1,0 +1,86 @@
+# Platform-support evidence per dependency.
+#
+# Why this file exists
+# --------------------
+# `dependencies/manifest.yaml` declares `supported_soc` as *what the release is
+# documented for*.  A dependency whose notes omit Ascend950 is therefore
+# "undocumented" on this host -- not unsupported.  Concluding "BLOCKED_PLATFORM"
+# from a documentation gap removed eleven operators from the A5 plan in an earlier
+# revision, including ones whose own README records a 950DT reference report.
+#
+# This file is the place where a platform verdict is *earned*:
+#
+#   documented    the release declares this SoC (the manifest already says so)
+#   undocumented  the release notes do not mention it -> prepare it and let a real
+#                 run decide; never a blocker on its own
+#   validated     a real run on this SoC passed; cite the run
+#   rejected      a real run (or the vendor) proved it cannot work here; cite it
+#
+# Only `rejected` may become BLOCKED_PLATFORM, and it requires `evidence`.
+# `promote()` in common/platform_support.py refuses an upgrade without evidence.
+schema_version: 1
+
+#: Default status for a dependency whose release notes omit the SoC.
+default_undocumented: undocumented
+
+dependencies:
+  # ---- the four releases whose notes do not mention Ascend950 ------------------
+  fsdp-turbo:
+    upstream: https://gitcode.com/Ascend/FSDPTurbo
+    commit: 474a39a4f367fd740723238ebd3e4695f8c3f26c
+    Ascend950:
+      status: undocumented
+      validation_required: true
+      note: >-
+        Release notes list 910B/910_93 only.  Seven adapters depend on it, so it
+        must be prepared (vendored source + A5 install) and classified by a real
+        run, not pre-emptively blocked.
+  deep-ep-experimental:
+    upstream: https://github.com/lueelu/DeepEP
+    commit: 83252a54d2363734a706a7dd8368bebc3094af5a
+    Ascend950:
+      status: undocumented
+      validation_required: true
+      note: >-
+        Built from the `experiments/` subdirectories of the lueelu fork.  Depends
+        on that fork's `deep_ep`; the TUNA `deep-ep` package is a different
+        project and must not be substituted.
+  mega-moe:
+    upstream: https://gitcode.com/jzhoujg/Mega-MoE-TD
+    commit: 41d479374004696e21f69f9c72094b1d29941987
+    Ascend950:
+      status: undocumented
+      validation_required: true
+      note: >-
+        `megamoe_td` also needs triton-distributed-ascend, whose version is not
+        pinned yet; prepare both and record what actually happens.
+  moonep-runtime:
+    upstream: https://gitcode.com/Ascend/MoonEP/tree/dev_npu
+    commit: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+    Ascend950:
+      status: undocumented
+      validation_required: true
+      note: >-
+        The dev_npu branch is the planner runtime; npu-patch from the same branch
+        does declare 950, so only the runtime itself is undocumented.
+
+  # ---- explicit platform restriction (the only two real blocks) ---------------
+  # These are *dependency* entries; the operator-level constraint in
+  # operators/registry.yaml remains the authoritative source for the two blocked
+  # adapters.  Recorded here so a dependency-level query answers consistently.
+  vllm-ascend:
+    upstream: https://github.com/vllm-project/vllm-ascend
+    commit: 0f63cfa1a52225f301ffd4a335b8daa3028c283f
+    Ascend950:
+      status: documented
+      note: >-
+        vllm-ascend itself supports 950; the adapter
+        `dispatch_ffn_combine_vllm_ascend` is the one restricted to Atlas A3 by
+        its own constraints.hardware, so the block comes from the operator.
+  sgl-kernel-npu:
+    upstream: (provided by the sglang adapter)
+    Ascend950:
+      status: documented
+      note: >-
+        Same picture as vllm-ascend: `dispatch_ffn_combine_sglang` declares
+        Atlas A3 in its own constraints.hardware.

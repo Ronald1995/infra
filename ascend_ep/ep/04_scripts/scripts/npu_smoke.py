@@ -35,7 +35,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common import execution_mode, readiness, smoke_profile, status_map  # noqa: E402
+from common import (execution_mode, platform_support, readiness, smoke_profile,  # noqa: E402
+                    status_map)
 from common.case_spec import catalog  # noqa: E402
 from common.config import load_configs  # noqa: E402
 from common.controller import create_manifest, execute, results  # noqa: E402
@@ -138,10 +139,13 @@ def dependency_view(soc_model=None, profile="all"):
         data = doctor.load_manifest(ROOT / "dependencies" / "manifest.yaml")
         entries = {entry["id"]: entry for entry in data["dependencies"]}
         soc = readiness.normalise_soc(soc_model)
-        # Only an operator's own constraints.hardware may claim a platform block.
+        # Only an operator's own constraints.hardware may claim a platform block,
+        # plus a dependency verdict that carries evidence (platform_support.yaml).
         operator_hardware = {op: list((spec.constraints or {}).get("hardware") or ())
                              for op, spec in registry().items()}
-        return readiness.classify(report["operators"], entries, soc, operator_hardware), soc, None
+        support_table = platform_support.load()
+        return readiness.classify(report["operators"], entries, soc, operator_hardware,
+                                  support_table), soc, None
     except Exception as exc:  # noqa: BLE001 - a dependency view is advisory
         return {}, None, f"{type(exc).__name__}: {exc}"
 
@@ -649,6 +653,9 @@ def build_parser():
     deps_command.add_argument("--install", action="store_true",
                               help="run the repo's installer for the operators that can be "
                                    "installed here (never for a platform-unsupported one)")
+    deps_command.add_argument("--build", action="store_true",
+                              help="run the native build of this selection's third-party "
+                                   "sources (never for a platform-unsupported one)")
     deps_command.add_argument("--dry-run", action="store_true",
                               help="with --install: print the installer plan, change nothing")
     deps_command.add_argument("--soc", default=None,
@@ -879,6 +886,8 @@ def command_deps(args):
                    if row.get("state") == readiness.UNSUPPORTED_PLATFORM]
     if args.install and installable:
         return _run_installer(installable, unsupported, args)
+    if getattr(args, "build", False):
+        return _run_builds(selected, unsupported, args)
     if args.install:
         print(f"nothing to install: {len(unsupported)} operator(s) are unsupported on this "
               f"SoC and {len(rows) - len(unsupported)} are ready or unreported",
@@ -902,6 +911,41 @@ def _run_installer(installable, unsupported, args):
               f"{', '.join(unsupported)}", file=sys.stderr)
     result = subprocess.run(command, cwd=ROOT, text=True)
     return result.returncode
+
+
+def _run_builds(operators, unsupported, args):
+    """Hand the selection's third-party sources to scripts/native_build.py.
+
+    The build tool owns the steps and the statuses; this only decides *which*
+    sources belong to the selection, and keeps the platform-unsupported operators
+    out of the build queue for the same reason they are out of the install queue.
+    """
+    import subprocess
+
+    try:
+        from scripts import fetch_third_party
+        catalogue = fetch_third_party.load_catalogue()
+    except Exception as exc:  # noqa: BLE001
+        print(f"cannot read the third-party catalogue: {exc}", file=sys.stderr)
+        return 2
+    wanted = set(operators) - set(unsupported)
+    targets = [name for name, entry in (catalogue.get("sources") or {}).items()
+               if wanted & set(entry.get("operators") or ())
+               and (entry.get("build") or entry.get("install"))]
+    if not targets:
+        print(f"no buildable third-party source belongs to {len(wanted)} operator(s)",
+              file=sys.stderr)
+        return 0
+    command = [sys.executable, str(ROOT / "scripts" / "native_build.py"),
+               "--run", "--only", ",".join(targets)]
+    if args.dry_run:
+        command.append("--dry-run")
+    print(f"building {len(targets)} source(s) for {len(wanted)} operator(s): "
+          f"{', '.join(targets)}", file=sys.stderr)
+    if unsupported:
+        print(f"skipping {len(unsupported)} platform-unsupported operator(s): "
+              f"{', '.join(unsupported)}", file=sys.stderr)
+    return subprocess.run(command, cwd=ROOT, text=True).returncode
 
 
 def main(argv=None):

@@ -1,0 +1,223 @@
+# Third-party source catalogue: the offline half of the dependency system.
+#
+# The A5 host cannot reach GitHub or GitCode, so every pinned checkout has to
+# arrive as bytes and be *verified*, not trusted.  This file is the single list of
+# what must be present, at which exact commit, for which operators, and how it is
+# installed or built.
+#
+# Populate it from a machine that has network:
+#     python scripts/fetch_third_party.py --fetch
+# then copy `ascend_ep/third_party/` to the target host and verify there:
+#     python scripts/fetch_third_party.py --check
+#
+# A short SHA is never accepted: `commit` must be the full 40-hex object id, and
+# `--check` re-reads it with `git rev-parse HEAD` in the checkout.
+#
+# `license` stays `unknown` until `--record-licenses` reads it from the checkout.
+# Guessing a licence is worse than admitting it was not inspected.
+schema_version: 1
+
+#: Where checkouts live, relative to the repository root (ascend_ep/).
+root: third_party
+
+#: Where built artifacts are collected for transfer to the target host.
+artifacts: packages/native
+
+#: Where offline wheels are collected (TUNA downloads on a networked machine).
+wheelhouse: packages/wheelhouse
+
+sources:
+  megatron-lm:
+    dependency: megatron
+    upstream: https://github.com/NVIDIA/Megatron-LM
+    commit: baf94af3c667248865f23df73b9fb8e2395e6fd0
+    directory: megatron-lm
+    python_modules: [megatron]
+    environment: base
+    install: ["pip install --no-build-isolation -e ."]
+    build: []
+    operators: [allgather_megatron, alltoall_megatron, allgather_overlap_mindspeed,
+                hierarchical_alltoallv_mindspeed]
+    license: unknown
+    notes: >-
+      PyPI `megatron-core` is a different distribution; the pinned commit is the
+      only accepted source.
+
+  mindspeed:
+    dependency: mindspeed
+    upstream: https://gitcode.com/Ascend/MindSpeed
+    commit: c68e201a5733065b3aa59a3d44dc5e2ec700d7c9
+    directory: mindspeed
+    python_modules: [mindspeed]
+    environment: base
+    install: ["pip install --no-build-isolation -e ."]
+    build: []
+    operators: [allgather_overlap_mindspeed, hierarchical_alltoallv_mindspeed]
+    license: unknown
+    notes: PyPI `mindspeed` publishes only a 0.0.1.dev1 stub.
+
+  deep-ep:
+    dependency: deep-ep
+    upstream: https://github.com/lueelu/DeepEP
+    commit: 83252a54d2363734a706a7dd8368bebc3094af5a
+    directory: DeepEP
+    python_modules: [deep_ep]
+    environment: deep_ep_lueelu
+    install: ["pip install --no-build-isolation ."]
+    build: ["bash build.sh"]
+    operators: [deepep_ascend, deepep_lueelu, deepep_direct_lueelu, deepep_sglang,
+                dispatch_ffn_combine_sglang, fused_deep_moe_sglang]
+    license: unknown
+    notes: >-
+      Also the source of deep-ep-experimental (the experiments/ subdirectories), so
+      one checkout serves two dependency ids.
+
+  deep-ep-v2:
+    dependency: deep-ep-v2
+    upstream: https://gitcode.com/lishaoxun/DeepEP_9283
+    commit: 69090a120cfee06be431a79873692677bc07b042
+    directory: DeepEP_9283
+    python_modules: [deep_ep]
+    environment: deep_ep_v2
+    install: ["pip install --no-build-isolation ."]
+    build: ["bash build.sh"]
+    operators: [deepep_v2_ascend]
+    license: unknown
+    notes: >-
+      Ships the same `deep_ep` module as DeepEP; the two must never share an
+      environment.
+
+  fsdp-turbo:
+    dependency: fsdp-turbo
+    upstream: https://gitcode.com/Ascend/FSDPTurbo
+    commit: 474a39a4f367fd740723238ebd3e4695f8c3f26c
+    directory: FSDPTurbo
+    python_modules: [fsdp_turbo]
+    environment: base
+    install: ["pip install -e ."]
+    build: []
+    operators: [allgather_fsdpturbo, alltoall_fsdpturbo, chunkmoe_fsdpturbo,
+                domino_fsdpturbo, fused_fsdpturbo, mc2_fsdpturbo, megamoe_fsdpturbo]
+    license: unknown
+    notes: >-
+      Release notes list 910B/910_93 only.  That is a documentation gap on 950DT and
+      must be settled by a real run, not by excluding the seven adapters.
+
+  moonep-dev-npu:
+    dependency: moonep-runtime
+    upstream: https://gitcode.com/Ascend/MoonEP
+    commit: b4127baa1bec0bcccd49b48c2dc2a3be70da9a0f
+    directory: MoonEP_dev_npu
+    python_modules: [moonep, npu_patch]
+    environment: moonep_npu
+    install: ["pip install --no-build-isolation -e .", "pip install --no-build-isolation ./npu_patch"]
+    build: []
+    operators: [moonep, moonep_dynamic_planner]
+    license: unknown
+    notes: >-
+      One checkout provides both moonep-runtime and npu-patch on dev_npu; it must
+      not be installed alongside the dev_server_dedup checkout.
+
+  moonep-dev-server-dedup:
+    dependency: moonep-dedup-runtime
+    upstream: https://gitcode.com/Ascend/MoonEP/tree/dev_server_dedup
+    commit: d8495c4745ba6310b40eddbdb9e3e9ef7b2c2b5d
+    directory: MoonEP_dev_server_dedup
+    python_modules: [moonep, npu_patch]
+    environment: moonep_dedup
+    install: ["pip install --no-build-isolation -e .", "pip install --no-build-isolation ./npu_patch"]
+    build: []
+    operators: [moonep_server_dedup]
+    license: unknown
+    notes: Same module names as moonep-dev-npu; separate environment required.
+
+  deepgemm-ascend:
+    dependency: deepgemm-ascend
+    upstream: https://github.com/deepseek-ai/DeepGEMM-Ascend
+    commit: 3a35326271b069b8b5bf1a754435acd6cc91575b
+    directory: DeepGEMM-Ascend
+    python_modules: [deep_gemm]
+    environment: base
+    install: ["pip install --no-build-isolation ."]
+    build: []
+    operators: [megamoe_deepgemm_ascend]
+    license: unknown
+    notes: PyPI `deep-gemm` 1.0.0 is a different project.
+
+  mega-moe-td:
+    dependency: mega-moe
+    upstream: https://gitcode.com/jzhoujg/Mega-MoE-TD
+    commit: 41d479374004696e21f69f9c72094b1d29941987
+    directory: Mega-MoE-TD
+    python_modules: [mega_moe, _moe_testkit]
+    environment: base
+    install: ["pip install -e . --no-deps"]
+    build: []
+    operators: [megamoe_td]
+    license: unknown
+    notes: >-
+      Requires MEGAMOE_TESTS_PATH=<checkout>/tests.  Also needs
+      triton-distributed-ascend, whose version is not pinned yet.
+
+  cann-ops-transformer:
+    dependency: cann-ops-transformer
+    upstream: https://gitcode.com/cann/ops-transformer
+    commit: 68a67e130417593f37ea3cece1ebfb4be366b95f
+    directory: ops-transformer
+    python_modules: [cann_ops_transformer]
+    environment: base
+    install: ["pip install --no-build-isolation ."]
+    build: []
+    operators: [mc2_dispatch_cann_v3, deepep_cann, megamoe_cann]
+    license: unknown
+    notes: Built against the installed CANN toolkit; A5 already has 1.0.0 installed.
+
+  shmem:
+    dependency: shmem
+    upstream: https://gitcode.com/cann/shmem
+    commit: null
+    tag: 8.2.RC1
+    directory: shmem
+    python_modules: [shmem]
+    environment: base
+    install: ["pip install --no-build-isolation ./build/*.whl"]
+    build: ["bash build.sh"]
+    operators: [transport-l0]
+    license: unknown
+    notes: >-
+      Pinned by release tag, not commit: `--check` resolves the tag to a commit and
+      records it, so the verification is still exact.
+
+  triton-distributed-ascend:
+    dependency: triton-distributed-ascend
+    upstream: https://gitcode.com/Ascend/Triton-distributed-ascend
+    commit: null
+    tag: null
+    directory: Triton-distributed-ascend
+    python_modules: [triton_dist]
+    environment: base
+    install: []
+    build: []
+    operators: [megamoe_td]
+    license: unknown
+    status: unpinned
+    notes: >-
+      Version still undetermined; `--check` reports it as UNPINNED rather than
+      pretending it matches.  A5 currently has an importable module with no
+      distribution metadata.
+
+#: Checkouts already vendored inside the repository; never fetched again.
+vendored:
+  vendored-ascendep:
+    path: ep/04_scripts/operators/vendor/ascendep
+    commit: 24ff84d3ab8c01e1e2071802465173e624e1f89d
+    verify: python scripts/vendor_ascendep.py --check
+
+#: System components that must never be vendored or installed by this project.
+system_provided:
+  - hccl
+  - hcomm
+  - cann-toolkit
+  - npu-driver
+  - ascendc-toolchain
+  - msprof

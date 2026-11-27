@@ -1,0 +1,3 @@
+﻿# Isolated interpreters, offline wheels and build artefacts live here as data.
+*
+!.gitignore
