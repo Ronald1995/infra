@@ -1782,6 +1782,74 @@ def render(report, show_matrix=True):
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+#: Where the isolated dependency environments live, unless overridden.
+DEFAULT_ENV_ROOT = ".envs"
+
+
+def environment_python(name, env_root=None):
+    """Interpreter of one dependency environment, or ``None`` when it is absent.
+
+    ``base`` is this interpreter; every other name must have been created by
+    ``scripts/env_manager.py``.
+    """
+    if name == "base":
+        return Path(sys.executable)
+    root = Path(env_root or os.environ.get("EP_ENV_ROOT") or DEFAULT_ENV_ROOT)
+    for candidate in ("bin/python", "Scripts/python.exe"):
+        path = root / name / candidate
+        if path.is_file():
+            return path
+    return None
+
+
+def run_doctor_in_environment(name, env_root=None, json_output=True, profile="all"):
+    """Probe *another* interpreter by running this doctor inside it.
+
+    The checks import modules and read versions, so they must run in the interpreter
+    being judged.  Re-executing the doctor there is the only way to answer "does this
+    environment actually satisfy its dependencies" without pretending the base
+    interpreter's answer applies.
+    """
+    python = environment_python(name, env_root)
+    if python is None:
+        return {"environment": name, "python": None, "available": False,
+                "error": f"no interpreter at {(Path(env_root or DEFAULT_ENV_ROOT) / name)}; "
+                         f"run scripts/env_manager.py --create"}
+    if Path(python).resolve() == Path(sys.executable).resolve():
+        report = run_doctor(profile=profile)
+        return {"environment": name, "python": str(python), "available": True,
+                "exit_code": report.exit_code,
+                "report": json.loads(report.as_json())}
+    command = [str(python), str(Path(__file__).resolve()), "--json", "--profile", profile]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=1800,
+                                cwd=str(Path(__file__).resolve().parents[1]))
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"environment": name, "python": str(python), "available": False,
+                "error": f"{type(exc).__name__}: {exc}"}
+    if result.returncode not in (0, 1) or not result.stdout.strip():
+        return {"environment": name, "python": str(python), "available": True,
+                "exit_code": result.returncode,
+                "error": (result.stderr or "").strip().splitlines()[-1:] or ["probe failed"]}
+    try:
+        report = json.loads(result.stdout)
+    except ValueError:
+        return {"environment": name, "python": str(python), "available": True,
+                "exit_code": result.returncode, "error": "unparseable report"}
+    return {"environment": name, "python": str(python), "available": True,
+            "exit_code": result.returncode, "report": report}
+
+
+def declared_environments():
+    # doctor.py runs as a script (`scripts/` is then sys.path[0]), so the package
+    # root has to be added before importing anything from `common`.
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    from common.registry import environments
+
+    return sorted(environments())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="scripts/doctor.py",
@@ -1797,7 +1865,35 @@ def main(argv=None):
                         help="prove that DIR can satisfy the pinned requirements without network")
     parser.add_argument("--manifest", default=None, help="catalog path (default: dependencies/manifest.yaml)")
     parser.add_argument("--root", default=None, help="SCRIPTS root (default: the parent of scripts/)")
+    parser.add_argument("--environment", metavar="NAME", default=None,
+                        help="probe one dependency environment (base, deep_ep_lueelu, "
+                             "deep_ep_v2, moonep_npu, moonep_dedup) by running this doctor "
+                             "inside that interpreter")
+    parser.add_argument("--all-environments", action="store_true",
+                        help="probe every declared environment and summarise")
+    parser.add_argument("--env-root", default=None,
+                        help=f"where the isolated environments live (default $EP_ENV_ROOT "
+                             f"or {DEFAULT_ENV_ROOT})")
     args = parser.parse_args(argv)
+
+    if args.environment or args.all_environments:
+        names = [args.environment] if args.environment else declared_environments()
+        results = [run_doctor_in_environment(name, args.env_root, profile=args.profile)
+                   for name in names]
+        if args.json:
+            sys.stdout.write(json.dumps({"environments": results}, indent=2) + "\n")
+        else:
+            width = max(len(item["environment"]) for item in results) + 2
+            for item in results:
+                if not item.get("available"):
+                    print(f"{item['environment']:{width}s} ABSENT   {item.get('error')}")
+                    continue
+                report = item.get("report") or {}
+                counts = report.get("counts") or {}
+                summary = ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+                print(f"{item['environment']:{width}s} exit={item.get('exit_code')} "
+                      f"python={item['python']} {summary}")
+        return 0 if all(item.get("exit_code") == 0 for item in results) else 1
 
     categories = None
     if args.categories:

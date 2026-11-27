@@ -29,6 +29,9 @@ ALLOW_NETWORK=0
 JSON=0
 SOURCE_CACHE="${EP_SOURCE_CACHE:-$HOME/.cache/ep-benchmark/deps}"
 WHEELHOUSE="${EP_WHEELHOUSE:-}"
+# Mirror-first: the A5 host reaches TUNA but not pypi.org.  The URL itself is owned by
+# scripts/dependency_plan.py (DEFAULT_INDEX_URL); this only carries an override.
+INDEX_URL="${EP_PIP_INDEX_URL:-}"
 ENVIRONMENTS=()
 LOG_DIR="${EP_INSTALL_LOG_DIR:-$ROOT/.install-logs}"
 
@@ -43,6 +46,9 @@ Options:
   --offline             never fetch: require the pinned checkouts in --source-cache
   --source-cache DIR    where pinned checkouts live (default $HOME/.cache/ep-benchmark/deps)
   --wheelhouse DIR      install python wheels only from this directory
+  --index-url URL       Python package index for network installs.  Overrides
+                        $EP_PIP_INDEX_URL; the default lives in
+                        scripts/dependency_plan.py (DEFAULT_INDEX_URL).
   --allow-network       authorize fetching pinned sources from the network
   --environment NAME    restrict the plan to one dependency environment (repeatable)
   --json                print the machine-readable plan
@@ -66,6 +72,9 @@ while [ "$#" -gt 0 ]; do
     --wheelhouse) [ "$#" -ge 2 ] || die "--wheelhouse needs a directory"
                   WHEELHOUSE="$2"; shift 2 ;;
     --wheelhouse=*) WHEELHOUSE="${1#*=}"; shift ;;
+    --index-url) [ "$#" -ge 2 ] || die "--index-url needs a URL"
+                 INDEX_URL="$2"; shift 2 ;;
+    --index-url=*) INDEX_URL="${1#*=}"; shift ;;
     --allow-network) ALLOW_NETWORK=1; shift ;;
     --environment) [ "$#" -ge 2 ] || die "--environment needs a name"
                    ENVIRONMENTS+=("$2"); shift 2 ;;
@@ -97,12 +106,19 @@ STEPS_LOG="$LOG_DIR/plan-$PROFILE.steps.log"
 export EP_SOURCE_CACHE="$SOURCE_CACHE"
 export EP_ENV_ROOT="${EP_ENV_ROOT:-$ROOT/.envs}"
 export EP_BASE_PYTHON="${EP_BASE_PYTHON:-$PYTHON}"
+# Every pip invocation in this plan -- including the `pip install .` build steps --
+# honours these, so the index is set once here rather than per command.  When no
+# override is given the generated plan falls back to DEFAULT_INDEX_URL.
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+[ -n "$INDEX_URL" ] && export EP_PIP_INDEX_URL="$INDEX_URL"
+[ -n "$INDEX_URL" ] && note "install_deps: python index $INDEX_URL"
 mkdir -p "$EP_ENV_ROOT" 2>/dev/null || true
 
 plan_args=(--profile "$PROFILE" --source-cache "$SOURCE_CACHE")
 [ "$OFFLINE" = 1 ] && plan_args+=(--offline)
 [ "$CHECK_ONLY" = 1 ] && plan_args+=(--check-only)
 [ -n "$WHEELHOUSE" ] && plan_args+=(--wheelhouse "$WHEELHOUSE")
+[ -n "$INDEX_URL" ] && plan_args+=(--index-url "$INDEX_URL")
 for environment in "${ENVIRONMENTS[@]:-}"; do
   [ -n "$environment" ] && plan_args+=(--environment "$environment")
 done

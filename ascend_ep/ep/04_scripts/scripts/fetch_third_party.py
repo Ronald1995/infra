@@ -144,6 +144,22 @@ def inspect_all(catalogue, only=None):
     return [inspect(catalogue, name) for name in names]
 
 
+def resolve_ref(path, ref):
+    """Turn a catalogue pin into a commit id inside the checkout.
+
+    A bare ``8.2.RC1`` is ambiguous to git: it looks like a path, and
+    ``git checkout --detach`` refuses it.  Resolve explicitly instead -- commit,
+    then tag, then remote branch -- and return ``None`` when nothing matches, so the
+    caller can report FETCH_FAILED with the ref it tried.
+    """
+    candidates = [ref, f"refs/tags/{ref}", f"origin/{ref}", f"refs/remotes/origin/{ref}"]
+    for candidate in candidates:
+        commit = _git(path, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}")
+        if commit:
+            return commit
+    return None
+
+
 def fetch(catalogue, only=None, shallow=False):
     """Clone the pinned checkouts.  Requires network; never called by a run."""
     names = list(catalogue["sources"])
@@ -155,14 +171,23 @@ def fetch(catalogue, only=None, shallow=False):
     for name in names:
         entry = catalogue["sources"][name]
         path = checkout_path(catalogue, name)
-        if path.is_dir() and (path / ".git").exists():
+        ref = entry.get("commit") or entry.get("tag")
+        if path.is_dir() and (path / ".git").exists() and ref:
+            commit = resolve_ref(path, ref)
+            if commit:
+                results.append(inspect(catalogue, name))
+                continue
+            print(f"{name}: present checkout does not contain {ref}, re-cloning", flush=True)
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.is_dir() and (path / ".git").exists():
             results.append({"id": name, "status": "SKIPPED", "reason": "already present"})
             continue
         url = entry.get("upstream")
-        ref = entry.get("commit") or entry.get("tag")
         if not url or not ref:
             results.append({"id": name, "status": UNPINNED, "reason": "no url or pin"})
             continue
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
         print(f"fetching {name} from {url} @ {ref}", flush=True)
         clone = ["git", "clone", "--no-checkout"]
         if shallow:
@@ -171,7 +196,12 @@ def fetch(catalogue, only=None, shallow=False):
         if subprocess.run(clone, timeout=3600).returncode != 0:
             results.append({"id": name, "status": "FETCH_FAILED", "reason": "git clone"})
             continue
-        checkout = ["git", "-C", str(path), "checkout", "--detach", ref]
+        commit = resolve_ref(path, ref)
+        if commit is None:
+            results.append({"id": name, "status": "FETCH_FAILED",
+                            "reason": f"the clone does not contain {ref}"})
+            continue
+        checkout = ["git", "-C", str(path), "checkout", "--detach", commit]
         if subprocess.run(checkout, timeout=1800).returncode != 0:
             results.append({"id": name, "status": "FETCH_FAILED", "reason": "git checkout"})
             continue

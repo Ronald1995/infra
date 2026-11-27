@@ -223,11 +223,15 @@ def test_the_real_catalogue_pins_full_shas_and_lists_the_system_components():
     assert "vendored-ascendep" in catalogue["vendored"]
 
 
-def test_check_on_this_host_does_not_claim_a_missing_source_is_present():
+def test_check_on_this_host_never_reports_a_wrong_commit_as_found():
+    """The real catalogue is inspected; a FOUND claim must mean the sha matches."""
     catalogue = fetch_third_party.load_catalogue()
     records = fetch_third_party.inspect_all(catalogue, only=["megatron-lm"])
-    assert records[0]["status"] in (fetch_third_party.MISSING,
-                                    fetch_third_party.COMMIT_MISMATCH)
+    record = records[0]
+    assert record["status"] in (fetch_third_party.FOUND, fetch_third_party.MISSING,
+                                fetch_third_party.COMMIT_MISMATCH)
+    if record["status"] == fetch_third_party.FOUND:
+        assert record["actual_commit"] == record["expected_commit"]
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +293,20 @@ def test_a_dry_run_records_the_command_without_building():
     assert any("build.sh" in part for part in record["command"])
 
 
-def test_a_missing_checkout_is_blocked_not_failed():
-    record = native_build.run_target("shmem")
+def test_a_missing_checkout_is_blocked_not_failed(tmp_path):
+    """A source that was never fetched is BLOCKED_DEPENDENCY, never BUILD_FAILED."""
+    catalogue = {"sources": {"absent-demo": {
+        "directory": "not-fetched-yet", "build": ["bash build.sh"],
+        "install": [], "environment": "base", "operators": ["x"]}}}
+    outcome = [None]
+    import scripts.native_build as native
+    original = native.PACKAGE
+    try:
+        native.PACKAGE = tmp_path          # so third_party/not-fetched-yet is absent
+        outcome[0] = native.run_target("absent-demo", catalogue=catalogue)
+    finally:
+        native.PACKAGE = original
+    record = outcome[0]
     assert record["status"] == native_build.BLOCKED_DEPENDENCY
     assert "fetch_third_party" in record["reason"]
 

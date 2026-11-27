@@ -20,6 +20,7 @@ Usage
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,7 +29,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 PACKAGE = ROOT.parent.parent
-DEFAULT_ENVS_ROOT = PACKAGE / "packages" / "envs"
+#: Must match scripts/install_deps.sh (`${EP_ENV_ROOT:-$ROOT/.envs}`) and
+#: scripts/doctor.py, so a created environment is the one the installer and the
+#: doctor look for.  Packages/ is for wheels and artefacts, not interpreters.
+DEFAULT_ENVS_ROOT = Path(os.environ.get("EP_ENV_ROOT") or (ROOT / ".envs"))
 
 PRESENT = "PRESENT"
 ABSENT = "ABSENT"
