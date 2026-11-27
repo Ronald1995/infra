@@ -2,16 +2,16 @@
 
 ``scripts/dependency_report.py`` already resolves each operator's dependency
 closure and asks the doctor whether each dependency is present.  This module adds
-the two questions the report needs on top of that:
+two questions on top of that:
 
-* **Is the dependency even supported on this SoC?**  The manifest declares
-  ``supported_soc`` per dependency.  ``fsdp-turbo`` for instance lists
-  ``Ascend910B``/``Ascend910_93`` and not ``Ascend950``: on a 950DT host that is a
-  *platform* blocker, and telling the user to "install the dependency" would send
-  them down a path that cannot succeed.
-* **Which single state describes the operator?**  The delivery vocabulary is
-  ``READY``, ``MISSING``, ``VERSION_MISMATCH``, ``BUILD_FAILED``,
-  ``SOURCE_UNAVAILABLE``, ``UNSUPPORTED_PLATFORM``.
+* **Does the operator itself declare a hardware restriction?**  Only that may
+  become ``BLOCKED_PLATFORM``: the adapter says which silicon it targets, e.g.
+  ``dispatch_ffn_combine_vllm_ascend`` -> ``Atlas A3 (ascend910_93)``.
+* **Is a missing dependency's release merely undocumented on this SoC?**  The
+  manifest defines ``supported_soc`` as the SoCs the *release* is documented for,
+  so ``fsdp-turbo`` listing only ``Ascend910B``/``Ascend910_93`` means "not
+  documented on 950", not "cannot run on 950".  That state is
+  ``UNDOCUMENTED_ON_SOC``: still a dependency blocker, never "do not retry here".
 
 Nothing here installs anything: it classifies, so the caller can decide.  The
 install path stays ``scripts/install_deps.sh`` + ``scripts/vendor_ascendep.py``.
@@ -24,9 +24,14 @@ VERSION_MISMATCH = "VERSION_MISMATCH"
 BUILD_FAILED = "BUILD_FAILED"
 SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
 UNSUPPORTED_PLATFORM = "UNSUPPORTED_PLATFORM"
+#: The dependency is absent *and* its release notes do not list this SoC.  That is
+#: a documentation gap to resolve with a real run, not a statement that the
+#: operator cannot work here -- the manifest itself says ``supported_soc`` is what
+#: the release is "documented for".
+UNDOCUMENTED_ON_SOC = "UNDOCUMENTED_ON_SOC"
 
 STATES = (READY, MISSING, VERSION_MISMATCH, BUILD_FAILED, SOURCE_UNAVAILABLE,
-          UNSUPPORTED_PLATFORM)
+          UNSUPPORTED_PLATFORM, UNDOCUMENTED_ON_SOC)
 
 #: State -> delivery bucket, so a report never invents a fourth vocabulary.
 STATE_BUCKET = {
@@ -36,12 +41,16 @@ STATE_BUCKET = {
     BUILD_FAILED: status_map.BUILD_FAILED,
     SOURCE_UNAVAILABLE: status_map.BLOCKED_DEPENDENCY,
     UNSUPPORTED_PLATFORM: status_map.BLOCKED_PLATFORM,
+    # Still a dependency the host lacks; the note is "confirm on this SoC",
+    # never "do not retry here".
+    UNDOCUMENTED_ON_SOC: status_map.BLOCKED_DEPENDENCY,
 }
 
-#: Order in which a blocker wins when an operator has several: "this host can
-#: never run it" outranks "install something", which outranks "rebuild".
-_PRECEDENCE = (UNSUPPORTED_PLATFORM, MISSING, VERSION_MISMATCH, SOURCE_UNAVAILABLE,
-               BUILD_FAILED, READY)
+#: Order in which a blocker wins when an operator has several: a platform that
+#: genuinely cannot run it outranks "install something", which outranks "rebuild",
+#: which outranks "the release notes do not mention this SoC".
+_PRECEDENCE = (UNSUPPORTED_PLATFORM, MISSING, SOURCE_UNAVAILABLE, BUILD_FAILED,
+               UNDOCUMENTED_ON_SOC, VERSION_MISMATCH, READY)
 
 
 def normalise_soc(model):
@@ -74,32 +83,55 @@ def soc_supported(supported, soc):
 
 
 def _dep_state(entry, doctor_status, soc):
-    """Classify one dependency from its manifest entry and the doctor verdict."""
-    if entry is not None and not soc_supported(entry.get("supported_soc"), soc):
-        return UNSUPPORTED_PLATFORM
+    """Classify one dependency from its manifest entry and the doctor verdict.
+
+    The doctor verdict comes first: an installed, importable package is READY even
+    when its release notes never mentioned this SoC.  Only an *absent* dependency
+    can be reported as a SoC problem, and even then the honest label is
+    ``UNDOCUMENTED_ON_SOC`` -- the manifest describes ``supported_soc`` as what the
+    release is documented for, which is not the same claim as "cannot run here".
+    """
     if doctor_status in ("pass", "warn"):
         return VERSION_MISMATCH if doctor_status == "warn" else READY
     if entry is None:
         return MISSING
+    if not soc_supported(entry.get("supported_soc"), soc):
+        return UNDOCUMENTED_ON_SOC
     if entry.get("ownership") == "vendored":
         # A vendored tree is verified, never installed: absent means the tree is
         # missing from this checkout.
         return SOURCE_UNAVAILABLE
-    if entry.get("install_spec") == "build" or entry.get("kind") == "native_build":
-        # Distinguishing "never built" from "build failed" needs the build log; the
-        # doctor reports a failed probe, so both are BUILD_FAILED only once a build
-        # was attempted.  Without that evidence the honest state is MISSING.
-        return MISSING
     return MISSING
 
 
-def classify(rows, entries, soc):
-    """Return ``{operator: {state, bucket, blockers, unsupported}}``.
+def hardware_blocked(limits, soc):
+    """True only when an operator's own ``constraints.hardware`` excludes this SoC.
+
+    This is the one signal that may become ``BLOCKED_PLATFORM``: the adapter itself
+    declares which silicon it targets (for example
+    ``dispatch_ffn_combine_vllm_ascend`` -> ``Atlas A3 (ascend910_93)``).  A
+    dependency's documentation is not such a signal.
+    """
+    if not limits or not soc:
+        return False
+    text = " ".join(str(item) for item in limits).lower()
+    family = {
+        "Ascend950": ("950", "a5"),
+        "Ascend910_93": ("910_93", "a3"),
+        "Ascend910B": ("910b", "a2"),
+    }.get(soc, (soc.lower(),))
+    return not any(token in text for token in family)
+
+
+def classify(rows, entries, soc, operator_hardware=None):
+    """Return ``{operator: {state, bucket, blockers, unsupported, undocumented}}``.
 
     ``rows`` are the per-operator rows of ``scripts.dependency_report.build()``;
     ``entries`` maps dependency id -> manifest entry; ``soc`` is the normalised SoC
-    family of the host being reported on.
+    family of the host; ``operator_hardware`` maps operator -> its
+    ``constraints.hardware`` list, which is the only source of a platform block.
     """
+    operator_hardware = operator_hardware or {}
     result = {}
     for row in rows:
         states = {}
@@ -107,12 +139,18 @@ def classify(rows, entries, soc):
             states[dep] = _dep_state(entries.get(dep), (row.get("states") or {}).get(dep), soc)
         for module in row.get("unmapped_modules") or []:
             states.setdefault(f"module:{module}", MISSING)
+        limits = operator_hardware.get(row["operator"]) or ()
+        if hardware_blocked(limits, soc):
+            states["operator:hardware"] = UNSUPPORTED_PLATFORM
         chosen = next((state for state in _PRECEDENCE if state in states.values()), READY)
         result[row["operator"]] = {
             "state": chosen,
             "bucket": STATE_BUCKET[chosen],
+            "hardware_limits": list(limits),
             "unsupported": sorted(dep for dep, state in states.items()
                                   if state == UNSUPPORTED_PLATFORM),
+            "undocumented": sorted(dep for dep, state in states.items()
+                                   if state == UNDOCUMENTED_ON_SOC),
             "blockers": sorted(dep for dep, state in states.items() if state != READY),
             "dependencies": sorted(states),
         }
@@ -120,11 +158,13 @@ def classify(rows, entries, soc):
 
 
 def refine_bucket(bucket, operator, readiness):
-    """Let the SoC verdict correct a bucket that came from the run itself.
+    """Let a *declared* platform limitation correct a bucket from the run itself.
 
-    A run reports ``dependency_missing`` for an operator whose dependency is simply
-    absent; when the manifest also says that dependency cannot exist on this host,
-    the delivery bucket must say so, because the next action is different.
+    Only ``UNSUPPORTED_PLATFORM`` may do that, and that state now comes solely from
+    an operator's own ``constraints.hardware``.  A dependency whose release notes
+    simply omit this SoC stays ``BLOCKED_DEPENDENCY`` with a note, because claiming
+    "do not retry here" on the strength of release notes is exactly the kind of
+    invented blocker a report must not produce.
     """
     if bucket != status_map.BLOCKED_DEPENDENCY:
         return bucket

@@ -25,19 +25,51 @@ def test_soc_supported_honours_wildcards_and_missing_declarations():
     assert readiness.soc_supported(["Ascend910B"], None)
 
 
-def test_platform_unsupported_outranks_a_missing_package():
-    rows = [{"operator": "op_a", "dependencies": ["dep-ok", "dep-other-soc"],
-             "states": {"dep-ok": "fail", "dep-other-soc": "fail"},
+def test_a_missing_dependency_documented_for_other_socs_is_not_a_platform_block():
+    """`supported_soc` is what the release is *documented* for, nothing stronger.
+
+    fsdp-turbo lists only 910B/910_93, and megamoe_lueelu still ran on 950DT per its
+    reference report.  So an undocumented pairing must stay a dependency blocker
+    with a "confirm on this SoC" note, never "do not retry here".
+    """
+    rows = [{"operator": "megamoe_lueelu", "dependencies": ["deep-ep-experimental"],
+             "states": {"deep-ep-experimental": "fail"}, "unmapped_modules": []}]
+    entries = {"deep-ep-experimental": {"id": "deep-ep-experimental",
+                                        "supported_soc": ["Ascend910B", "Ascend910_93"],
+                                        "ownership": "external"}}
+    result = readiness.classify(rows, entries, "Ascend950")["megamoe_lueelu"]
+    assert result["state"] == readiness.UNDOCUMENTED_ON_SOC
+    assert result["bucket"] == status_map.BLOCKED_DEPENDENCY
+    assert result["undocumented"] == ["deep-ep-experimental"]
+    # ... and it must not be rewritten into a platform verdict.
+    assert readiness.refine_bucket(status_map.BLOCKED_DEPENDENCY, "megamoe_lueelu",
+                                   {"megamoe_lueelu": result}) == \
+        status_map.BLOCKED_DEPENDENCY
+
+
+def test_an_installed_dependency_is_ready_even_when_undocumented():
+    rows = [{"operator": "x", "dependencies": ["cann-ops-transformer"],
+             "states": {"cann-ops-transformer": "pass"}, "unmapped_modules": []}]
+    entries = {"cann-ops-transformer": {"id": "cann-ops-transformer",
+                                        "supported_soc": ["Ascend910_93"]}}
+    assert readiness.classify(rows, entries, "Ascend950")["x"]["state"] == readiness.READY
+
+
+def test_only_an_operator_hardware_constraint_blocks_the_platform():
+    rows = [{"operator": "dispatch_ffn_combine_vllm_ascend",
+             "dependencies": ["torch-npu"], "states": {"torch-npu": "pass"},
              "unmapped_modules": []}]
-    entries = {
-        "dep-ok": {"id": "dep-ok", "supported_soc": ["Ascend950"], "kind": "native_build"},
-        "dep-other-soc": {"id": "dep-other-soc", "kind": "python_import",
-                          "supported_soc": ["Ascend910B"], "ownership": "external"},
-    }
-    result = readiness.classify(rows, entries, "Ascend950")["op_a"]
+    entries = {"torch-npu": {"id": "torch-npu", "supported_soc": ["*"]}}
+    hardware = {"dispatch_ffn_combine_vllm_ascend": ["Atlas A3 (ascend910_93)"]}
+    result = readiness.classify(rows, entries, "Ascend950", hardware)[
+        "dispatch_ffn_combine_vllm_ascend"]
     assert result["state"] == readiness.UNSUPPORTED_PLATFORM
-    assert result["unsupported"] == ["dep-other-soc"]
     assert result["bucket"] == status_map.BLOCKED_PLATFORM
+    assert "operator:hardware" in result["unsupported"]
+    # The same operator on A3 is not blocked by its hardware constraint.
+    assert readiness.hardware_blocked(["Atlas A3 (ascend910_93)"], "Ascend910_93") is False
+    # An operator that names 950 is not blocked on 950.
+    assert readiness.hardware_blocked(["Ascend 950"], "Ascend950") is False
 
 
 def test_a_supported_missing_package_stays_missing():

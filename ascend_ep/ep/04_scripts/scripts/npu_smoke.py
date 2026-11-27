@@ -40,6 +40,7 @@ from common.case_spec import catalog  # noqa: E402
 from common.config import load_configs  # noqa: E402
 from common.controller import create_manifest, execute, results  # noqa: E402
 from common.environment import capture  # noqa: E402
+from common.registry import registry  # noqa: E402
 from common.scheduler import make_plan  # noqa: E402
 
 SCHEMA_VERSION = 1
@@ -137,7 +138,10 @@ def dependency_view(soc_model=None, profile="all"):
         data = doctor.load_manifest(ROOT / "dependencies" / "manifest.yaml")
         entries = {entry["id"]: entry for entry in data["dependencies"]}
         soc = readiness.normalise_soc(soc_model)
-        return readiness.classify(report["operators"], entries, soc), soc, None
+        # Only an operator's own constraints.hardware may claim a platform block.
+        operator_hardware = {op: list((spec.constraints or {}).get("hardware") or ())
+                             for op, spec in registry().items()}
+        return readiness.classify(report["operators"], entries, soc, operator_hardware), soc, None
     except Exception as exc:  # noqa: BLE001 - a dependency view is advisory
         return {}, None, f"{type(exc).__name__}: {exc}"
 
