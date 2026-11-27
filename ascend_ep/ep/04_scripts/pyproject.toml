@@ -24,7 +24,7 @@ include = ["analysis*", "baselines*", "benchmarks*", "common*", "metrics*", "ope
 exclude = ["*.tests"]
 
 [tool.setuptools.package-data]
-operators = ["registry.yaml", "*/config.yaml"]
+operators = ["registry.yaml", "smoke_profiles.yaml", "*/config.yaml"]
 schemas = ["*.json"]
 # The vendored ascendep adapters are a PEP 420 namespace package (`ep/` without
 # `__init__.py`), so setuptools does not discover them: list the files explicitly or

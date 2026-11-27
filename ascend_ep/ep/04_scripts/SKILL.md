@@ -15,9 +15,68 @@ The user never edits a YAML file and never needs to know which phase runs which 
 You interpret the request, hand it to the workflow orchestrator, and report the result.
 
 **Hard rule: this file does not implement a benchmark.** Every phase calls an existing
-command (`run_benchmark.py`, `scripts/doctor.py`, `scripts/install_deps.sh`,
-`kernels/asc_comm/build.sh`). Never re-implement the scheduler, the runner, the timer or the
-case catalog to make the workflow simpler.
+command (`run_benchmark.py`, `scripts/npu_smoke.py`, `scripts/doctor.py`,
+`scripts/install_deps.sh`, `kernels/asc_comm/build.sh`). Never re-implement the scheduler,
+the runner, the timer or the case catalog to make the workflow simpler.
+
+## 1.1 Formal tests run on NPU only (no CPU fallback)
+
+Two execution modes exist and they are **not** interchangeable backends
+(`common/execution_mode.py`):
+
+| mode | who may use it | counts as operator evidence |
+|---|---|---|
+| `npu_only` (default) | every formal Smoke and Benchmark run | only a real `device: npu` pass |
+| `framework` | framework self-checks: import, config parsing, planner expansion, constraint filtering, reporting | never |
+
+The mode is `npu_only` unless `--execution-mode framework` (or `EP_EXECUTION_MODE`) is
+passed explicitly. In `npu_only` a CPU configuration is refused *before* the scheduler
+expands it, so no CPU result can be reported as operator coverage.
+
+Never, while a formal run is in progress:
+
+* substitute CPU for NPU, or Gloo for HCCL, in a formal communication test;
+* skip a case because an NPU kernel is missing — record `dependency_missing` instead;
+* mark a mock or CPU number as an operator pass;
+* decide "the operator works" from a Python import alone.
+
+If the NPU gate fails, the affected tasks are blocked with a recorded reason and everything
+else still runs. A blocked task is never a pass.
+
+## 1.2 Which command owns which stage
+
+| stage | command |
+|---|---|
+| environment gates, dependencies, kernel build | `python scripts/doctor.py`, `scripts/install_deps.sh`, `kernels/asc_comm/build.sh` |
+| **NPU Smoke (L0 gate + one real run per operator)** | `python scripts/npu_smoke.py` |
+| planning / full benchmark / profiling / analysis / report | `python run_benchmark.py …` |
+| end-to-end orchestration of the above | `python scripts/benchmark_workflow.py` |
+
+## 1.3 Per-operator smoke profiles
+
+A smoke run does **not** use "the first case the planner marked runnable" — that can pick a
+case that is not an adapter's main path. Every operator declares its own profile in
+`operators/smoke_profiles.yaml`:
+
+```yaml
+alltoall_hccl:
+  family: hccl
+  level: L1
+  case: COMM-001
+```
+
+The table is validated against `operators/registry.yaml` and the case catalog by
+`common/smoke_profile.py` before anything runs, and the run is refused when:
+
+* an operator has no profile;
+* the case's `requires` capabilities are not declared by the adapter;
+* the level does not match the case;
+* the planner cannot turn the profile into an executable task (a profile is a promise that
+  the point runs, so a declaration the planner rejects is a defect in the table).
+
+Whether a backward pass is required is derived from the adapter's own capabilities: an
+adapter that declares `moe_backward` must run `MOE-002` as well, and a profile cannot opt
+out silently.
 
 ## 1. When this skill applies
 
@@ -40,7 +99,7 @@ python scripts/benchmark_workflow.py interpret "<the user's sentence>" --out req
 |---|---|---|
 | 完整 / 全部 / full Benchmark | `full_benchmark` | nothing narrowed; the plan's scope |
 | 只跑 EP64 的 L1、L2 | `partial_benchmark` | only `scope.ep_sizes` / `scope.levels` |
-| 冒烟 / smoke / 快速验证 | `smoke_test` | small scope; CPU hosts use `configs/smoke_cpu.yaml` |
+| 冒烟 / smoke / 快速验证 | `smoke_test` | NPU_ONLY: Stage 1 L0 gate + one declared case per operator; never a CPU configuration |
 | 估算…不要执行 | `estimate` | stops after `resource_estimation` |
 | 只生成计划 | `plan_only` | stops after `resource_estimation` |
 | 继续上次没跑完的 | `resume` | resumes the latest unfinished workflow |
@@ -93,6 +152,68 @@ capability_report.json  kernel_report.json  plan_manifest.json  resource_estimat
 execution_summary.json  result_validation.json  profiling_summary.json
 analysis_summary.json  report_summary.json  final_report.json  logs/
 ```
+
+## 3.5 NPU Smoke: the command and what it must prove
+
+```sh
+# 1. expand the profiles; touches no device, safe on any host
+python scripts/npu_smoke.py plan
+
+# 2. the real smoke: Stage 1 L0 gate + Stage 2 one declared case per operator
+python scripts/npu_smoke.py run --output 05_results/smoke --run-id smoke-ep8
+
+# narrow without changing the policy
+python scripts/npu_smoke.py run --output 05_results/smoke --run-id smoke-comm \
+    --stage operators --operators alltoall_hccl,moonep --direction forward
+
+# gate only: build the plan, apply the NPU/hardware preflight, create no run
+python scripts/npu_smoke.py run --output 05_results/smoke --run-id gate --dry-run
+```
+
+Exit codes: `0` complete coverage, `1` ran but coverage incomplete or something failed,
+`2` invalid request/profile table (nothing executed).
+
+Artifacts, under `<output>/<run-id>/`:
+
+```
+smoke_report.json   machine-readable report (environment, stage1, operators, coverage, gaps)
+smoke_report.md     the same, for a human
+manifest.json       standard manifest: every task the run planned
+metrics.json        per task, including correctness and latency of the points that ran
+logs/<task>/…       per-attempt worker logs
+```
+
+Stage 1 **environment smoke** exercises the L0 families a host must be able to run — P2P,
+collectives, GMM, SwiGLU, communication/compute overlap, plus memory and native transport as
+reported-but-optional families. It is cheap by construction
+(`configs/smoke_environment.yaml`: one value per swept dimension) and it is what gives L0
+real coverage; no operator profile repeats it.
+
+Stage 2 **operator smoke** runs each profile's forward case, plus the backward case when the
+adapter declares `moe_backward`. A profile passes only when **every** task it expanded to
+passed on the NPU.
+
+The report must state three coverages separately, because they can disagree:
+
+| coverage | means |
+|---|---|
+| operator | operators whose main path really executed and passed on the NPU |
+| level | L0-L4, each backed by a real passed result (L0 from Stage 1) |
+| execution path | every path in `required_paths` (backend, compute, direction, routing, dedup, precision) backed by a passed profile |
+
+A required path nobody covers, a level with no passed result, and an operator with no profile
+are all reported as `COVERAGE_GAP`. Overall `PASS` requires all three coverages complete and
+no gaps — "every operator passed" and "every required path was exercised" are different
+claims and the report keeps them apart.
+
+Delivery buckets (`common/status_map.py`) keep blockers distinguishable:
+
+`PASSED` · `FAILED` · `BLOCKED_DEPENDENCY` · `BLOCKED_HARDWARE` · `BLOCKED_PLATFORM` ·
+`BLOCKED_ENVIRONMENT` · `BUILD_FAILED` · `SKIPPED_BY_USER`
+
+In particular an EP size larger than the host's card count is `BLOCKED_HARDWARE`, never a
+CPU run and never a plain failure; a build that fails is `BUILD_FAILED`, not a missing
+dependency.
 
 ## 4. Automation rules
 
@@ -194,11 +315,16 @@ Report, in this order:
 
 1. **what ran** — workflow id, run id, device, EP sizes, levels, commit;
 2. **what passed** — counts, sample counts, which groups are actually comparable;
-3. **what is blocked and why** — dependency, environment, unsupported, kernel, capability,
-   with the recorded reason for each;
-4. **what was not verified** — no profile, no L0 verification, single measurement;
-5. **where the evidence is** — `reports/benchmark_report.md`, `reports/*`, raw `metrics.json`,
-   `05_results/workflows/<id>/`.
+3. **what is blocked and why** — dependency, hardware, platform, environment, build, with
+   the recorded reason for each. Use the `BLOCKED_*` bucket names, never a single "failed"
+   count. A blocked task is not a pass and does not contribute coverage;
+4. **the three coverages, separately** — for a smoke run: operator, level and execution
+   path from `<output>/<run-id>/smoke_report.json`, plus every `COVERAGE_GAP` it lists. Never
+   claim complete coverage because "all operators passed";
+5. **what was not verified** — no profile, no L0 verification, single measurement;
+6. **where the evidence is** — `reports/benchmark_report.md`, `reports/*`, raw
+   `metrics.json`, `05_results/workflows/<id>/`, and for smoke
+   `<output>/<run-id>/smoke_report.{json,md}`.
 
 Acceptance gates for the delivery (`references/report_acceptance.md`): the status buckets sum
 to the planned tasks, coverage accounts for every variant, and every link in the main report

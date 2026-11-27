@@ -1,0 +1,297 @@
+# Per-operator NPU smoke profiles.
+#
+# Why this file exists
+# --------------------
+# Before this file, a smoke run picked "the first case the planner marked
+# runnable" for an operator.  That is not the operator's core path: it can select
+# L3/MOE-001 for a dispatch-only adapter, or FUSE-005 for an adapter whose own
+# capability is `chunk_pipeline`.  This file declares, per operator, the one case
+# that exercises its main execution path, the EP size it needs, and the workload
+# that pushes it through the real kernel.
+#
+# What is declared here vs derived
+# --------------------------------
+# Declared: `family` (backend), `level`, `case`, optional `ep_size`, optional
+# `workload`/`model` overrides, and the optional backward case override.
+#
+# Derived from the operator registry (single source of truth, so the two cannot
+# drift): whether a backward case is required (`moe_backward` in the adapter
+# capabilities), the planner/dedup path tags, and every capability the chosen
+# case requires.  `common/smoke_profile.py` validates the whole table against
+# `operators/registry.yaml` and `common/case_spec.py` and refuses to run when a
+# declaration is inconsistent.
+#
+# Formal runs are NPU_ONLY.  A profile never selects a CPU configuration; the
+# only way a profile produces no result is a recorded blocker.
+schema_version: 1
+
+defaults:
+  #: EP size when the profile does not need a specific one.
+  ep_size: 8
+  #: Formal execution is NPU-only; see common/execution_mode.py.
+  execution_mode: npu_only
+  device: npu
+  #: What every profile must check about its output.
+  validation:
+    correctness: true
+    output_shape: true
+    dtype: true
+    finite: true
+  #: A profile must stay cheap: smoke answers "does the path execute", not
+  #: "how fast is it".  Full Benchmark owns the measurement matrix.
+  benchmark:
+    warmup: 2
+    iterations: 5
+
+#: Execution paths that must have at least one *passed* NPU result before a smoke
+#: run may claim complete coverage.  Anything missing is reported as COVERAGE_GAP
+#: even when every operator passed, because "all operators passed" and "every
+#: required path was exercised" are different claims.
+required_paths:
+  - backend:hccl
+  - backend:cann
+  - backend:deepep
+  - backend:moonep
+  - backend:fsdpturbo
+  - backend:sglang
+  - compute:communication
+  - compute:gmm
+  - compute:fused
+  - direction:forward
+  - direction:backward
+  - routing:static
+  - routing:planner
+  - dedup:server
+  - precision:bf16
+
+operators:
+  # ---------------------------------------------------------------- HCCL baseline
+  allgather_hccl:
+    family: hccl
+    level: L1
+    case: COMM-001
+    note: >-
+      Collective baseline.  Its dispatch goes through the HCCL all_to_all /
+      all_gather path, so this profile is the reference other adapters are
+      compared against.
+
+  alltoall_hccl:
+    family: hccl
+    level: L1
+    case: COMM-001
+
+  # ------------------------------------------------------------- Megatron adapters
+  allgather_megatron:
+    family: megatron
+    level: L3
+    case: MOE-001
+
+  alltoall_megatron:
+    family: megatron
+    level: L3
+    case: MOE-001
+
+  # ------------------------------------------------------------------- FSDT turbo
+  allgather_fsdpturbo:
+    family: fsdpturbo
+    level: L3
+    case: MOE-001
+
+  alltoall_fsdpturbo:
+    family: fsdpturbo
+    level: L3
+    case: MOE-001
+
+  fused_fsdpturbo:
+    family: fsdpturbo
+    level: L3
+    case: MOE-001
+
+  chunkmoe_fsdpturbo:
+    family: fsdpturbo
+    level: L2
+    case: FUSE-005
+
+  domino_fsdpturbo:
+    family: fsdpturbo
+    level: L3
+    case: MOE-001
+
+  mc2_fsdpturbo:
+    family: fsdpturbo
+    level: L3
+    case: MOE-001
+
+  megamoe_fsdpturbo:
+    family: fsdpturbo
+    level: L3
+    case: MOE-001
+
+  # ------------------------------------------------------------------ MindSpeed
+  allgather_overlap_mindspeed:
+    family: mindspeed
+    level: L3
+    case: MOE-001
+
+  hierarchical_alltoallv_mindspeed:
+    family: mindspeed
+    level: L3
+    case: MOE-001
+    # Its native hierarchy contract needs two outer ranks with at least two inner
+    # ranks each, so the smallest legal point is EP16 (8 + 8).
+    ep_size: 16
+    model:
+      num_experts: 48
+    distributed:
+      hierarchical_inner_size: 8
+    topology:
+      server_ids: [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]
+
+  # ----------------------------------------------------------------- CANN / MC2
+  mc2_dispatch_cann:
+    family: cann
+    level: L1
+    case: COMM-001
+    # The published V2 adapter documents a 512-token-per-rank ceiling.
+    workload:
+      tokens_per_rank: 256
+
+  mc2_dispatch_cann_v1:
+    family: cann
+    level: L1
+    case: COMM-001
+    # A single V1 invocation supports at most 512 tokens per rank.
+    workload:
+      tokens_per_rank: 256
+
+  mc2_dispatch_cann_v3:
+    family: cann
+    level: L1
+    case: COMM-001
+    workload:
+      tokens_per_rank: 128
+    benchmark:
+      phase: forward
+
+  mc2_combine_add_rmsnorm_cann:
+    family: cann
+    level: L1
+    case: COMM-011
+    workload:
+      tokens_per_rank: 256
+
+  alltoallv_gmm_cann:
+    family: cann
+    level: L2
+    case: FUSE-002
+
+  alltoallv_quant_gmm_cann:
+    family: cann
+    level: L2
+    case: FUSE-008
+
+  megamoe_cann:
+    family: cann
+    level: L3
+    case: MOE-001
+
+  # ------------------------------------------------------------------ DeepEP
+  deepep_cann:
+    family: cann
+    level: L3
+    case: MOE-001
+
+  deepep_ascend:
+    family: deepep
+    level: L1
+    case: COMM-001
+
+  deepep_v2_ascend:
+    family: deepep
+    level: L1
+    case: COMM-001
+    # The ElasticBuffer adapter only accepts EP32/64/128; on an eight-card host
+    # this is BLOCKED_HARDWARE and must stay reported as such.
+    ep_size: 32
+    benchmark:
+      phase: forward
+
+  deepep_lueelu:
+    family: deepep
+    level: L1
+    case: COMM-001
+
+  deepep_direct_lueelu:
+    family: deepep
+    level: L1
+    case: COMM-001
+
+  deepep_sglang:
+    family: deepep
+    level: L3
+    case: MOE-001
+
+  # ------------------------------------------------------------------ lueelu
+  ep_gmm_fused_lueelu:
+    family: lueelu
+    level: L2
+    case: FUSE-002
+
+  megamoe_lueelu:
+    family: lueelu
+    level: L3
+    case: MOE-001
+
+  # ------------------------------------------------------------------ MegaMoE
+  megamoe_td:
+    family: megamoe
+    level: L3
+    case: MOE-001
+
+  megamoe_deepgemm_ascend:
+    family: deepgemm
+    level: L3
+    case: MOE-001
+
+  # ------------------------------------------------------------------ MoonEP
+  moonep:
+    family: moonep
+    level: L3
+    case: MOE-001
+
+  moonep_dynamic_planner:
+    family: moonep
+    level: L4
+    case: LAYER-004
+    # LAYER-004 only exists under an enabled planner; without this the planner
+    # marks the task not_run and the profile would validate but never execute.
+    # (LAYER-003/005/006 are fixed-owner cases owned by alltoall_hccl.)
+    load_balance:
+      enabled: true
+      redundant_experts: 3
+    workload:
+      routing: expert_hotspot
+      router_bias: rotating_hot_expert
+
+  moonep_server_dedup:
+    family: moonep
+    level: L1
+    case: COMM-010
+    dedup:
+      mode: server
+
+  # ------------------------------------------------------- framework-fused ops
+  dispatch_ffn_combine_vllm_ascend:
+    family: vllm
+    level: L3
+    case: MOE-001
+
+  dispatch_ffn_combine_sglang:
+    family: sglang
+    level: L3
+    case: MOE-001
+
+  fused_deep_moe_sglang:
+    family: sglang
+    level: L3
+    case: MOE-001
