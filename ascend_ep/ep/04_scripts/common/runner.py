@@ -299,9 +299,13 @@ def run_task(ctx, task, record, output, profile):
                 "calibration_failures": sum(item.get("calibration_failures") or 0
                                             for item in injected),
             }
-        timings = latency(ranks)
+        # A backend that measures internally (`direct`, e.g. the native HCCL test
+        # tool and the overlap family) reports its own latency and may carry no
+        # per-iteration samples at all; requiring samples there turned a valid
+        # measurement into "latency requires ... all ranks".
+        timings = latency(ranks) if any(item["samples"] for item in ranks) else None
         timing_is_performance = settings["timing"] not in {"host_api", "cold_start"}
-        p50 = timings["p50"] if timing_is_performance else None
+        p50 = timings["p50"] if (timings and timing_is_performance) else None
         record.update(status="passed", correctness={"passed": True, "ranks": [
             {"rank": item["rank"], **item["correctness"]} for item in ranks
         ]}, raw_samples=ranks, latency=timings,
@@ -421,7 +425,7 @@ def run_task(ctx, task, record, output, profile):
             volume = traffic(traces[0], cfg, works[0].route.tokens,
                              backend.spec.traffic_model)
         observation = observe(ctx, task, backend, prepared, volume)
-        rank_avg = mean(timings["rank_mean"]) if timings.get("rank_mean") else None
+        rank_avg = mean(timings["rank_mean"]) if timings and timings.get("rank_mean") else None
         observation.with_latency(p50, rank_avg)
         if observation.actual_api is None and backend is not None:
             observation.actual_api = backend.actual_api()
