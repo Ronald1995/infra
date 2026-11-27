@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common import execution_mode, smoke_profile, status_map  # noqa: E402
+from common import execution_mode, readiness, smoke_profile, status_map  # noqa: E402
 from common.case_spec import catalog  # noqa: E402
 from common.config import load_configs  # noqa: E402
 from common.controller import create_manifest, execute, results  # noqa: E402
@@ -122,6 +122,24 @@ def device_probe():
 def environment_record(probe):
     record = {"probe": probe, "capture": capture(probe_npu=False)}
     return record
+
+
+def dependency_view(soc_model=None, profile="all"):
+    """Per-operator readiness from the manifest, classified against this SoC.
+
+    Returns ``(readiness_map, soc, error)``.  A failure here must never stop a run:
+    the dependency view refines the report, it does not gate it.
+    """
+    try:
+        from scripts import dependency_report, doctor
+
+        report = dependency_report.build(profile=profile)
+        data = doctor.load_manifest(ROOT / "dependencies" / "manifest.yaml")
+        entries = {entry["id"]: entry for entry in data["dependencies"]}
+        soc = readiness.normalise_soc(soc_model)
+        return readiness.classify(report["operators"], entries, soc), soc, None
+    except Exception as exc:  # noqa: BLE001 - a dependency view is advisory
+        return {}, None, f"{type(exc).__name__}: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +307,7 @@ def _status_of(rows, task):
     return record.get("status") or "not_run", record.get("error_reason") or ""
 
 
-def profile_outcome(profile, tasks, rows, kinds, mode="npu_only"):
+def profile_outcome(profile, tasks, rows, kinds, mode="npu_only", readiness_map=None):
     """Collapse a profile's tasks into one bucket.
 
     A profile passes only when *every* task it expanded to passed on the NPU; one
@@ -300,6 +318,7 @@ def profile_outcome(profile, tasks, rows, kinds, mode="npu_only"):
     for task in tasks:
         status, reason = _status_of(rows, task)
         bucket = status_map.bucket(status, reason, kinds.get(task["task_id"]))
+        bucket = readiness.refine_bucket(bucket, profile.operator, readiness_map)
         if bucket == status_map.PASSED:
             config = task["config"]
             if not execution_mode.counts_as_operator_evidence(mode, config, status):
@@ -320,20 +339,25 @@ def profile_outcome(profile, tasks, rows, kinds, mode="npu_only"):
     return chosen, (worst[3] if worst else ""), detail
 
 
-def build_report(table, tasks, owners, rows, kinds, probe, stage, run_id, mode="npu_only"):
+def build_report(table, tasks, owners, rows, kinds, probe, stage, run_id, mode="npu_only",
+                 readiness_map=None, soc=None):
     operator_rows, outcomes = [], {}
     for profile in table:
         own = [task for task in tasks if owners.get(task["task_id"]) == profile.label]
         if not own:
             continue
-        bucket, reason, detail = profile_outcome(profile, own, rows, kinds, mode)
+        bucket, reason, detail = profile_outcome(profile, own, rows, kinds, mode,
+                                                 readiness_map)
         outcomes[profile.label] = bucket
+        ready = (readiness_map or {}).get(profile.operator) or {}
         operator_rows.append({
             "operator": profile.operator, "family": profile.family,
             "level": profile.level, "case": profile.case, "ep_size": profile.ep_size,
             "direction": profile.direction, "validation": profile.validation,
             "paths": list(profile.paths), "bucket": bucket, "reason": reason,
             "tasks": detail, "note": profile.note,
+            "readiness": ready.get("state"),
+            "unsupported_dependencies": ready.get("unsupported") or [],
         })
 
     stage1 = {"required": list(STAGE1_REQUIRED), "categories": {}, "passed": None}
@@ -406,6 +430,11 @@ def build_report(table, tasks, owners, rows, kinds, probe, stage, run_id, mode="
     else:
         conclusion = "INCOMPLETE"
 
+    readiness_counts = {}
+    for row in operator_rows:
+        key = row.get("readiness") or "unreported"
+        readiness_counts[key] = readiness_counts.get(key, 0) + 1
+
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
@@ -419,6 +448,8 @@ def build_report(table, tasks, owners, rows, kinds, probe, stage, run_id, mode="
         "counts": counts,
         "requirements": requirements,
         "gaps": gaps,
+        "readiness": {"soc": soc, "counts": readiness_counts,
+                      "operators": readiness_map or {}},
         "conclusion": conclusion,
     }
 
@@ -508,6 +539,21 @@ def render_markdown(report):
         for gap in gaps:
             lines.append(f"| {gap['scope']} | {gap['path']} | {gap['reason']} |")
 
+    readiness_info = report.get("readiness") or {}
+    if readiness_info.get("counts"):
+        lines += ["", "## Dependency readiness", "",
+                  f"host SoC: `{readiness_info.get('soc') or 'unknown'}`", "",
+                  "| state | operators |", "| --- | ---: |"]
+        for state in readiness.STATES + ("unreported",):
+            if readiness_info["counts"].get(state):
+                lines.append(f"| {state} | {readiness_info['counts'][state]} |")
+        unsupported = [row["operator"] for row in report["operators"]
+                       if row.get("readiness") == readiness.UNSUPPORTED_PLATFORM]
+        if unsupported:
+            lines += ["", "These adapters declare no support for this SoC, so installing "
+                          "their dependency would not make them runnable:", "",
+                      ", ".join(f"`{name}`" for name in unsupported)]
+
     lines += ["", "## Outcome buckets", "",
               "| bucket | count | next action |", "| --- | ---: | --- |"]
     for name in status_map.BUCKETS:
@@ -566,12 +612,20 @@ def build_parser():
     run_command.add_argument("--resume", action="store_true",
                              help="continue an existing --run-id: reuse every result already "
                                   "on disk and retry only what is not terminal")
+    run_command.add_argument("--no-readiness", action="store_true",
+                             help="skip the per-operator dependency readiness view (it runs "
+                                  "the dependency doctor, which is slow on a real host)")
 
     report_command = commands.add_parser(
         "report", help="re-render the report of an existing run from its persisted results")
     add_common(report_command)
     report_command.add_argument("--output", type=Path, required=True)
     report_command.add_argument("--run-id", required=True)
+    report_command.add_argument("--no-readiness", action="store_true")
+    report_command.add_argument("--live-probe", action="store_true",
+                                help="re-probe the device instead of reusing the probe "
+                                     "recorded by the run (a past run is reported under the "
+                                     "conditions it actually ran with)")
 
     gate_command = commands.add_parser(
         "gate", help="print the operators a smoke run passed, for a Full Benchmark --operators")
@@ -580,6 +634,22 @@ def build_parser():
     gate_command.add_argument("--format", choices=("csv", "lines", "json"), default="csv")
     gate_command.add_argument("--strict", action="store_true",
                               help="require the smoke report's own conclusion to be PASS")
+
+    deps_command = commands.add_parser(
+        "deps", help="per-operator dependency readiness on this SoC, and how to install")
+    add_common(deps_command)
+    deps_command.add_argument("--json", action="store_true")
+    deps_command.add_argument("--profile", default="all",
+                              choices=("cpu", "npu", "communication", "profiling",
+                                       "multinode", "all"))
+    deps_command.add_argument("--install", action="store_true",
+                              help="run the repo's installer for the operators that can be "
+                                   "installed here (never for a platform-unsupported one)")
+    deps_command.add_argument("--dry-run", action="store_true",
+                              help="with --install: print the installer plan, change nothing")
+    deps_command.add_argument("--soc", default=None,
+                              help="override the SoC family (e.g. Ascend950) when no device "
+                                   "is reachable, so the classification can be inspected")
     return parser
 
 
@@ -640,8 +710,14 @@ def command_run(args):
         print(f"cannot start the run: {exc}", file=sys.stderr)
         return 2
     rows = _task_rows(root, manifest)
+    readiness_map, soc, readiness_error = (
+        ({}, None, "disabled") if getattr(args, "no_readiness", False)
+        else dependency_view(probe["models"][0] if probe.get("models") else None))
+    if readiness_error and readiness_error != "disabled":
+        print(f"warning: dependency readiness unavailable ({readiness_error})",
+              file=sys.stderr)
     report = build_report(table, tasks, owners, rows, kinds, probe, args.stage,
-                          args.run_id, mode)
+                          args.run_id, mode, readiness_map, soc)
     json_path, md_path = write_report(root, report)
     print(render_markdown(report))
     print(f"report: {json_path}")
@@ -681,13 +757,28 @@ def command_report(args):
     owners = owners_from_manifest(table, tasks)
     stage = ("all" if any(task.get("smoke_stage") == "environment" for task in tasks)
              else "operators")
-    probe = device_probe()
+    previous = root / "smoke_report.json"
+    if previous.is_file() and not getattr(args, "live_probe", False):
+        # Re-render under the conditions the run actually saw.  Re-probing here
+        # would flip a completed NPU run to BLOCKED just because the cards are busy
+        # now, which is not what the artifact is about.
+        probe = (json.loads(previous.read_text(encoding="utf-8"))
+                 .get("environment", {}).get("probe") or device_probe())
+    else:
+        probe = device_probe()
     # Re-apply the preflight so a hardware shortfall keeps its kind; the tasks are
     # already blocked, so this only recomputes the reason classification.
     kinds = apply_preflight(probe, tasks)
     rows = _task_rows(root, manifest)
     mode = execution_mode.resolve(None)
-    report = build_report(table, tasks, owners, rows, kinds, probe, stage, args.run_id, mode)
+    readiness_map, soc, readiness_error = (
+        ({}, None, "disabled") if getattr(args, "no_readiness", False)
+        else dependency_view(probe["models"][0] if probe.get("models") else None))
+    if readiness_error and readiness_error != "disabled":
+        print(f"warning: dependency readiness unavailable ({readiness_error})",
+              file=sys.stderr)
+    report = build_report(table, tasks, owners, rows, kinds, probe, stage, args.run_id,
+                          mode, readiness_map, soc)
     json_path, md_path = write_report(root, report)
     print(render_markdown(report))
     print(f"report: {json_path}")
@@ -729,6 +820,86 @@ def command_gate(args):
     return 0 if passed else 1
 
 
+def command_deps(args):
+    """Report per-operator dependency readiness, optionally driving the installer.
+
+    This never re-implements installation: it classifies (``common/readiness.py``)
+    and then hands the subset that is installable *on this SoC* to the repo's own
+    ``scripts/install_deps.sh``.  Platform-unsupported operators are excluded from
+    the install set, because installing their package cannot make them run.
+    """
+    table = None
+    try:
+        table = smoke_profile.load(args.profiles)
+    except smoke_profile.ProfileError as exc:
+        print(f"warning: smoke profiles unavailable ({exc}); reporting registry-wide",
+              file=sys.stderr)
+    selected = None
+    if args.operators:
+        selected = sorted(args.operators)
+    elif table is not None:
+        selected = table.operators()
+    else:
+        from common.registry import registry
+        selected = sorted(registry())
+
+    probe = device_probe()
+    model = args.soc or (probe["models"][0] if probe.get("models") else None)
+    readiness_map, soc, error = dependency_view(model, profile=args.profile)
+    if error:
+        print(f"cannot build the dependency view: {error}", file=sys.stderr)
+        return 2
+
+    rows = [(name, readiness_map.get(name) or {}) for name in selected]
+    counts = {}
+    for _, row in rows:
+        key = row.get("state") or "unreported"
+        counts[key] = counts.get(key, 0) + 1
+
+    if args.json:
+        print(json.dumps({"soc": soc, "counts": counts,
+                          "operators": {name: row for name, row in rows}}, indent=2))
+    else:
+        print(f"host SoC: {soc or 'unknown'}  (from {model or 'no device probe'})")
+        print(f"{'operator':36s} {'state':22s} blockers")
+        print("-" * 120)
+        for name, row in rows:
+            blockers = ", ".join(row.get("blockers") or []) or "-"
+            print(f"{name:36s} {row.get('state') or 'unreported':22s} {blockers[:60]}")
+
+    installable = [name for name, row in rows
+                   if row.get("state") in (readiness.MISSING, readiness.VERSION_MISMATCH,
+                                           readiness.SOURCE_UNAVAILABLE,
+                                           readiness.BUILD_FAILED)]
+    unsupported = [name for name, row in rows
+                   if row.get("state") == readiness.UNSUPPORTED_PLATFORM]
+    if args.install and installable:
+        return _run_installer(installable, unsupported, args)
+    if args.install:
+        print(f"nothing to install: {len(unsupported)} operator(s) are unsupported on this "
+              f"SoC and {len(rows) - len(unsupported)} are ready or unreported",
+              file=sys.stderr)
+        return 0 if not unsupported else 1
+    return 0
+
+
+def _run_installer(installable, unsupported, args):
+    """Hand the installable subset to scripts/install_deps.sh."""
+    import subprocess
+
+    script = ROOT / "scripts" / "install_deps.sh"
+    command = ["bash", str(script), "--profile", args.profile]
+    if args.dry_run:
+        command.append("--dry-run")
+    print(f"installing for {len(installable)} operator(s): {', '.join(installable)}",
+          file=sys.stderr)
+    if unsupported:
+        print(f"skipping {len(unsupported)} platform-unsupported operator(s): "
+              f"{', '.join(unsupported)}", file=sys.stderr)
+    result = subprocess.run(command, cwd=ROOT, text=True)
+    return result.returncode
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -738,6 +909,8 @@ def main(argv=None):
         return command_report(args)
     if args.command == "gate":
         return command_gate(args)
+    if args.command == "deps":
+        return command_deps(args)
     return command_run(args)
 
 
