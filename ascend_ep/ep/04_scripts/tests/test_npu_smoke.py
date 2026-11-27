@@ -6,6 +6,10 @@ patched here.
 """
 from types import SimpleNamespace
 
+import json
+import io
+from contextlib import redirect_stdout
+
 import pytest
 
 from common import execution_mode, smoke_profile, status_map
@@ -158,3 +162,100 @@ def test_operator_without_a_profile_is_a_coverage_gap(table):
                                     "operators", "unit")
     operator_gaps = [gap for gap in report["gaps"] if gap["scope"] == "operator"]
     assert any(gap["path"] == "moonep" for gap in operator_gaps)
+
+
+# ---------------------------------------------------------------------------
+# resume
+# ---------------------------------------------------------------------------
+
+def test_resume_reopens_the_stored_manifest(table, tmp_path):
+    tasks, _ = npu_smoke.build_plan(table, "operators")
+    npu_smoke.apply_preflight(_probe(), tasks)
+    root, manifest = npu_smoke.open_run(tmp_path, tasks, "resume-unit")
+    assert (root / "manifest.json").is_file()
+
+    resumed_root, resumed = npu_smoke.open_run(tmp_path, tasks, "resume-unit", resume=True)
+    assert resumed_root == root
+    assert [t["task_id"] for t in resumed["tasks"]] == [t["task_id"] for t in manifest["tasks"]]
+
+
+def test_a_second_run_into_the_same_id_is_refused_without_resume(table, tmp_path):
+    tasks, _ = npu_smoke.build_plan(table, "operators")
+    npu_smoke.open_run(tmp_path, tasks, "dup-unit")
+    with pytest.raises(ValueError, match="--resume"):
+        npu_smoke.open_run(tmp_path, tasks, "dup-unit")
+
+
+def test_resume_refuses_a_plan_that_changed(table, tmp_path):
+    tasks, _ = npu_smoke.build_plan(table, "operators")
+    npu_smoke.open_run(tmp_path, tasks, "drift-unit")
+    fewer, _ = npu_smoke.build_plan(table, "operators", operators=["alltoall_hccl"])
+    with pytest.raises(ValueError, match="does not match this request"):
+        npu_smoke.open_run(tmp_path, fewer, "drift-unit", resume=True)
+
+
+def test_resume_retries_a_hardware_block_but_keeps_a_dependency_block():
+    blocked_hw = {"task_id": "a", "status": "environment_unavailable",
+                  "reason": "requested 16 NPU devices, found 8; EP16 needs one device "
+                            "per rank and is never replaced by CPU execution"}
+    blocked_dep = {"task_id": "b", "status": "dependency_missing",
+                   "reason": "No module named 'deep_ep'"}
+    missing_npu = {"task_id": "c", "status": "environment_unavailable",
+                   "reason": "no Ascend NPU is reachable from this process"}
+    tasks = [blocked_hw, blocked_dep, missing_npu]
+    cleared = npu_smoke.reset_preflight_blocks(tasks)
+    assert cleared == 1
+    assert blocked_hw["status"] == "not_run" and blocked_hw["reason"] is None
+    # A missing package does not appear because the cards came back.
+    assert blocked_dep["status"] == "dependency_missing"
+    assert missing_npu["status"] == "environment_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# full-benchmark gate
+# ---------------------------------------------------------------------------
+
+def test_gate_emits_only_passed_operators(table, tmp_path):
+    tasks, owners = npu_smoke.build_plan(table, "operators")
+    probe = _probe()
+    npu_smoke.apply_preflight(probe, tasks)
+    rows = {}
+    passed_labels = {table.get(name).label for name in ("alltoall_hccl", "deepep_cann")}
+    for task in tasks:
+        # Exactly two profiles pass; everything else is dependency-blocked.
+        owner = owners.get(task["task_id"])
+        status = "passed" if owner in passed_labels else "dependency_missing"
+        if task.get("status") == "not_run":
+            rows[task["task_id"]] = {"task_id": task["task_id"], "status": status,
+                                     "error_reason": "" if status == "passed" else "missing"}
+    report = npu_smoke.build_report(table, tasks, owners, rows, {}, probe, "operators", "gate")
+    path = tmp_path / "smoke_report.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    import io
+    from contextlib import redirect_stdout
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = npu_smoke.main(["gate", "--report", str(path)])
+    assert code == 0
+    assert buffer.getvalue().strip().split(",") == ["alltoall_hccl", "deepep_cann"]
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        strict = npu_smoke.main(["gate", "--report", str(path), "--strict"])
+    assert strict == 1  # the run itself is INCOMPLETE, so a strict gate refuses
+    assert "alltoall_hccl" in buffer.getvalue()
+
+
+def test_gate_fails_when_nothing_passed(table, tmp_path):
+    tasks, owners = npu_smoke.build_plan(table, "operators")
+    probe = _probe()
+    npu_smoke.apply_preflight(probe, tasks)
+    rows = _rows_all(tasks, "dependency_missing", "missing")
+    report = npu_smoke.build_report(table, tasks, owners, rows, {}, probe, "operators", "gate")
+    path = tmp_path / "smoke_report.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    import io
+    from contextlib import redirect_stdout
+    with redirect_stdout(io.StringIO()):
+        assert npu_smoke.main(["gate", "--report", str(path)]) == 1

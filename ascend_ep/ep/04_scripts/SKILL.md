@@ -168,7 +168,21 @@ python scripts/npu_smoke.py run --output 05_results/smoke --run-id smoke-comm \
 
 # gate only: build the plan, apply the NPU/hardware preflight, create no run
 python scripts/npu_smoke.py run --output 05_results/smoke --run-id gate --dry-run
+
+# continue an interrupted run: results already on disk are reused, only tasks that
+# are not terminal are retried, and a "too few cards" verdict is re-evaluated
+python scripts/npu_smoke.py run --output 05_results/smoke --run-id smoke-ep8 --resume
+
+# the Full Benchmark gate: only operators the smoke actually passed
+python run_benchmark.py run --plan configs/benchmark_plan.yaml --ep-size 8 \
+    --operators "$(python scripts/npu_smoke.py gate --report 05_results/smoke/smoke-ep8/smoke_report.json)"
 ```
+
+A run directory is created once. A second `run` into the same `--run-id` is refused
+unless `--resume` is passed, and `--resume` refuses a stored plan that differs from the
+current request instead of silently mixing two plans. `gate` is operator-level by design: a
+run where some adapters are blocked by a missing package still lets the passed ones proceed
+to measurement; `--strict` additionally requires the smoke run's own conclusion to be `PASS`.
 
 Exit codes: `0` complete coverage, `1` ran but coverage incomplete or something failed,
 `2` invalid request/profile table (nothing executed).

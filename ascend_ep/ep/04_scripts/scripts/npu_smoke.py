@@ -211,9 +211,63 @@ def launch_args(run_id, nproc_per_node=None):
                            fail_fast=False)
 
 
-def run_tasks(output, tasks, run_id, nproc_per_node=None):
-    root, manifest = create_manifest(output, tasks, run_id)
-    code = execute(root, manifest, launch_args(run_id, nproc_per_node))
+#: Marker written into the preflight reason, so a resumed run can tell "the host
+#: had too few cards last time" apart from any other environment blocker and
+#: re-evaluate it instead of inheriting a stale verdict.
+_SHORTFALL_MARKER = "never replaced by CPU execution"
+
+
+def reset_preflight_blocks(tasks):
+    """Clear a previous hardware verdict so a resume can re-probe the host.
+
+    A task blocked because the cards were busy must be retried when the cards come
+    back; every other blocker (a missing package, a platform mismatch) is left
+    alone, because nothing about it changes between runs.
+    """
+    cleared = 0
+    for task in tasks:
+        if (task.get("status") == "environment_unavailable"
+                and _SHORTFALL_MARKER in (task.get("reason") or "")):
+            task["status"] = "not_run"
+            task["reason"] = None
+            cleared += 1
+    return cleared
+
+
+def open_run(output, tasks, run_id, resume=False):
+    """Create a new run directory, or reopen an existing one for a resume."""
+    from common.controller import checked_id
+    from common.storage import load_json
+
+    root = Path(output).resolve() / checked_id(run_id)
+    manifest_path = root / "manifest.json"
+    if not resume:
+        if manifest_path.is_file():
+            raise ValueError(
+                f"{root} already holds a run; pass --resume to continue it "
+                f"(results already on disk are reused) or choose a new --run-id")
+        return create_manifest(output, tasks, run_id)
+    if not manifest_path.is_file():
+        raise ValueError(f"cannot resume: no manifest at {manifest_path}")
+    manifest = load_json(manifest_path)
+    planned = {task["task_id"] for task in manifest["tasks"]}
+    wanted = {task["task_id"] for task in tasks}
+    if planned != wanted:
+        stale = len(planned - wanted)
+        new = len(wanted - planned)
+        raise ValueError(
+            f"the stored plan does not match this request ({stale} task(s) no longer "
+            f"planned, {new} new task(s)); rerun without --resume into a fresh run-id")
+    cleared = reset_preflight_blocks(manifest["tasks"])
+    if cleared:
+        print(f"resume: re-evaluating {cleared} task(s) that were blocked by a "
+              f"hardware shortfall", flush=True)
+    return root, manifest
+
+
+def run_tasks(output, tasks, run_id, nproc_per_node=None, resume=False):
+    root, manifest = open_run(output, tasks, run_id, resume=resume)
+    code = execute(root, manifest, launch_args(run_id, nproc_per_node), resume=resume)
     return root, manifest, code
 
 
@@ -509,12 +563,23 @@ def build_parser():
     run_command.add_argument("--nproc-per-node", type=int, default=None)
     run_command.add_argument("--dry-run", action="store_true",
                              help="plan and gate only; create no run directory")
+    run_command.add_argument("--resume", action="store_true",
+                             help="continue an existing --run-id: reuse every result already "
+                                  "on disk and retry only what is not terminal")
 
     report_command = commands.add_parser(
         "report", help="re-render the report of an existing run from its persisted results")
     add_common(report_command)
     report_command.add_argument("--output", type=Path, required=True)
     report_command.add_argument("--run-id", required=True)
+
+    gate_command = commands.add_parser(
+        "gate", help="print the operators a smoke run passed, for a Full Benchmark --operators")
+    gate_command.add_argument("--report", type=Path, required=True,
+                              help="path to smoke_report.json")
+    gate_command.add_argument("--format", choices=("csv", "lines", "json"), default="csv")
+    gate_command.add_argument("--strict", action="store_true",
+                              help="require the smoke report's own conclusion to be PASS")
     return parser
 
 
@@ -568,7 +633,12 @@ def command_run(args):
                       f"{task['reason']}")
         return 0 if runnable else 1
 
-    root, manifest, code = run_tasks(args.output, tasks, args.run_id, args.nproc_per_node)
+    try:
+        root, manifest, code = run_tasks(args.output, tasks, args.run_id,
+                                         args.nproc_per_node, resume=args.resume)
+    except ValueError as exc:
+        print(f"cannot start the run: {exc}", file=sys.stderr)
+        return 2
     rows = _task_rows(root, manifest)
     report = build_report(table, tasks, owners, rows, kinds, probe, args.stage,
                           args.run_id, mode)
@@ -625,6 +695,40 @@ def command_report(args):
     return 0 if report["conclusion"] == "PASS" else 1
 
 
+def command_gate(args):
+    """Emit the operator allowlist for a Full Benchmark run.
+
+    The gate is operator-level on purpose: a run where some adapters are blocked by
+    a missing dependency must still let the passed ones go on to be measured. Only
+    a ``PASSED`` operator enters the benchmark, and ``--strict`` additionally
+    demands that the smoke run itself concluded ``PASS``.
+    """
+    path = Path(args.report)
+    if not path.is_file():
+        print(f"no smoke report at {path}", file=sys.stderr)
+        return 2
+    report = json.loads(path.read_text(encoding="utf-8"))
+    passed = [row["operator"] for row in report.get("operators", [])
+              if row.get("bucket") == status_map.PASSED]
+    blocked = {row["operator"]: row.get("bucket") for row in report.get("operators", [])
+               if row.get("bucket") != status_map.PASSED}
+    conclusion = report.get("conclusion")
+
+    if args.format == "json":
+        print(json.dumps({"conclusion": conclusion, "passed": passed, "blocked": blocked},
+                         indent=2))
+    elif args.format == "lines":
+        print("\n".join(passed))
+    else:
+        print(",".join(passed))
+
+    if args.strict and conclusion != "PASS":
+        print(f"strict gate: the smoke run concluded {conclusion}, not PASS",
+              file=sys.stderr)
+        return 1
+    return 0 if passed else 1
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -632,6 +736,8 @@ def main(argv=None):
         return command_plan(args)
     if args.command == "report":
         return command_report(args)
+    if args.command == "gate":
+        return command_gate(args)
     return command_run(args)
 
 
