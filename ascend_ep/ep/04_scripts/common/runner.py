@@ -181,7 +181,13 @@ def run_task(ctx, task, record, output, profile):
     is_hw = task["backend_id"] == "hardware"
     case = catalog()[task["case_id"]]
     settings = cfg["benchmark"]
-    needs_weights = case.level in {"L2", "L3", "L4"} or case.id in {"HW-010", "HW-011", "HW-012"}
+    # An overlap case drives communication and compute against a real workload, so
+    # it needs the same materialised weights as an operator case; without them
+    # ``ctx.workload`` stayed None and the overlap baseline failed on
+    # ``work.topk_ids``.
+    needs_weights = (case.level in {"L2", "L3", "L4"}
+                     or case.id in {"HW-010", "HW-011", "HW-012"}
+                     or case.category == "overlap")
     steps = len(cfg["workload"].get("token_steps", [0])) if operation == "dynamic_tokens" else 1
     if operation == "trace_replay":
         steps = len(load_json(cfg["workload"]["trace_path"])["steps"])

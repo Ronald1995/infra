@@ -323,8 +323,11 @@ def build_report(table, tasks, owners, rows, kinds, probe, stage, run_id, mode="
             (stage1["categories"].get(name) or {}).get("ok") for name in STAGE1_REQUIRED)
 
     level_evidence = {}
-    if stage1["passed"]:
-        level_evidence["L0"] = {"passed": True, "source": "Stage 1 environment smoke"}
+    if stage1["passed"] is not None:
+        # Report L0 either way: a failed gate must read "the evidence did not
+        # pass", not "nobody planned L0".
+        level_evidence["L0"] = {"passed": bool(stage1["passed"]),
+                                "source": "Stage 1 environment smoke"}
     coverage = table.coverage(outcomes, level_evidence=level_evidence)
 
     counts = {name: 0 for name in status_map.BUCKETS}

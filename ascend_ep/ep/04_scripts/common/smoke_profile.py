@@ -187,9 +187,10 @@ class ProfileTable:
                                    "covered": covered,
                                    "source": extra.get("source") or "no profile"})
                 if not covered:
+                    reason = ("the supplied evidence for this level did not pass"
+                              if extra else "no smoke profile targets this level")
                     gaps.append({"kind": "COVERAGE_GAP", "scope": "level", "path": level,
-                                 "reason": "no smoke profile targets this level",
-                                 "operators": []})
+                                 "reason": reason, "operators": []})
             else:
                 covered = entry["passed"] > 0 or bool(extra.get("passed"))
                 level_rows.append({"level": level, "total": entry["total"],

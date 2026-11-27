@@ -122,7 +122,11 @@ def _swiglu(ctx, work, variant, shape_mode, params):
     activation = activate(gate_up, holder.limit).detach().requires_grad_()
     act = lambda: activate(gate_up, holder.limit)
     upstream = torch.ones_like(activation)
-    cpu = gate_up.detach().cpu().float()
+    # The CPU reference must be a graph leaf: without `requires_grad_()` the
+    # backward variant had no grad_fn and autograd.grad raised
+    # "element 0 of tensors does not require grad".  The GMM reference below
+    # already does this for its inputs.
+    cpu = gate_up.detach().cpu().float().requires_grad_()
     expected = torch.nn.functional.silu(cpu.chunk(2, dim=-1)[0].clamp(max=holder.limit))
     expected = expected * cpu.chunk(2, dim=-1)[1].clamp(-holder.limit, holder.limit)
     if variant == "backward":
