@@ -196,12 +196,15 @@ def _compute(ctx, work, kind, size):
         rows = dispatched.expert_input.detach().requires_grad_()
         counts = dispatched.expert_token_counts
         gate_up = gmm1(work, rows, counts, ctx).detach().requires_grad_()
-        activation = activate(gate_up, work.limit)
         shape = {"mode": "workload_expert_rows", "rows": int(rows.shape[0]),
                  "groups": len(counts), "k": int(work.hidden_states.shape[1]),
                  "n": int(work.w_gate.shape[1])}
 
         if kind == "swiglu":
+            # Only this branch needs the reference activation; computing it for the
+            # GMM kinds produced a tensor nothing read.
+            activation = activate(gate_up, work.limit)
+
             def run():
                 return activate(gate_up, work.limit)
 
@@ -230,7 +233,6 @@ def _compute(ctx, work, kind, size):
                 denominator = expected.norm() + 1e-12
             if float((got - expected).norm() / denominator) > 0.04:
                 raise CorrectnessError("overlap compute result drifted from the reference")
-            del activation
 
         return run, check, shape
     if kind == "hbm_copy":
