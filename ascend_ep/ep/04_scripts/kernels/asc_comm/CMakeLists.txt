@@ -46,10 +46,14 @@ set(ASC_COMM_DEFINITIONS ASC_COMM_ABI_VERSION=${ASC_COMM_ABI_VERSION}
                          ASC_COMM_SOC_NAME="${ASC_COMM_SOC_NAME}"
                          ASC_COMM_BUILD_ID="${ASC_COMM_BUILD_ID}")
 
+#: Whether the AIV *kernel* really compiled, as opposed to merely being requested:
+#: the manifest must not claim an engine whose device sources are absent.
+set(ASC_COMM_AIV_KERNEL OFF)
 if(ASC_COMM_BUILD_AIV)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/aiv/write_nbi/kernel.cpp")
     list(APPEND ASC_COMM_SOURCES aiv/write_nbi/kernel.cpp)
     list(APPEND ASC_COMM_DEFINITIONS ASC_COMM_BUILD_AIV)
+    set(ASC_COMM_AIV_KERNEL ON)
   elseif(ASC_COMM_STRICT)
     message(FATAL_ERROR "AIV requested but aiv/write_nbi/kernel.cpp does not exist")
   else()
@@ -59,10 +63,12 @@ if(ASC_COMM_BUILD_AIV)
   endif()
 endif()
 
+set(ASC_COMM_CCU_KERNEL OFF)
 if(ASC_COMM_BUILD_CCU)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ccu/dsl/kernel.cpp")
     list(APPEND ASC_COMM_SOURCES ccu/dsl/kernel.cpp)
     list(APPEND ASC_COMM_DEFINITIONS ASC_COMM_BUILD_CCU)
+    set(ASC_COMM_CCU_KERNEL ON)
   elseif(ASC_COMM_STRICT)
     message(FATAL_ERROR "CCU requested but ccu/dsl/kernel.cpp does not exist")
   else()
@@ -88,6 +94,8 @@ add_custom_command(TARGET asc_comm_kernels POST_BUILD
           -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/manifest.json
           -DAIV=$<BOOL:${ASC_COMM_BUILD_AIV}>
           -DCCU=$<BOOL:${ASC_COMM_BUILD_CCU}>
+          -DAIV_KERNEL=$<BOOL:${ASC_COMM_AIV_KERNEL}>
+          -DCCU_KERNEL=$<BOOL:${ASC_COMM_CCU_KERNEL}>
           -DSOC=${ASC_COMM_SOC_NAME}
           -DBUILD_ID=${ASC_COMM_BUILD_ID}
           -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/write_manifest.cmake"

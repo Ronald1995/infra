@@ -8,27 +8,31 @@ if(NOT DEFINED LIBRARY OR NOT EXISTS "${LIBRARY}")
   message(FATAL_ERROR "write_manifest: the kernel library does not exist: '${LIBRARY}'")
 endif()
 
-function(json_engine name enabled)
-  if(enabled)
-    set(built "true")
+# A caller that predates the *_KERNEL arguments still gets the old behaviour.
+if(NOT DEFINED AIV_KERNEL)
+  set(AIV_KERNEL "${AIV}")
+endif()
+if(NOT DEFINED CCU_KERNEL)
+  set(CCU_KERNEL "${CCU}")
+endif()
+
+# ``enabled`` says the engine was requested; ``kernel`` says its device source
+# actually compiled.  Only the second one may claim a built data plane: a build
+# that warned "kernel.cpp does not exist" must not leave a manifest saying
+# ``built: true``, or the capability probe would offer a plane that cannot run.
+function(json_engine name enabled kernel)
+  if(enabled AND kernel)
+    set(entry "\"${name}\": {\"built\": true, \"library\": \"${LIBRARY}\", \"soc\": \"${SOC}\", \"build_id\": \"${BUILD_ID}\"}")
+  elseif(NOT enabled)
+    set(entry "\"${name}\": {\"built\": false, \"library\": null, \"reason\": \"the ${name} data plane was not enabled in this build\"}")
   else()
-    set(built "false")
-  endif()
-  if(NOT enabled)
-    set(reason "the ${name} data plane was not enabled in this build")
-  else()
-    set(reason "null")
-  endif()
-  if(reason STREQUAL "null")
-    set(entry "\"${name}\": {\"built\": ${built}, \"library\": \"${LIBRARY}\", \"soc\": \"${SOC}\", \"build_id\": \"${BUILD_ID}\"}")
-  else()
-    set(entry "\"${name}\": {\"built\": ${built}, \"library\": null, \"reason\": \"${reason}\"}")
+    set(entry "\"${name}\": {\"built\": false, \"library\": null, \"reason\": \"the ${name} kernel source is missing from this source tree\"}")
   endif()
   set(ASC_COMM_MANIFEST_ENTRIES "${ASC_COMM_MANIFEST_ENTRIES}${entry}," PARENT_SCOPE)
 endfunction()
 
-json_engine(AIV "${AIV}")
-json_engine(CCU "${CCU}")
+json_engine(AIV "${AIV}" "${AIV_KERNEL}")
+json_engine(CCU "${CCU}" "${CCU_KERNEL}")
 string(REGEX REPLACE ",$" "" ENTRIES "${ASC_COMM_MANIFEST_ENTRIES}")
 
 file(WRITE "${OUTPUT}" "{\n  \"schema_version\": 1,\n  \"soc\": \"${SOC}\",\n  \"build_id\": \"${BUILD_ID}\",\n  \"library\": \"${LIBRARY}\",\n  \"engines\": {${ENTRIES}}\n}\n")
