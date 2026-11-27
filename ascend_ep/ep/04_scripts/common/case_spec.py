@@ -84,6 +84,17 @@ class CaseSpec:
     category: str = "operator"
     #: Adapter capabilities required before any operator may run this case.
     requires: tuple[str, ...] = ()
+    #: Capabilities required to prepare the case but not measured by it: the
+    #: routing, the forward graph, the handles.  Missing one makes the case
+    #: unrunnable, so the scheduler checks them, but they are never timed.
+    setup_requires: tuple[str, ...] = ()
+    #: ``(condition, capability)`` pairs: the capability is required only while the
+    #: condition holds (for example dedup.mode=rank).  Declared so that an empty
+    #: ``requires`` is never read as "unconditionally supported".
+    conditional_requires: tuple[tuple[str, str], ...] = ()
+    #: What kind of test this is (``trace_replay``, ``recompute``, ...).  ``level``
+    #: is the report grouping; ``family`` is the nature of the case.
+    family: str = ""
     #: Parameter variants.  ``("default",)`` means "one parameter set".
     variants: tuple[str, ...] = ("default",)
     #: Name of the execution handler, resolved by ``benchmarks.cases``.
@@ -432,7 +443,7 @@ _L3 = (
      ("moe_forward_output",), ("forward",)),
     ("backward", ("moe_backward",), "l3.backward",
      ("input_gradient", "expert_weight_gradient"), ("training", "backward")),
-    ("forward_backward", ("moe_backward",), "l3.forward_backward",
+    ("forward_backward", ("moe_forward", "moe_backward"), "l3.forward_backward",
      ("moe_forward_output", "input_gradient", "expert_weight_gradient"),
      ("training", "roundtrip")),
     ("recompute", ("moe_backward", "recompute"), "l3.recompute",
@@ -521,6 +532,35 @@ _CASE_TRANSFORM = {"MOE-005": "imbalanced_workload", "MOE-009": "dynamic_token_s
 
 #: Cases measured at a different level than their ID prefix suggests.
 _LEVEL_OVERRIDES = {"LAYER-007": "L3"}
+
+#: What the case actually is, independent of its number.  `level` answers "which
+#: report does it belong to", `family` answers "what kind of test is it".  Keeping
+#: them apart is what lets LAYER-007 live in L3 without pretending its ID changed.
+_CASE_FAMILY = {
+    "LAYER-007": "trace_replay",
+}
+
+#: Capabilities needed to *prepare* a case (build the routing, the forward graph,
+#: the handles) but not measured inside its timing window.  Without this, a case
+#: looks runnable on an adapter that cannot even build its inputs.
+_SETUP_REQUIRES = {
+    # The handler runs a dispatch before it times rmsnorm_combine, because the
+    # combine it measures consumes dispatch output.
+    "COMM-011": ("dispatch",),
+    # A backward case needs the forward graph that produced its activations; the
+    # forward is built in setup and is not part of the backward timing.
+    "MOE-002": ("moe_forward",),
+    "MOE-004": ("moe_forward", "moe_backward"),
+}
+
+#: Capabilities that only apply under a named condition.  Declared here so a static
+#: reader can see them: an empty ``requires`` must never be read as "every operator
+#: can run this".  The execution decision still comes from the applicability rule of
+#: the same name, and :func:`_validate` keeps the two in step.
+_CONDITIONAL_REQUIRES = {
+    "COMM-010": (("dedup.mode=rank", "rank_dedup"),
+                 ("dedup.mode=server", "server_dedup")),
+}
 
 _TRAINING_OPERATIONS = {
     "backward", "forward_backward", "recompute", "fused_backward", "router_training",
@@ -633,6 +673,9 @@ def _operator_specs(rows, level, prefix):
         specs[case_id] = CaseSpec(
             case_id, effective_level, operation,
             requires=tuple(requires),
+            setup_requires=tuple(_SETUP_REQUIRES.get(case_id, ())),
+            conditional_requires=tuple(_CONDITIONAL_REQUIRES.get(case_id, ())),
+            family=_CASE_FAMILY.get(case_id, ""),
             variants=_CASE_VARIANTS.get(case_id, ("default",)),
             handler=handler,
             sweep=("variant",),
@@ -770,6 +813,15 @@ def _validate(catalog):
         for name in item.applicability:
             if name not in APPLICABILITY_RULES:
                 problems.append(f"{case_id}: unknown applicability rule {name!r}")
+        for condition, capability in item.conditional_requires:
+            if not capability:
+                problems.append(f"{case_id}: conditional requirement without a capability")
+            if not item.applicability:
+                problems.append(
+                    f"{case_id}: conditional requirement {condition!r} has no "
+                    f"applicability rule to evaluate it")
+        if item.family and item.level == "L0":
+            problems.append(f"{case_id}: an L0 case cannot declare an operator family")
         if item.transform is not None and item.transform not in TRANSFORMS:
             problems.append(f"{case_id}: unknown workload transform {item.transform!r}")
     if problems:

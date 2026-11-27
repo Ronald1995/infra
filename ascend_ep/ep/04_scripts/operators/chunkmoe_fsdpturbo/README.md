@@ -15,8 +15,11 @@ python -m operators.chunkmoe_fsdpturbo.benchmark --config operators/chunkmoe_fsd
 
 ## Benchmark contract
 
-- **Cases it can run** (capability-level): L1 COMM-010; L2 FUSE-005 (`chunk_pipeline`, variants `chunks_2`/`chunks_4`/`chunks_8`); L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008.
-- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (no `dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001/002/003/004/006/007/008/009 (`dispatch`/`dispatch_gmm`/`gmm_combine`/`tile_schedule`/`comm_resources`/`quantized_fusion`/`fused_backward`); LAYER-001..006, LAYER-008, LAYER-009; MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Cases it can run** (capability-level): L2 原生融合 FUSE-005; L3 完整 MoE MOE-001..003, MOE-005, MOE-006, MOE-008.
+- **Conditional cases** (runnable only under a matching configuration): LAYER-007 (L3 完整 MoE): only when workload={'routing': 'real_trace_replay'}.
+- **Cases it cannot run**: L1 独立通信 COMM-001, COMM-002, COMM-003, COMM-004, COMM-005, COMM-006, COMM-007, COMM-008, COMM-009, COMM-010, COMM-011, COMM-012; L2 串行组合 FUSE-001, FUSE-003; L2 原生融合 FUSE-002, FUSE-004, FUSE-006, FUSE-007, FUSE-008, FUSE-009; L3 完整 MoE MOE-004, MOE-007, MOE-009; L4 路由器/规划/去重 LAYER-001, LAYER-002, LAYER-003, LAYER-004, LAYER-005, LAYER-006, LAYER-008, LAYER-009.
+- **Why not**: Native resized workspace lifecycle is pending; deduplicated dispatch has no dedup path; the None control for this suite is COMM-001 with dedup.mode=none; operation requires async_combine, combine, dispatch; operation requires async_dispatch, dispatch; operation requires cached_dispatch, dispatch; operation requires combine, dispatch ….
+
 - **Correctness contract**: FUSE-005 checks the chunked forward with `validate_moe`; the chunk count is the variant, so the three variants are three different measurements, not repeats.
 - **Timing contract**: `benchmarks/cases/l2_fusion.py::_chunk_pipeline`; `run` calls `backend.chunk_forward(work, chunks)` once inside the timed block.
 - **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `equal_tokens`, `contiguous_placement`, `swiglu_limit=10`.

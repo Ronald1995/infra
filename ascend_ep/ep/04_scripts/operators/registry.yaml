@@ -476,6 +476,7 @@
       "commit": "c83e36b808c4e053c9245f95c7bc45cfaae0000d",
       "api": "npu_moe_distribute_combine_add_rms_norm",
       "capabilities": [
+        "dispatch",
         "combine_add_rmsnorm"
       ],
       "constraints": {

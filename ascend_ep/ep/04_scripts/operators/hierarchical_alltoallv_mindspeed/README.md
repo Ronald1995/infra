@@ -17,8 +17,10 @@ python -m operators.hierarchical_alltoallv_mindspeed.benchmark \
 
 ## Benchmark contract
 
-- **Cases it can run** (capability-level): L1 COMM-010; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008; L4 LAYER-001, LAYER-002, LAYER-009 (`router_layer`).
-- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001..009; LAYER-003..LAYER-008 (`dynamic_planner`, dedup); MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Cases it can run** (capability-level): none.
+- **Cases it cannot run**: L1 独立通信 COMM-001, COMM-002, COMM-003, COMM-004, COMM-005, COMM-006, COMM-007, COMM-008, COMM-009, COMM-010, COMM-011, COMM-012; L2 串行组合 FUSE-001, FUSE-003; L2 原生融合 FUSE-002, FUSE-004, FUSE-005, FUSE-006, FUSE-007, FUSE-008, FUSE-009; L3 完整 MoE MOE-001, MOE-002, MOE-003, MOE-004, MOE-005, MOE-006, MOE-007, MOE-008, MOE-009, LAYER-007; L4 路由器/规划/去重 LAYER-001, LAYER-002, LAYER-003, LAYER-004, LAYER-005, LAYER-006, LAYER-008, LAYER-009.
+- **Why not**: L3 replay needs a real_trace_replay workload; this configuration does not select one; deduplicated dispatch has no dedup path; the None control for this suite is COMM-001 with dedup.mode=none; native hierarchy requires at least two outer ranks, each with at least two inner ranks; the planner is disabled in this configuration; the load_balance suite measures this case with load_balance.enabled=true; this case measures rank dedup; the plan selects dedup.mode=none; this case measures server dedup; the plan selects dedup.mode=none.
+
 - **Correctness contract**: `validate_moe` with the router gate for L4, so the router weight gradient is checked as well as the input and local expert weight gradients.
 - **Timing contract**: `moe_case`; forward and, for a training case, backward run inside one timed call; the sample closes after `ctx.synchronize()`.
 - **Registry constraints**: `hierarchical=true` requires `distributed.hierarchical_inner_size >= 2` with at least two outer ranks per node **and** an explicit `topology.server_ids`; otherwise `common/registry.py::check_constraints` reports `unsupported` ("native hierarchy requires ..."). Also `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`.

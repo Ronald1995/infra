@@ -13,8 +13,10 @@ python -m operators.mc2_dispatch_cann_v3.benchmark --config operators/mc2_dispat
 
 ## Benchmark contract
 
-- **Cases it can run** (capability-level): L1 COMM-001, COMM-003, COMM-004, COMM-007, COMM-008, COMM-009, COMM-010; L2 FUSE-001, FUSE-003; L3 LAYER-007, MOE-001, MOE-005, MOE-006, MOE-008.
-- **Cases it cannot run**: COMM-002/005/006/011/012; FUSE-002/004/005/006/007/008/009; LAYER-001..006, LAYER-008, LAYER-009; MOE-002/003/004 (`moe_backward`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Cases it can run** (capability-level): none.
+- **Cases it cannot run**: L1 独立通信 COMM-001, COMM-002, COMM-003, COMM-004, COMM-005, COMM-006, COMM-007, COMM-008, COMM-009, COMM-010, COMM-011, COMM-012; L2 串行组合 FUSE-001, FUSE-003; L2 原生融合 FUSE-002, FUSE-004, FUSE-005, FUSE-006, FUSE-007, FUSE-008, FUSE-009; L3 完整 MoE MOE-001, MOE-002, MOE-003, MOE-004, MOE-005, MOE-006, MOE-007, MOE-008, MOE-009, LAYER-007; L4 路由器/规划/去重 LAYER-001, LAYER-002, LAYER-003, LAYER-004, LAYER-005, LAYER-006, LAYER-008, LAYER-009.
+- **Why not**: L3 replay needs a real_trace_replay workload; this configuration does not select one; deduplicated dispatch has no dedup path; the None control for this suite is COMM-001 with dedup.mode=none; the planner is disabled in this configuration; the load_balance suite measures this case with load_balance.enabled=true; this case measures rank dedup; the plan selects dedup.mode=none; this case measures server dedup; the plan selects dedup.mode=none; tokens per rank exceeds adapter capacity 512.
+
 - **Correctness contract**: dispatch is checked through native route labels (950DT) or expert segments and token multisets (A3); combine is checked as a round trip. Runtime rejections are preserved as status plus raw log.
 - **Timing contract**: context and HCCL window are allocated outside the timed region; one low-latency dispatch/combine call is timed and `local_complete` recorded. A single call is limited to 512 tokens per rank.
 - **Registry constraints**: `ep_sizes` unconstrained, `dtypes=[bfloat16,float16]`, `hidden_size_range=[1024,8192]`, `top_k_range=[1,16]`, `num_experts_range=[2,2048]`, `max_tokens=512`, `hardware=[Ascend 950DT dispatch, Atlas A3 dispatch/combine]`.

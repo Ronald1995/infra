@@ -96,6 +96,19 @@ def required_capabilities(case, operator_id=None):
     return case.requires
 
 
+def setup_capabilities(case, operator_id=None):
+    """Capabilities the case needs in order to build its inputs, never timed.
+
+    Kept separate from :func:`required_capabilities` because the distinction is
+    real: MOE-002 builds its forward graph in setup and only measures the backward,
+    and COMM-011 dispatches before it times ``rmsnorm_combine``.  Both still need the
+    forward/dispatch path to exist, so both gate the case.
+    """
+    if case.owner is not None and case.owner == operator_id:
+        return ()
+    return case.setup_requires
+
+
 def _contract(spec, case, cfg, baseline):
     """The configuration an adapter constraint is evaluated against.
 
@@ -135,6 +148,19 @@ def status_for(spec, case, cfg, baseline=False):
         if known:
             return "not_implemented", "; ".join(known)
         return "unsupported", f"operation requires {', '.join(missing)}"
+    # A case also needs whatever it takes to *build* its inputs -- the routing, the
+    # forward graph, the handles.  Those are never timed, but an adapter that lacks
+    # them cannot reach the timed call at all, so they gate the same way.
+    setup_missing = sorted({name for name in setup_capabilities(case, spec.id)}
+                           - set(spec.capabilities))
+    if setup_missing:
+        gaps = spec.constraints.get("unadapted", {})
+        known = [gaps[name] for name in setup_missing if name in gaps]
+        if known:
+            return "not_implemented", "; ".join(known)
+        return ("unsupported",
+                f"case preparation requires {', '.join(setup_missing)} "
+                f"(setup only, not timed)")
     return "not_run", None
 
 

@@ -15,8 +15,10 @@ python -m operators.deepep_v2_ascend.benchmark --config operators/deepep_v2_asce
 
 ## Benchmark contract
 
-- **Cases it can run** (capability-level): L1 COMM-001..COMM-008, COMM-010; L2 FUSE-001, FUSE-003; L3 LAYER-007, MOE-001, MOE-005, MOE-006, MOE-008.
-- **Cases it cannot run**: COMM-009/011/012 (`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-002/004/005/006/007/008/009; LAYER-001..LAYER-006, LAYER-008, LAYER-009 (`router_layer`/`dynamic_planner`/dedup); MOE-002/003/004 (`moe_backward`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Cases it can run** (capability-level): none.
+- **Cases it cannot run**: L1 独立通信 COMM-001, COMM-002, COMM-003, COMM-004, COMM-005, COMM-006, COMM-007, COMM-008, COMM-009, COMM-010, COMM-011, COMM-012; L2 串行组合 FUSE-001, FUSE-003; L2 原生融合 FUSE-002, FUSE-004, FUSE-005, FUSE-006, FUSE-007, FUSE-008, FUSE-009; L3 完整 MoE MOE-001, MOE-002, MOE-003, MOE-004, MOE-005, MOE-006, MOE-007, MOE-008, MOE-009, LAYER-007; L4 路由器/规划/去重 LAYER-001, LAYER-002, LAYER-003, LAYER-004, LAYER-005, LAYER-006, LAYER-008, LAYER-009.
+- **Why not**: EP8 outside adapter's supported EP sizes [32, 64, 128]; L3 replay needs a real_trace_replay workload; this configuration does not select one; deduplicated dispatch has no dedup path; the None control for this suite is COMM-001 with dedup.mode=none; the planner is disabled in this configuration; the load_balance suite measures this case with load_balance.enabled=true; this case measures rank dedup; the plan selects dedup.mode=none; this case measures server dedup; the plan selects dedup.mode=none.
+
 - **Correctness contract**: dispatch layout via `validate_dispatch`; the L3 forward via `validate_moe`. The registry has no `moe_backward`, so no gradient case is claimed.
 - **Timing contract**: L1 dispatch/combine handlers submit and wait inside the timed block and record `local_complete`; the async variants wait on the adapter's deferred callback.
 - **Registry constraints**: `ep_sizes=[32,64,128]` (the only adapter that lists EP64/EP128), `dtypes=[bfloat16]`, `hidden_size=7168`, `min_tokens=256`, `max_tokens=10240`, `equal_tokens`, `contiguous_placement`.

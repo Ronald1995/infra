@@ -15,7 +15,10 @@ python -m operators.mc2_combine_add_rmsnorm_cann.benchmark --config operators/mc
 
 ## Benchmark contract
 
-- **Cases it can run** (capability-level): L1 COMM-010 (no capability requirement) and COMM-011 (`combine_add_rmsnorm`). Every other L1-L4 case is `unsupported` (no `dispatch`/`combine`/`moe_forward`/`moe_backward`/`router_layer`/... capability is declared).
+- **Cases it can run** (capability-level): none.
+- **Cases it cannot run**: L1 独立通信 COMM-001, COMM-002, COMM-003, COMM-004, COMM-005, COMM-006, COMM-007, COMM-008, COMM-009, COMM-010, COMM-011, COMM-012; L2 串行组合 FUSE-001, FUSE-003; L2 原生融合 FUSE-002, FUSE-004, FUSE-005, FUSE-006, FUSE-007, FUSE-008, FUSE-009; L3 完整 MoE MOE-001, MOE-002, MOE-003, MOE-004, MOE-005, MOE-006, MOE-007, MOE-008, MOE-009, LAYER-007; L4 路由器/规划/去重 LAYER-001, LAYER-002, LAYER-003, LAYER-004, LAYER-005, LAYER-006, LAYER-008, LAYER-009.
+- **Why not**: L3 replay needs a real_trace_replay workload; this configuration does not select one; deduplicated dispatch has no dedup path; the None control for this suite is COMM-001 with dedup.mode=none; the planner is disabled in this configuration; the load_balance suite measures this case with load_balance.enabled=true; this case measures rank dedup; the plan selects dedup.mode=none; this case measures server dedup; the plan selects dedup.mode=none; tokens per rank exceeds adapter capacity 512.
+
 - **Known gap — the case that matters cannot execute.** `COMM-011` is planned as runnable, but the backend inherits `operators.ascendep.MC2V2Backend`, whose `initialize` imports `ep.mc2_combine_add_rmsnorm_cann.demo`. That adapter does not exist in the pinned ascendep tree (21 adapters are vendored; this is not one of them), so the run ends `source_unavailable` from `operators/ascendep.py::_import_demo`.
 - **Correctness contract**: `benchmarks/cases/l1_communication.py::_combine_add_rmsnorm` checks normalised output, inverse RMS and residual sum against an FP32 reference with the dtype tolerance. It cannot be reached while the import above fails.
 - **Timing contract**: the DispatchV2 handle that prepares the layout is built outside the timed region; one `rmsnorm_combine` call is timed and `local_complete` is recorded.

@@ -16,8 +16,11 @@ python -m operators.moonep_server_dedup.benchmark --config operators/moonep_serv
 
 ## Benchmark contract
 
-- **Cases it can run** (capability-level): L1 COMM-010; L4 LAYER-005 (`rank_dedup` + `dedup_training`), LAYER-006 (`server_dedup` + `dedup_training`).
-- **Cases it cannot run**: COMM-001..009, COMM-011, COMM-012 (`dispatch`/`combine`/`cached_dispatch`/`async_*`/`quantized_dispatch`/`combine_add_rmsnorm`/`planned_dispatch`); FUSE-001..009; L3/L4 cases needing `moe_forward`/`moe_backward`/`router_layer`/`dynamic_planner`. They stay in the manifest as `unsupported`.
+- **Cases it can run** (capability-level): none.
+- **Conditional cases** (runnable only under a matching configuration): COMM-010 (L1 独立通信): only when dedup={'mode': 'server'}; LAYER-005 (L4 路由器/规划/去重): only when dedup={'mode': 'rank'}; LAYER-006 (L4 路由器/规划/去重): only when dedup={'mode': 'server'}.
+- **Cases it cannot run**: L1 独立通信 COMM-001, COMM-002, COMM-003, COMM-004, COMM-005, COMM-006, COMM-007, COMM-008, COMM-009, COMM-011, COMM-012; L2 串行组合 FUSE-001, FUSE-003; L2 原生融合 FUSE-002, FUSE-004, FUSE-005, FUSE-006, FUSE-007, FUSE-008, FUSE-009; L3 完整 MoE MOE-001, MOE-002, MOE-003, MOE-004, MOE-005, MOE-006, MOE-007, MOE-008, MOE-009, LAYER-007; L4 路由器/规划/去重 LAYER-001, LAYER-002, LAYER-003, LAYER-004, LAYER-008, LAYER-009.
+- **Why not**: L3 replay needs a real_trace_replay workload; this configuration does not select one; operation requires async_combine, combine, dispatch; operation requires async_dispatch, dispatch; operation requires cached_dispatch, dispatch; operation requires chunk_pipeline; operation requires combine, dispatch ….
+
 - **Correctness contract**: LAYER-005/006 validate the full training step with `validate_moe(use_router=True)` (input gradient, expert weight gradients) and add the planner/dedup fields; COMM-010 checks the native dispatch/combine round trip.
 - **Timing contract**: `fresh_plan` re-plans every step, `cached_plan` reuses a plan built outside the timer; replica weight prefetch and gradient reduction are reported as `stage_ns` (`benchmarks/cases/l4_router_planner.py::_planned`).
 - **Registry constraints**: `dtypes=[bfloat16]`, `equal_tokens`, `contiguous_placement`, `min_tokens=1`; `dedup.mode` must be `rank` or `server` (the case rule `layer_dedup_mode` reports the other mode `not_applicable`), and server mode needs an explicit rank-to-server map.

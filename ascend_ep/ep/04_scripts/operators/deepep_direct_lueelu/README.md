@@ -15,8 +15,11 @@ python -m operators.deepep_direct_lueelu.benchmark --config operators/deepep_dir
 
 ## Benchmark contract
 
-- **Cases it can run** (capability-level): L1 COMM-001..COMM-008, COMM-010; L2 FUSE-001, FUSE-003; L3 LAYER-007, MOE-001, MOE-002, MOE-003, MOE-005, MOE-006, MOE-008.
-- **Cases it cannot run**: COMM-009 (`quantized_dispatch`), COMM-011 (`combine_add_rmsnorm`), COMM-012 (`planned_dispatch`); FUSE-002/004/005/006/007/008/009 (`dispatch_gmm`/`gmm_combine`/`chunk_pipeline`/`tile_schedule`/`comm_resources`/`quantized_fusion`/`fused_backward`); LAYER-001..006, LAYER-008, LAYER-009; MOE-004 (`recompute`), MOE-007 (`concurrent`), MOE-009 (`dynamic_shapes`). They stay in the manifest as `unsupported`.
+- **Cases it can run** (capability-level): L1 独立通信 COMM-001..008; L2 串行组合 FUSE-001, FUSE-003; L3 完整 MoE MOE-001..003, MOE-005, MOE-006, MOE-008.
+- **Conditional cases** (runnable only under a matching configuration): LAYER-007 (L3 完整 MoE): only when workload={'routing': 'real_trace_replay'}.
+- **Cases it cannot run**: L1 独立通信 COMM-009, COMM-010, COMM-011, COMM-012; L2 原生融合 FUSE-002, FUSE-004, FUSE-005, FUSE-006, FUSE-007, FUSE-008, FUSE-009; L3 完整 MoE MOE-004, MOE-007, MOE-009; L4 路由器/规划/去重 LAYER-001, LAYER-002, LAYER-003, LAYER-004, LAYER-005, LAYER-006, LAYER-008, LAYER-009.
+- **Why not**: Native resized workspace lifecycle is pending; deduplicated dispatch has no dedup path; the None control for this suite is COMM-001 with dedup.mode=none; operation requires chunk_pipeline; operation requires combine_add_rmsnorm; operation requires comm_resources; operation requires concurrent ….
+
 - **Correctness contract**: dispatch layout via `validate_dispatch` against the reference collective; combine and L3 via relative L2 / `validate_moe`.
 - **Timing contract**: L1 handlers submit and wait inside the timed block and record `local_complete`; `async_dispatch`/`async_combine` wait on the adapter's deferred callback.
 - **Registry constraints**: `ep_sizes=[2,8]`, `dtypes=[bfloat16]`, `top_k=6`, `num_experts=24`, `equal_tokens`, `contiguous_placement`, `swiglu_limit=10`.
