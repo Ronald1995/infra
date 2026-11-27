@@ -151,3 +151,24 @@ def test_a_routing_target_is_also_a_stress_kind():
     pair = result["pairs"][0]
     assert pair["slowdown_ratio"] == pytest.approx(1.5)
     assert pair["amplification"] is None  # no injected delay for a routing target
+
+
+def test_a_recorded_non_fallback_is_not_a_fallback():
+    """The runtime records `fallback: {used: false}` on the normal path."""
+    passed = row(observation={"fallback": {"used": False, "reason": None}})
+    assert coverage.metrics(manifest(TASK), [passed])["verified"] == 1
+    fell_back = row(observation={"fallback": {"used": True, "reason": "cpu"}})
+    assert coverage.metrics(manifest(TASK), [fell_back])["verified"] == 0
+
+
+def test_a_single_configuration_manifest_carries_the_summary():
+    from common.plan import matrix_metadata
+
+    tasks = [dict(TASK, task_id="t1", status="not_run", config={"suite_id": "all"},
+                  parameters={}, suite_ids=["all"], case_category="operator",
+                  case_family="operator", case_tags=[], case_phase="inference",
+                  handler="h", correctness_requirements=[], alias_of=None,
+                  config_fingerprint="f", source_versions={}, baseline=False)]
+    metadata = matrix_metadata(tasks)
+    assert metadata["plan_summary"]["tasks"] == 1
+    assert metadata["plan_summary"]["estimation"]["status"] == "unavailable"

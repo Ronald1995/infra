@@ -45,7 +45,15 @@ def _verified(row):
     if _status(row) != "passed":
         return False
     observation = row.get("observation") or {}
-    if observation.get("fallback") or observation.get("compatibility_fallback"):
+    # The runtime records `fallback: {used, reason}`, not a boolean: a false `used`
+    # is the normal case and must not disqualify the measurement.
+    fallback = observation.get("fallback")
+    if isinstance(fallback, dict):
+        if fallback.get("used"):
+            return False
+    elif fallback:
+        return False
+    if observation.get("compatibility_fallback"):
         return False
     verification = row.get("verification")
     if isinstance(verification, dict) and verification.get("status") not in (None, "verified"):

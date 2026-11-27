@@ -30,8 +30,8 @@ def classify(status):
 
 
 def summarize(run, estimation=None):
-    """``run`` is a ``PlanRun``; ``estimation`` overrides the plan's block."""
-    tasks = run.tasks
+    """``run`` is a ``PlanRun`` or a task list; ``estimation`` overrides the plan's block."""
+    tasks = getattr(run, "tasks", run)
     by_ep = Counter(task["ep_size"] for task in tasks)
     by_level = Counter(task["level"] for task in tasks)
     by_suite = Counter(suite for task in tasks for suite in task.get("suite_ids", ()))

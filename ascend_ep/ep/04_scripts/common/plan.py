@@ -631,4 +631,6 @@ def matrix_metadata(tasks, ep_sizes=None, suites=None, levels=None):
         "coverage": {str(ep): sorted({task["case_id"] for task in tasks if task["ep_size"] == ep})
                      for ep in sizes},
         "case_index": case_index(tasks),
+        "execution_profile": None,
+        "plan_summary": plan_summary_module.summarize(tasks),
     }
