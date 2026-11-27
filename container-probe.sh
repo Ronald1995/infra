@@ -1,39 +1,23 @@
-echo "== os"
-. /etc/os-release 2>/dev/null; echo "$PRETTY_NAME"
-echo "== pythons"
-ls /usr/bin/python3.* 2>/dev/null
-for p in python3.10 python3.11 python3.12 python3.13; do
-  if command -v "$p" >/dev/null 2>&1; then "$p" -V; fi
-done
-echo "== ascend"
-ls /usr/local/Ascend
-echo "== version"
-cat /usr/local/Ascend/ascend-toolkit/latest/version.cfg 2>/dev/null | head -5
-cat /usr/local/Ascend/ascend-toolkit/version.cfg 2>/dev/null | head -5
-echo "== toolkit dirs"
-ls /usr/local/Ascend/ascend-toolkit 2>/dev/null | head
-ls /usr/local/Ascend/cann 2>/dev/null | head
-echo "== env scripts"
-find /usr/local/Ascend -maxdepth 4 -name set_env.sh 2>/dev/null | head -5
-echo "== torch"
-python3 - <<'PY'
-try:
-    import torch
-    print("torch", torch.__version__)
-except Exception as exc:
-    print("torch import failed:", exc)
-try:
-    import torch_npu
-    print("torch_npu", torch_npu.__version__)
-except Exception as exc:
-    print("torch_npu import failed:", exc)
-PY
-echo "== npu"
-npu-smi info 2>/dev/null | head -8
-echo "== soc"
-npu-smi info -t board -i 0 2>/dev/null | grep -Ei "board|chip|soc|name" | head -5
-echo "== devices"
-ls /dev/davinci* 2>/dev/null | head -3
-ls /dev/davinci* 2>/dev/null | wc -l
-echo "== hccl"
-ldconfig -p 2>/dev/null | grep -E "libhccl|libhcomm" | head -4
+set +e
+echo "== before"; readlink /usr/local/Ascend/ascend-toolkit/latest
+if [ ! -e /usr/local/Ascend/ascend-toolkit/latest/set_env.sh ]; then
+  echo "broken: repointing latest -> /usr/local/Ascend/cann-9.0.0"
+  ln -sfn /usr/local/Ascend/cann-9.0.0 /usr/local/Ascend/ascend-toolkit/latest
+fi
+echo "== after"; readlink -f /usr/local/Ascend/ascend-toolkit/latest; ls -l /usr/local/Ascend/ascend-toolkit/set_env.sh
+echo "== env after source"
+bash -c 'source /usr/local/Ascend/ascend-toolkit/set_env.sh; echo "ASCEND_HOME_PATH=$ASCEND_HOME_PATH"; echo "ASCEND_TOOLKIT_HOME=$ASCEND_TOOLKIT_HOME"; echo "LD=$LD_LIBRARY_PATH" | cut -c1-160; command -v ccec; ldconfig -p 2>/dev/null | grep -c libhccl'
+echo "== version.cfg"
+ls /usr/local/Ascend/ascend-toolkit/latest/version.cfg 2>/dev/null && head -3 /usr/local/Ascend/ascend-toolkit/latest/version.cfg
+echo "== torch_npu import with the toolkit env"
+PY=/home/vllm/x00886548/batch_inv_glm52/envs/vllm312/bin/python
+bash -c "source /usr/local/Ascend/ascend-toolkit/set_env.sh; '$PY' - <<'PYCODE'
+import torch
+print('torch', torch.__version__)
+import torch_npu
+print('torch_npu', torch_npu.__version__)
+print('npu available:', torch.npu.is_available(), 'count:', torch.npu.device_count())
+if torch.npu.is_available():
+    print('device 0:', torch.npu.get_device_name(0))
+PYCODE"
+echo "== exit: $?"

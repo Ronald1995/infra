@@ -423,6 +423,18 @@ compatibility:
     in this repository; status=probed means the doctor recorded it on this machine.  soc lists what the
     release is documented for; the doctor only compares strings it actually read (npu-smi / version.cfg).
   rows:
+  - id: cann-9.0-torch-2.10
+    cann: 9.0.0
+    torch: 2.10.0
+    torch_npu: 2.10.0.post4
+    soc:
+    - Ascend910_93
+    - Ascend950
+    status: probed
+    source_url: docs/container_probe.md
+    evidence: 'Observed on the liurong_vllm container (node-zj-110-132): torch 2.10.0+cpu and torch_npu
+      2.10.0.post4 import successfully, torch.npu.is_available() is true with 16 devices (Ascend910_9382),
+      and the doctor reads CANN 9.0.0 from x86_64-linux/ascend_toolkit_install.info.'
   - id: cann-8.2-torch-2.6
     cann: 8.2.RC1
     torch: 2.6.0
@@ -540,7 +552,7 @@ dependencies:
 - id: torch
   category: A
   kind: pip
-  version: ==2.6.0
+  version: ==2.10.0
   required_by:
   - l0_memory
   - l0_transport
@@ -605,7 +617,7 @@ dependencies:
   - torch
   pin:
     kind: pip
-    value: ==2.6.0
+    value: ==2.10.0
     verify: python -c 'import torch; print(torch.__version__)'
   conflicts: []
   install_spec:
@@ -925,7 +937,7 @@ dependencies:
 - id: cann-toolkit
   category: B
   kind: host_provided
-  version: '>=8.1.RC1,<8.4'
+  version: '>=9.0.0,<9.3'
   required_by:
   - l0_transport
   - l0_collectives
@@ -959,14 +971,16 @@ dependencies:
   - Ascend910_93
   - Ascend950
   supported_cann:
-  - 8.1.RC1
-  - 8.2.RC1
-  - 8.3.RC1
+  - 9.0.0
+  - 9.1.0
+  - 9.2.1
   notes: The doctor reads the version from $ASCEND_HOME_PATH/version.cfg (or /usr/local/Ascend/ascend-toolkit/latest/version.cfg),
     reports the raw file as evidence, and refuses to guess when the file is absent. The liurong_vllm container
     reports CANN 9.0.0 (/usr/local/Ascend/cann-9.0.0) and npu-smi 25.5.1; that pairing has not been run
     by this repository, so it stays out of the compatibility table and the doctor reports it as an unlisted
-    pairing (skip, never pass). See docs/container_probe.md.
+    pairing (skip, never pass). See docs/container_probe.md. The liurong_vllm container runs CANN 9.0.0
+    (release read from x86_64-linux/ascend_toolkit_install.info) with torch 2.10.0+cpu and torch_npu 2.10.0.post4;
+    the doctor observed 16 NPUs and a working torch_npu import on that stack.
   manual_step_owner: host
   ownership: host
   environment: base
@@ -985,7 +999,7 @@ dependencies:
 - id: torch-npu
   category: B
   kind: pip
-  version: ==2.6.0.post3
+  version: ==2.10.0.post4
   required_by:
   - l0_transport
   - l0_collectives
@@ -1042,7 +1056,7 @@ dependencies:
   - torch_npu
   pin:
     kind: pip
-    value: ==2.6.0.post3
+    value: ==2.10.0.post4
     verify: python -c 'import torch_npu; print(torch_npu.__version__)'
   conflicts: []
   install_spec:
@@ -1134,6 +1148,7 @@ dependencies:
     names:
     - libhccl.so
     - libhccl.dll
+    require_all: false
   runtime_paths:
   - $ASCEND_HOME_PATH/lib64
   - $ASCEND_HOME_PATH/runtime/lib64
@@ -1145,9 +1160,10 @@ dependencies:
   - 8.1.RC1
   - 8.2.RC1
   - 8.3.RC1
-  notes: Every collective result depends on this library resolving at run time; the probe reports both
+  notes: 'Every collective result depends on this library resolving at run time; the probe reports both
     ctypes.util.find_library and an explicit LD_LIBRARY_PATH scan because find_library ignores LD_LIBRARY_PATH
-    on several platforms.
+    on several platforms. The probe accepts either libhccl.so or libhccl.dll: they are platform alternatives,
+    not a required set (checked on the container: libhccl.so under /usr/local/Ascend/cann-9.0.0/lib64).'
   manual_step_owner: host
   ownership: host
   environment: base
@@ -1306,6 +1322,7 @@ dependencies:
     names:
     - libhcomm.so
     - libhcomm.dll
+    require_all: false
   runtime_paths:
   - $ASCEND_HOME_PATH/lib64
   - $ASCEND_HOME_PATH/runtime/lib64

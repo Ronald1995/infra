@@ -348,20 +348,51 @@ def _cann_installation():
         if not root:
             continue
         scanned.append(root)
-        for name in ("version.cfg", "ascend_toolkit_install.info"):
-            path = os.path.join(root, name)
-            if not os.path.isfile(path):
-                continue
-            try:
-                text = Path(path).read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
-                return root, None, path, {"root": root, "version_file": path, "error": str(exc)}
-            match = re.search(r"(?:version|Version)\s*[=:]\s*(\S+)", text)
-            return (root, match.group(1) if match else None, path,
-                    {"root": root, "version_file": path, "head": text.splitlines()[:6]})
+        for name in CANN_VERSION_FILES:
+            for path in _cann_version_paths(root, name):
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    text = Path(path).read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    return root, None, path, {"root": root, "version_file": path,
+                                              "error": str(exc)}
+                match = re.search(r"(?:version|Version)\s*[=:]\s*(\S+)", text)
+                return (root, match.group(1) if match else None, path,
+                        {"root": root, "version_file": path, "head": text.splitlines()[:6]})
+        landmark = _cann_landmark(root)
+        if landmark:
+            return root, None, None, {"root": root, "landmark": landmark,
+                                      "error": "no version.cfg / ascend_toolkit_install.info"}
     evidence = {"declared": declared, "candidates": scanned[:8],
                 "error": "no version.cfg under any candidate root"}
     return None, None, None, evidence
+
+
+#: Files a CANN install may use to declare its release, at the root and in the
+#: architecture subdirectory some packages use (``x86_64-linux``/``aarch64-linux``).
+CANN_VERSION_FILES = ("version.cfg", "ascend_toolkit_install.info")
+CANN_ARCH_DIRS = ("x86_64-linux", "aarch64-linux")
+
+
+def _cann_version_paths(root, name):
+    yield os.path.join(root, name)
+    for arch in CANN_ARCH_DIRS:
+        yield os.path.join(root, arch, name)
+
+
+def _cann_landmark(root):
+    """A file that proves a toolkit exists even when it declares no version."""
+    for relative in ("lib64/libascendcl.so", "compiler/ccec_compiler/bin/ccec",
+                     "bin/ccec", "ascend_toolkit_install.info"):
+        path = os.path.join(root, relative)
+        if os.path.exists(path):
+            return relative
+    for arch in CANN_ARCH_DIRS:
+        path = os.path.join(root, arch, "lib64/libascendcl.so")
+        if os.path.exists(path):
+            return os.path.join(arch, "lib64/libascendcl.so")
+    return None
 
 
 @lru_cache(maxsize=None)
@@ -647,8 +678,12 @@ def probe_shared_library(entry, check, ctx):
                             "install the component that ships this library, or add its directory to LD_LIBRARY_PATH",
                             evidence)
     if missing:
-        return _entry_check(entry, "warn", f"found {found}, missing {missing}",
-                            "build the remaining bridges (see dependencies/manifest.yaml)", evidence)
+        # ``require_all: false`` means the names are platform alternatives of the same
+        # library (``libhccl.so`` on Linux, ``libhccl.dll`` on Windows): one match is
+        # the requirement, and the other names are absent by platform, not by fault.
+        return _entry_check(entry, "pass",
+                            f"resolved {found} (not present on this platform: {missing})",
+                            "", evidence)
     return _entry_check(entry, "pass", f"resolved {found}", "", evidence)
 
 
@@ -804,10 +839,19 @@ def probe_cann_home(entry, check, ctx):
     root, version, version_file, cached = _cann_installation()
     evidence = dict(cached)
     evidence["expected_version_file"] = check.get("version_file")
-    if root is None or version_file is None:
-        detail = "no CANN installation (no ASCEND_HOME_PATH and no /usr/local/Ascend/ascend-toolkit/latest)"
+    if root is None:
+        detail = ("no CANN installation (no ASCEND_HOME_PATH, no "
+                  "/usr/local/Ascend/ascend-toolkit/latest, and no toolkit landmark)")
         return _entry_check(entry, "fail", detail,
-                            entry.get("manual_step") or "install the CANN toolkit on the host", evidence)
+                            entry.get("manual_step") or "install the CANN toolkit on the host",
+                            evidence)
+    if version_file is None:
+        return _entry_check(
+            entry, "warn",
+            f"CANN found at {root} but it declares no version "
+            f"({', '.join(CANN_VERSION_FILES)}); the release cannot be verified",
+            "check that set_env.sh points at a complete toolkit, or record the release in "
+            "dependencies/manifest.yaml", evidence)
     if version is None:
         return _entry_check(entry, "warn", f"CANN found at {root} but no version key in {version_file}",
                             "re-source set_env.sh; a toolkit without version.cfg is a partial install",
