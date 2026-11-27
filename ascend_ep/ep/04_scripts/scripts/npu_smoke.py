@@ -235,7 +235,7 @@ def _status_of(rows, task):
     return record.get("status") or "not_run", record.get("error_reason") or ""
 
 
-def profile_outcome(profile, tasks, rows, kinds):
+def profile_outcome(profile, tasks, rows, kinds, mode="npu_only"):
     """Collapse a profile's tasks into one bucket.
 
     A profile passes only when *every* task it expanded to passed on the NPU; one
@@ -248,7 +248,7 @@ def profile_outcome(profile, tasks, rows, kinds):
         bucket = status_map.bucket(status, reason, kinds.get(task["task_id"]))
         if bucket == status_map.PASSED:
             config = task["config"]
-            if not execution_mode.counts_as_operator_evidence("npu_only", config, status):
+            if not execution_mode.counts_as_operator_evidence(mode, config, status):
                 bucket = status_map.UNKNOWN
         buckets.append((bucket, task, status, reason))
         detail.append({"task_id": task["task_id"], "case_id": task["case_id"],
@@ -266,13 +266,13 @@ def profile_outcome(profile, tasks, rows, kinds):
     return chosen, (worst[3] if worst else ""), detail
 
 
-def build_report(table, tasks, owners, rows, kinds, probe, stage, run_id):
+def build_report(table, tasks, owners, rows, kinds, probe, stage, run_id, mode="npu_only"):
     operator_rows, outcomes = [], {}
     for profile in table:
         own = [task for task in tasks if owners.get(task["task_id"]) == profile.label]
         if not own:
             continue
-        bucket, reason, detail = profile_outcome(profile, own, rows, kinds)
+        bucket, reason, detail = profile_outcome(profile, own, rows, kinds, mode)
         outcomes[profile.label] = bucket
         operator_rows.append({
             "operator": profile.operator, "family": profile.family,
@@ -352,8 +352,8 @@ def build_report(table, tasks, owners, rows, kinds, probe, stage, run_id):
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
-        "execution_mode": "npu_only",
-        "execution_mode_description": execution_mode.describe("npu_only"),
+        "execution_mode": mode,
+        "execution_mode_description": execution_mode.describe(mode),
         "stage": stage,
         "environment": environment_record(probe),
         "stage1": stage1,
@@ -451,10 +451,12 @@ def render_markdown(report):
         for gap in gaps:
             lines.append(f"| {gap['scope']} | {gap['path']} | {gap['reason']} |")
 
-    lines += ["", "## Outcome buckets", "", "| bucket | count |", "| --- | ---: |"]
+    lines += ["", "## Outcome buckets", "",
+              "| bucket | count | next action |", "| --- | ---: | --- |"]
     for name in status_map.BUCKETS:
         if report["counts"].get(name):
-            lines.append(f"| {name} | {report['counts'][name]} |")
+            lines.append(f"| {name} | {report['counts'][name]} | "
+                         f"{RECOMMENDED.get(name, '-')} |")
     return "\n".join(lines) + "\n"
 
 
@@ -504,6 +506,12 @@ def build_parser():
     run_command.add_argument("--nproc-per-node", type=int, default=None)
     run_command.add_argument("--dry-run", action="store_true",
                              help="plan and gate only; create no run directory")
+
+    report_command = commands.add_parser(
+        "report", help="re-render the report of an existing run from its persisted results")
+    add_common(report_command)
+    report_command.add_argument("--output", type=Path, required=True)
+    report_command.add_argument("--run-id", required=True)
     return parser
 
 
@@ -559,7 +567,8 @@ def command_run(args):
 
     root, manifest, code = run_tasks(args.output, tasks, args.run_id, args.nproc_per_node)
     rows = _task_rows(root, manifest)
-    report = build_report(table, tasks, owners, rows, kinds, probe, args.stage, args.run_id)
+    report = build_report(table, tasks, owners, rows, kinds, probe, args.stage,
+                          args.run_id, mode)
     json_path, md_path = write_report(root, report)
     print(render_markdown(report))
     print(f"report: {json_path}")
@@ -568,11 +577,58 @@ def command_run(args):
     return verdict if code == 0 else max(verdict, 1)
 
 
+def owners_from_manifest(table, tasks):
+    """Re-attach each manifest task to the profile that planned it.
+
+    Recomputed from ``(backend_id, case_id)`` instead of re-planning, so a report
+    can be rebuilt from a persisted run even if the profile table moved on.
+    """
+    index = {}
+    for profile in table:
+        index[(profile.operator, profile.case)] = profile.label
+        if profile.backward_case:
+            index[(profile.operator, profile.backward_case)] = profile.label
+    return {task["task_id"]: index.get((task["backend_id"], task["case_id"]))
+            for task in tasks}
+
+
+def command_report(args):
+    """Rebuild the report from an existing run directory; nothing is executed."""
+    from common.controller import checked_id
+    from common.storage import load_json
+
+    root = Path(args.output).resolve() / checked_id(args.run_id)
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        print(f"no manifest at {manifest_path}", file=sys.stderr)
+        return 2
+    manifest = load_json(manifest_path)
+    table = smoke_profile.load(args.profiles)
+    tasks = manifest["tasks"]
+    owners = owners_from_manifest(table, tasks)
+    stage = ("all" if any(task.get("smoke_stage") == "environment" for task in tasks)
+             else "operators")
+    probe = device_probe()
+    # Re-apply the preflight so a hardware shortfall keeps its kind; the tasks are
+    # already blocked, so this only recomputes the reason classification.
+    kinds = apply_preflight(probe, tasks)
+    rows = _task_rows(root, manifest)
+    mode = execution_mode.resolve(None)
+    report = build_report(table, tasks, owners, rows, kinds, probe, stage, args.run_id, mode)
+    json_path, md_path = write_report(root, report)
+    print(render_markdown(report))
+    print(f"report: {json_path}")
+    print(f"report: {md_path}")
+    return 0 if report["conclusion"] == "PASS" else 1
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "plan":
         return command_plan(args)
+    if args.command == "report":
+        return command_report(args)
     return command_run(args)
 
 
