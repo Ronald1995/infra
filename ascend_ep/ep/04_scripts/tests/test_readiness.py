@@ -103,3 +103,29 @@ def test_real_manifest_declares_fsdp_turbo_unsupported_on_950():
     # ... while the deps we still expect to be installable do list it.
     assert "Ascend950" in entries["megatron"]["supported_soc"]
     assert "Ascend950" in entries["deep-ep"]["supported_soc"]
+
+
+def test_the_installer_only_receives_the_installable_subset(monkeypatch):
+    """`deps --install` must never try to install a platform-unsupported package."""
+    from scripts import npu_smoke
+
+    recorded = {}
+
+    class Result:
+        returncode = 0
+
+    def fake_run(command, **kwargs):
+        recorded["command"] = command
+        return Result()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    args = type("Args", (), {"profile": "npu", "dry_run": True})()
+    code = npu_smoke._run_installer(["moonep", "deepep_ascend"],
+                                   ["alltoall_fsdpturbo"], args)
+    assert code == 0
+    command = recorded["command"]
+    assert command[:2] == ["bash", str(ROOT / "scripts" / "install_deps.sh")]
+    assert "--dry-run" in command and "--profile" in command
+    # The unsupported operator is reported and not turned into an install action.
+    assert "alltoall_fsdpturbo" not in command
+
