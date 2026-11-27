@@ -10,6 +10,8 @@ catalog names one of them per case.  The handler returns the same
 one execution path -- but L0 keeps its own baseline implementations, its own
 evidence and its own payload description, which are carried through unchanged.
 """
+from dataclasses import replace
+
 from common.prepared import PreparedCase
 from baselines.l0.contract import Prepared
 from baselines.l0.verification.vocabulary import requested
@@ -98,10 +100,17 @@ HANDLERS = {f"l0.{family}": globals()[family] for family in FAMILIES}
 
 
 def prepare(request, output=None):
-    """Entry point used by ``benchmarks.cases.prepare`` for every L0 family."""
+    """Entry point used by ``benchmarks.cases.prepare`` for every L0 family.
+
+    ``CaseRequest`` is frozen, so the output directory is attached with
+    :func:`dataclasses.replace` instead of an assignment: the baselines read
+    ``request.output`` to place their artifacts, and a plain assignment raised
+    ``FrozenInstanceError`` for every L0 case.
+    """
     if request.level != "L0":
         raise ValueError("l0_hardware only prepares L0 cases")
-    request.output = output
+    if output is not None and request.output is not output:
+        request = replace(request, output=output)
     return _prepared(request)
 
 

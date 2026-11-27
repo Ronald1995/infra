@@ -23,8 +23,14 @@ benchmark:
   cores: [1]
   quiet_modes: [0]
   transport_mode: write
+  # A gate must be bounded: a native transport path that blocks is recorded as a
+  # timeout instead of stalling the smoke for the benchmark default of one hour.
+  task_timeout_seconds: 900
   transport:
-    enabled: [hccs]
+    # `ub_memory` is what the selected LINK case drives; leaving it out made the
+    # planner mark the case unsupported before any device work happened, so the
+    # transport family was never actually checked.
+    enabled: [ub_memory, hccs]
   execution:
     modes: [default]
   verification:
