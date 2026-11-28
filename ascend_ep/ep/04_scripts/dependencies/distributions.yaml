@@ -3,7 +3,7 @@
 # Four dependencies in this project share a *name* with an unrelated PyPI project:
 #
 #   megatron (NVIDIA Megatron-LM @baf94af)   vs  PyPI `megatron` / `megatron-core`
-#   mindspeed (Ascend MindSpeed @c68e201)    vs  PyPI `mindspeed` (a 0.0.1.dev1 stub)
+#   mindspeed (Ascend MindSpeed @3f2fb37)    vs  PyPI `mindspeed` (a 0.0.1.dev1 stub)
 #   deep_ep (lueelu DeepEP @83252a5)         vs  PyPI `deep-ep` (1.0.0, unrelated)
 #   deep_gemm (DeepGEMM-Ascend @3a35326)     vs  PyPI `deep-gemm` (1.0.0, unrelated)
 #

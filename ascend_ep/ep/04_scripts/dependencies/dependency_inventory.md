@@ -107,7 +107,7 @@
 | manifest id | 上游 | 固定 commit/tag | 在 TUNA？ | 可用 PyPI 同名包替代？ | 需 A5 构建 |
 | --- | --- | --- | --- | --- | --- |
 | `megatron` | https://github.com/NVIDIA/Megatron-LM | baf94af | 否 | 否（`megatron-core` 是不同发行版） | 是（editable） |
-| `mindspeed` | https://gitcode.com/Ascend/MindSpeed | c68e201 | 有同名 stub 0.0.1.dev1 | 否（stub 非 Ascend MindSpeed） | 是（editable） |
+| `mindspeed` | https://gitcode.com/Ascend/MindSpeed | 3f2fb37 | 有同名 stub 0.0.1.dev1 | 否（stub 非 Ascend MindSpeed） | 是（editable） |
 | `deep-ep` | https://github.com/lueelu/DeepEP | 83252a5 | 有同名 1.0.0 sdist | 否（非 lueelu fork） | 是（build.sh + pip） |
 | `deep-ep-v2` | https://gitcode.com/lishaoxun/DeepEP_9283 | 69090a1 | 否 | 否 | 是（build.sh + pip） |
 | `deep-ep-experimental` | 同上 fork 的 experiments 子目录 | 83252a5 | 否 | 否 | 是（子目录 pip） |
@@ -188,7 +188,7 @@ HCCL 与 HCOMM 均由 CANN 提供：本轮未把它们计入第三方源码，�
 | `matplotlib` | A | TUNA wheel; optional, not installed |
 | `mega-moe` | C | gitcode Mega-MoE-TD @41d4793; release notes omit 950, confirm with a real run |
 | `megatron` | C | NVIDIA Megatron-LM @baf94af; PyPI 'megatron-core' is a different distribution |
-| `mindspeed` | C | gitcode MindSpeed @c68e201; TUNA 'mindspeed 0.0.1.dev1' is an unrelated stub |
+| `mindspeed` | C | gitcode MindSpeed @3f2fb37; TUNA 'mindspeed 0.0.1.dev1' is an unrelated stub |
 | `moonep-dedup-runtime` | C | gitcode MoonEP dev_server_dedup @d8495c4; not on TUNA |
 | `moonep-runtime` | C | gitcode MoonEP @b4127ba; not on TUNA |
 | `mpi` | E | system package manager needs sudo; offline bundle when there is no network |

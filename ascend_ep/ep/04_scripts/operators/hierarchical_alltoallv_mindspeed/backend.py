@@ -3,7 +3,7 @@ from types import MethodType, SimpleNamespace
 
 from common.backend import BenchmarkUnavailable, EPBackend
 
-MINDSPEED = "c68e201a5733065b3aa59a3d44dc5e2ec700d7c9"
+MINDSPEED = "3f2fb3701ea26507b739ee4c8ae5f04aea7fa556"
 MEGATRON = "baf94af3c667248865f23df73b9fb8e2395e6fd0"
 
 

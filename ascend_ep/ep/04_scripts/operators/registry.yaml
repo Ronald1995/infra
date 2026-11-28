@@ -322,7 +322,7 @@
     "hierarchical_alltoallv_mindspeed": {
       "status": "integrated",
       "source": "https://gitcode.com/Ascend/MindSpeed",
-      "commit": "c68e201a5733065b3aa59a3d44dc5e2ec700d7c9",
+      "commit": "3f2fb3701ea26507b739ee4c8ae5f04aea7fa556",
       "api": "MoELayerOverlapAll2All with TP-extend-EP hierarchical dispatcher",
       "capabilities": [
         "moe_forward",
